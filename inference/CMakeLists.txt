@@ -5,7 +5,7 @@ project(InferenceEngine VERSION 1.0.0 LANGUAGES CXX)
 include(${CMAKE_SOURCE_DIR}/cmake/ucm.cmake)
 
 # Static link the runtime libraries
-ucm_set_runtime(STATIC)
+ucm_set_runtime(DYNAMIC)
 
 # Use C++17 for this project (required for std::filesystem)
 set(CMAKE_CXX_STANDARD 17)

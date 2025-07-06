@@ -5,7 +5,7 @@ project(KolosalServer VERSION 1.0.0 LANGUAGES CXX)
 include(${CMAKE_SOURCE_DIR}/cmake/ucm.cmake)
 
 # Static link the runtime libraries
-ucm_set_runtime(STATIC)
+ucm_set_runtime(DYNAMIC)
 
 # Use C++17 for this project (required for std::filesystem)
 set(CMAKE_CXX_STANDARD 17)
@@ -156,21 +156,25 @@ if(WIN32)
         message(STATUS "MSVC detected - runtime libraries will be statically linked")
     endif()
     
-    # Copy any additional DLLs from the inference build directory
+    # Copy any additional DLLs from the inference build directory using correct paths
+    # Use CMAKE_BINARY_DIR instead of CMAKE_CURRENT_BINARY_DIR since inference puts files there
+    set(INFERENCE_BIN_DIR "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+    
+    # Check if libcurl.dll exists and copy it
     add_custom_command(TARGET kolosal_server_exe POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_BINARY_DIR}/bin/Release/libcurl.dll"
+        "${INFERENCE_BIN_DIR}/libcurl.dll"
         "$<TARGET_FILE_DIR:kolosal_server_exe>/"
-        COMMENT "Copying libcurl.dll from bin directory"
+        COMMENT "Copying libcurl.dll from inference bin directory"
         VERBATIM
     )
     
     # Also ensure the inference DLL is copied from the correct location
     add_custom_command(TARGET kolosal_server_exe POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_BINARY_DIR}/bin/Release/llama-cpu.dll"
+        "${INFERENCE_BIN_DIR}/${INFERENCE_DLL_NAME}.dll"
         "$<TARGET_FILE_DIR:kolosal_server_exe>/"
-        COMMENT "Copying llama-cpu.dll from bin directory"
+        COMMENT "Copying ${INFERENCE_DLL_NAME}.dll from inference bin directory"
         VERBATIM
     )
 endif()
