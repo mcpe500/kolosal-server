@@ -200,11 +200,13 @@ namespace kolosal
             else if (arg == "-h" || arg == "--help")
             {
                 printHelp();
+                helpOrVersionShown = true;
                 return false;
             }
             else if (arg == "-v" || arg == "--version")
             {
                 printVersion();
+                helpOrVersionShown = true;
                 return false;
             }
             else if (arg.front() == '-')

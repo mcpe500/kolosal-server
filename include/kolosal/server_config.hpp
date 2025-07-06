@@ -80,6 +80,9 @@ struct KOLOSAL_SERVER_API ServerConfig {    // Basic server settings
     bool enableHealthCheck = true;
     bool enableMetrics = false;
     
+    // Internal flags
+    bool helpOrVersionShown = false;  // Tracks if help/version was displayed
+    
     ServerConfig() = default;
     
     /**

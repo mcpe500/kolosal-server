@@ -38,6 +38,10 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/nlohmann)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/yaml-cpp/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/cppuprofile/lib)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/inference/include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp/include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp/common)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp/ggml/include)
 
 # Define source files.
 set(SOURCES
@@ -70,17 +74,106 @@ set(SOURCES
     src/auth/cors_handler.cpp
     src/auth/auth_middleware.cpp
     src/node_manager.cpp
-    src/inference.cpp
 )
 
 # Create shared library instead of static library.
 add_library(kolosal_server SHARED ${SOURCES})
-target_compile_definitions(kolosal_server PRIVATE KOLOSAL_SERVER_BUILD INFERENCE_EXPORTS)
+target_compile_definitions(kolosal_server PRIVATE KOLOSAL_SERVER_BUILD)
 
 # Create executable
 add_executable(kolosal_server_exe src/main.cpp)
 target_link_libraries(kolosal_server_exe PRIVATE kolosal_server)
 set_target_properties(kolosal_server_exe PROPERTIES OUTPUT_NAME "kolosal-server")
+
+# Function to copy DLLs to executable directory
+function(copy_dll_to_output target_name dll_path)
+    if(WIN32 AND EXISTS "${dll_path}")
+        get_filename_component(dll_name "${dll_path}" NAME)
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${dll_path}"
+            "$<TARGET_FILE_DIR:${target_name}>/${dll_name}"
+            COMMENT "Copying ${dll_name} to output directory"
+        )
+        message(STATUS "Will copy ${dll_name} to output directory")
+    endif()
+endfunction()
+
+# Copy necessary DLLs to the executable directory on Windows
+if(WIN32)
+    # Copy the main server DLL
+    add_custom_command(TARGET kolosal_server_exe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:kolosal_server>"
+        "$<TARGET_FILE_DIR:kolosal_server_exe>/"
+        COMMENT "Copying kolosal_server.dll to executable directory"
+    )
+    
+    # Copy the inference engine DLL (llama-cpu by default, or llama-cuda/llama-vulkan based on options)
+    set(INFERENCE_DLL_NAME "llama-cpu")
+    if(USE_CUDA)
+        set(INFERENCE_DLL_NAME "llama-cuda")
+    elseif(USE_VULKAN)
+        set(INFERENCE_DLL_NAME "llama-vulkan")
+    endif()
+    
+    add_custom_command(TARGET kolosal_server_exe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:${INFERENCE_DLL_NAME}>"
+        "$<TARGET_FILE_DIR:kolosal_server_exe>/"
+        COMMENT "Copying ${INFERENCE_DLL_NAME}.dll to executable directory"
+    )
+    
+    # Copy CURL DLL if it exists
+    set(CURL_DLL_PATHS
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/curl/bin/libcurl.dll"
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/curl/lib/libcurl.dll"
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/curl/bin/curl.dll"
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/curl/lib/curl.dll"
+    )
+    
+    foreach(curl_dll ${CURL_DLL_PATHS})
+        if(EXISTS "${curl_dll}")
+            copy_dll_to_output(kolosal_server_exe "${curl_dll}")
+            break()
+        endif()
+    endforeach()
+    
+    # Copy yaml-cpp DLL if it's built as shared library
+    if(BUILD_SHARED_LIBS)
+        add_custom_command(TARGET kolosal_server_exe POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:yaml-cpp>"
+            "$<TARGET_FILE_DIR:kolosal_server_exe>/"
+            COMMENT "Copying yaml-cpp DLL to executable directory"
+        )
+    endif()
+    
+    # Copy any additional system DLLs that might be needed
+    # Check for common MSVC runtime libraries
+    if(MSVC)
+        # These will be automatically handled by CMake's runtime library settings
+        message(STATUS "MSVC detected - runtime libraries will be statically linked")
+    endif()
+    
+    # Copy any additional DLLs from the inference build directory
+    add_custom_command(TARGET kolosal_server_exe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_BINARY_DIR}/bin/Release/libcurl.dll"
+        "$<TARGET_FILE_DIR:kolosal_server_exe>/"
+        COMMENT "Copying libcurl.dll from bin directory"
+        VERBATIM
+    )
+    
+    # Also ensure the inference DLL is copied from the correct location
+    add_custom_command(TARGET kolosal_server_exe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_BINARY_DIR}/bin/Release/llama-cpu.dll"
+        "$<TARGET_FILE_DIR:kolosal_server_exe>/"
+        COMMENT "Copying llama-cpu.dll from bin directory"
+        VERBATIM
+    )
+endif()
 
 # Find and setup yaml-cpp
 set(YAML_CPP_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/yaml-cpp")
@@ -97,143 +190,12 @@ set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "Build yaml-cpp as static library" FOR
 # Add yaml-cpp subdirectory
 add_subdirectory(${YAML_CPP_PATH})
 
-# Find and setup llama.cpp
-set(LLAMA_CPP_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp")
-if(NOT EXISTS "${LLAMA_CPP_PATH}/CMakeLists.txt")
-  message(FATAL_ERROR "llama.cpp not found at ${LLAMA_CPP_PATH}. Please clone it or adjust LLAMA_CPP_PATH.")
-endif()
+# Build the inference engine as a subdirectory
+# This will create the llama-<cpu/cuda/vulkan> shared library
+# All llama.cpp, CUDA, Vulkan, and MPI dependencies are handled by the inference library
+add_subdirectory(inference)
 
-# Find CURL
-if(WIN32)
-    # On Windows, use bundled CURL
-    set(CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/external/curl" ${CMAKE_PREFIX_PATH})
-    find_package(CURL REQUIRED)
-    if(NOT CURL_FOUND)
-        message(FATAL_ERROR "CURL not found")
-    endif()
-    message(STATUS "Found CURL: ${CURL_INCLUDE_DIR}")
-else()
-    # On Linux, use system CURL
-    find_package(CURL REQUIRED)
-    if(NOT CURL_FOUND)
-        message(FATAL_ERROR "CURL not found. Please install libcurl4-openssl-dev (Ubuntu/Debian) or libcurl-devel (RHEL/CentOS)")
-    endif()
-    message(STATUS "Found system CURL: ${CURL_INCLUDE_DIRS}")
-endif()
-
-# Configure llama.cpp options
-set(GGML_NATIVE           OFF CACHE BOOL "Disable LLAMA_NATIVE in llama.cpp"    FORCE)
-set(INS_ENB               ON  CACHE BOOL "Enable INS_ENB in llama.cpp"          FORCE)
-set(LLAMA_BUILD_TESTS     OFF CACHE BOOL "Disable llama.cpp tests"              FORCE)
-set(LLAMA_BUILD_EXAMPLES  OFF CACHE BOOL "Disable llama.cpp examples"           FORCE)
-set(LLAMA_BUILD_SERVER    OFF CACHE BOOL "Disable llama.cpp server"             FORCE)
-set(LLAMA_BUILD_COMMON    ON  CACHE BOOL "Enable  llama.cpp common"             FORCE)
-set(LLAMA_ALL_WARNINGS    OFF CACHE BOOL "Disable warnings in llama.cpp"        FORCE)
-set(LLAMA_CURL            ON  CACHE BOOL "Enable curl in llama.cpp"             FORCE)
-set(LLAMA_TOOLCALL        ON  CACHE BOOL "Enable llama.cpp toolcall"            FORCE)
-set(BUILD_SHARED_LIBS     OFF CACHE BOOL "Build llama.cpp as a static lib"      FORCE)
-set(GGML_STATIC_LINK      ON  CACHE BOOL "Static link ggml libraries"           FORCE)
-set(GGML_STATIC           ON  CACHE BOOL "Static link ggml libraries"           FORCE)
-set(LLAMA_AVX512          OFF CACHE BOOL "Disable AVX512 in llama.cpp"          FORCE)
-
-# Force position-independent code for llama.cpp when building shared library
-if(BUILD_SHARED_LIBS OR CMAKE_POSITION_INDEPENDENT_CODE)
-    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-    # Also set the global CXX flags to ensure all targets get -fPIC
-    if(NOT WIN32)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
-    endif()
-    message(STATUS "Forcing position-independent code for llama.cpp compatibility")
-endif()
-
-# Enable GGML acceleration based on options
-if(USE_CUDA)
-  set(GGML_CUDA ON CACHE BOOL "Enable GGML CUDA support" FORCE)
-  message(STATUS "Using CUDA for GGML acceleration")
-  
-  find_package(CUDA REQUIRED)
-  if(CUDA_FOUND)
-    target_include_directories(kolosal_server PRIVATE ${CUDA_INCLUDE_DIRS})
-    target_link_libraries(kolosal_server PRIVATE ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES} ${CUDA_CUDA_LIBRARY})
-  else()
-    message(FATAL_ERROR "CUDA not found. Please install CUDA toolkit.")
-  endif()
-elseif(USE_VULKAN)
-  set(GGML_VULKAN ON CACHE BOOL "Enable GGML Vulkan support" FORCE)
-  message(STATUS "Using vulkan for GGML acceleration")
-  
-  # Try to find Vulkan with better error handling
-  find_package(Vulkan)
-  if(Vulkan_FOUND)
-    message(STATUS "Found Vulkan: ${Vulkan_LIBRARY}")
-    message(STATUS "Vulkan headers: ${Vulkan_INCLUDE_DIRS}")
-    target_include_directories(kolosal_server PRIVATE ${Vulkan_INCLUDE_DIRS})
-    target_link_libraries(kolosal_server PRIVATE ${Vulkan_LIBRARIES})
-  else()
-    message(WARNING "Vulkan not found. Falling back to CPU-only mode.")
-    message(STATUS "To enable Vulkan support, install Vulkan development libraries:")
-    message(STATUS "  Ubuntu/Debian: sudo apt install libvulkan-dev vulkan-tools vulkan-validationlayers-dev")
-    message(STATUS "  RHEL/CentOS: sudo yum install vulkan-headers vulkan-loader-devel vulkan-tools")
-    message(STATUS "  Fedora: sudo dnf install vulkan-headers vulkan-loader-devel vulkan-tools")
-    message(STATUS "  Arch: sudo pacman -S vulkan-headers vulkan-icd-loader vulkan-tools")
-    message(STATUS "")
-    message(STATUS "Or run: ./install-linux-deps.sh")
-    
-    # Disable Vulkan and fall back to CPU
-    set(GGML_VULKAN OFF CACHE BOOL "Disable GGML Vulkan support" FORCE)
-    set(USE_VULKAN OFF)
-    message(STATUS "Continuing build without Vulkan support...")
-  endif()
-else()
-  message(STATUS "Using OpenBLAS for GGML acceleration")
-endif()
-
-# Find and configure MPI if enabled
-if(USE_MPI)
-  find_package(MPI REQUIRED)
-  if(MPI_FOUND)
-    target_include_directories(kolosal_server PRIVATE ${MPI_CXX_INCLUDE_DIRS})
-    target_link_libraries(kolosal_server PRIVATE ${MPI_CXX_LIBRARIES})
-    target_compile_definitions(kolosal_server PRIVATE ${MPI_CXX_COMPILE_DEFINITIONS})
-    if(MPI_CXX_COMPILE_FLAGS)
-      set_target_properties(kolosal_server PROPERTIES
-        COMPILE_FLAGS "${MPI_CXX_COMPILE_FLAGS}")
-    endif()
-    if(MPI_CXX_LINK_FLAGS)
-      set_target_properties(kolosal_server PROPERTIES
-        LINK_FLAGS "${MPI_CXX_LINK_FLAGS}")
-    endif()
-    message(STATUS "Found MPI: ${MPI_CXX_INCLUDE_DIRS}")
-  else()
-    message(FATAL_ERROR "MPI not found. Please install MPI implementation (OpenMPI, MPICH, or MS-MPI).")
-  endif()
-endif()
-
-# Define inference-related compile definitions
-target_compile_definitions(kolosal_server PUBLIC
-  $<$<BOOL:${USE_CUDA}>:USE_CUDA>
-  $<$<BOOL:${USE_VULKAN}>:USE_VULKAN>
-  $<$<BOOL:${USE_MPI}>:USE_MPI>
-  $<$<BOOL:${DEBUG}>:DEBUG>
-)
-
-# Add subdirectories for external libraries
-add_subdirectory(${LLAMA_CPP_PATH})
-
-# Force -fPIC for all llama.cpp targets when building as shared library
-if(CMAKE_POSITION_INDEPENDENT_CODE)
-    # Apply -fPIC to llama.cpp targets
-    set_target_properties(llama PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    set_target_properties(ggml PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    set_target_properties(common PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    if(TARGET toolcall)
-        set_target_properties(toolcall PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    endif()
-    message(STATUS "Applied -fPIC to llama.cpp static libraries")
-endif()
-
-# Only add yaml-cpp if it hasn't been added by llama.cpp
+# Only add yaml-cpp if it hasn't been added by the inference subdirectory
 if(NOT TARGET yaml-cpp)
     add_subdirectory(external/yaml-cpp EXCLUDE_FROM_ALL)
     # Ensure yaml-cpp is built with -fPIC if needed
@@ -243,46 +205,69 @@ if(NOT TARGET yaml-cpp)
     endif()
 endif()
 
-# Link libraries
-set(KOLOSAL_LINK_LIBRARIES llama common ggml toolcall yaml-cpp)
-
-target_link_libraries(kolosal_server PRIVATE ${KOLOSAL_LINK_LIBRARIES})
-
-# Link CURL libraries and include directories
-if(WIN32)
-    target_include_directories(kolosal_server PRIVATE ${CURL_INCLUDE_DIR})
-    target_link_libraries(kolosal_server PRIVATE ${CURL_LIBRARIES})
-else()
-    target_include_directories(kolosal_server PRIVATE ${CURL_INCLUDE_DIRS})
-    target_link_libraries(kolosal_server PRIVATE ${CURL_LIBRARIES})
+# Link the inference engine library to kolosal_server
+# The target name is determined by the inference CMakeLists.txt based on acceleration options
+set(INFERENCE_TARGET_NAME "llama-cpu")
+if(USE_CUDA)
+    set(INFERENCE_TARGET_NAME "llama-cuda")
+elseif(USE_VULKAN)
+    set(INFERENCE_TARGET_NAME "llama-vulkan")
 endif()
 
-# Check for OpenSSL on Linux (often required for CURL)
-if(UNIX AND NOT APPLE)
-    find_package(OpenSSL)
-    if(OpenSSL_FOUND)
-        message(STATUS "Found OpenSSL: ${OPENSSL_VERSION}")
-        target_link_libraries(kolosal_server PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-    else()
-        message(WARNING "OpenSSL not found. HTTPS features might not work properly. Install libssl-dev (Ubuntu/Debian) or openssl-devel (RHEL/CentOS)")
-    endif()
+message(STATUS "Linking kolosal_server with inference engine: ${INFERENCE_TARGET_NAME}")
+
+# Link the main server library with the inference engine and yaml-cpp
+target_link_libraries(kolosal_server PUBLIC ${INFERENCE_TARGET_NAME} yaml-cpp)
+
+# Ensure the executable depends on the inference target for proper DLL copying
+add_dependencies(kolosal_server_exe ${INFERENCE_TARGET_NAME})
+
+# Configure CURL for main server (download utilities need it)
+set(CURL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/curl")
+if(EXISTS "${CURL_PATH}/include/curl/curl.h")
+    message(STATUS "Found CURL: ${CURL_PATH}/include")
+    target_include_directories(kolosal_server PRIVATE "${CURL_PATH}/include")
     
-    # Check for zlib (often required for compression)
-    find_package(ZLIB)
-    if(ZLIB_FOUND)
-        message(STATUS "Found zlib: ${ZLIB_VERSION_STRING}")
-        target_link_libraries(kolosal_server PRIVATE ZLIB::ZLIB)
+    # Find CURL library
+    if(WIN32)
+        find_library(CURL_LIBRARY 
+            NAMES curl libcurl curl_a libcurl_a
+            PATHS "${CURL_PATH}/lib" 
+            PATH_SUFFIXES Release Debug x64/Release x64/Debug
+            NO_DEFAULT_PATH
+        )
+        if(CURL_LIBRARY)
+            target_link_libraries(kolosal_server PRIVATE ${CURL_LIBRARY})
+            message(STATUS "Linking kolosal_server with CURL library: ${CURL_LIBRARY}")
+        else()
+            message(WARNING "CURL library not found in ${CURL_PATH}/lib")
+        endif()
     else()
-        message(WARNING "zlib not found. Install zlib1g-dev (Ubuntu/Debian) or zlib-devel (RHEL/CentOS)")
+        # On Linux, use system CURL or built version
+        find_package(CURL QUIET)
+        if(CURL_FOUND)
+            target_link_libraries(kolosal_server PRIVATE ${CURL_LIBRARIES})
+            target_include_directories(kolosal_server PRIVATE ${CURL_INCLUDE_DIRS})
+            message(STATUS "Using system CURL: ${CURL_LIBRARIES}")
+        else()
+            # Try to find in external directory
+            find_library(CURL_LIBRARY 
+                NAMES curl libcurl
+                PATHS "${CURL_PATH}/lib"
+                NO_DEFAULT_PATH
+            )
+            if(CURL_LIBRARY)
+                target_link_libraries(kolosal_server PRIVATE ${CURL_LIBRARY})
+                message(STATUS "Using external CURL: ${CURL_LIBRARY}")
+            else()
+                message(WARNING "CURL not found. Download utilities may not work.")
+            endif()
+        endif()
     endif()
+else()
+    message(WARNING "CURL headers not found at ${CURL_PATH}/include/curl/curl.h")
+    message(STATUS "Download utilities will be disabled")
 endif()
-
-# Include llama.cpp directories
-target_include_directories(kolosal_server PUBLIC
-  ${LLAMA_CPP_PATH}/include
-  ${LLAMA_CPP_PATH}/common
-  ${LLAMA_CPP_PATH}/ggml/include
-)
 
 # Find and link thread library for the main library.
 find_package(Threads REQUIRED)
@@ -291,13 +276,6 @@ target_link_libraries(kolosal_server PRIVATE Threads::Threads)
 # Platform-specific link libraries for the main library.
 if(WIN32)
     target_link_libraries(kolosal_server PRIVATE ws2_32)
-    # Copy the libcurl.dll to the bin directory
-    add_custom_command(TARGET kolosal_server POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CURL_INCLUDE_DIR}/../bin/libcurl.dll"
-        "$<TARGET_FILE_DIR:kolosal_server>"
-      COMMENT "Copying libcurl.dll to bin directory"
-    )
 else()
     # For Linux, link with required system libraries
     target_link_libraries(kolosal_server PRIVATE dl rt pthread)

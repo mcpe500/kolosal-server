@@ -239,7 +239,12 @@ int main(int argc, char *argv[])
     ServerConfig config;
     if (!config.loadFromArgs(argc, argv))
     {
-        return config.validate() ? 0 : 1; // Return 0 for help/version, 1 for errors
+        // If help or version was shown, exit successfully
+        if (config.helpOrVersionShown) {
+            return 0;
+        }
+        // Otherwise, it was an error - validate and return appropriate code
+        return config.validate() ? 0 : 1;
     }
 
     // Set up signal handlers for graceful shutdown
