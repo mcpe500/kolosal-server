@@ -345,25 +345,31 @@ namespace kolosal
     void NodeManager::autoscalingLoop()
     {
         ServerLogger::logInfo("Autoscaling thread started.");
+        
+        // Initial check interval
+        auto nextCheckInterval = std::chrono::seconds(10);
+        
         while (!stopAutoscaling_.load())
         {
-            std::unique_lock<std::mutex> autoscalingLock(autoscalingMutex_);
-            
-            // Wait for a timeout or a notification
-            if (autoscalingCv_.wait_for(autoscalingLock, std::chrono::seconds(60), [this]
-                                        { return stopAutoscaling_.load(); }))
             {
-                // stopAutoscaling_ is true, so exit
-                break;
+                std::unique_lock<std::mutex> autoscalingLock(autoscalingMutex_);
+                
+                // Wait for a timeout or a notification
+                if (autoscalingCv_.wait_for(autoscalingLock, nextCheckInterval, [this]
+                                            { return stopAutoscaling_.load(); }))
+                {
+                    // stopAutoscaling_ is true, so exit
+                    break;
+                }
+
+                if (stopAutoscaling_.load())
+                    break; // Check again after wait
             }
 
-            if (stopAutoscaling_.load())
-                break; // Check again after wait
-
-            autoscalingLock.unlock(); // Release autoscaling lock before processing engines
-
             auto now = std::chrono::steady_clock::now();
-            ServerLogger::logDebug("Autoscaling check at %lld", std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count());
+            ServerLogger::logDebug("Autoscaling check at %lld (next check interval was: %lld seconds)", 
+                                   std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count(),
+                                   std::chrono::duration_cast<std::chrono::seconds>(nextCheckInterval).count());
             
             // Get snapshot of engines to process
             std::vector<std::pair<std::string, std::shared_ptr<EngineRecord>>> engineSnapshot;
@@ -380,6 +386,9 @@ namespace kolosal
             }
             
             // Process engines without holding the map lock
+            auto nextCheckTime = std::chrono::steady_clock::now() + std::chrono::seconds(60); // Default to 60 seconds
+            bool hasLoadedEngines = false;
+            
             for (const auto& [engineId, recordPtr] : engineSnapshot)
             {
                 if (recordPtr->markedForRemoval.load())
@@ -389,7 +398,9 @@ namespace kolosal
                 
                 if (recordPtr->isLoaded.load() && recordPtr->engine && !recordPtr->markedForRemoval.load())
                 {
+                    hasLoadedEngines = true;
                     auto idleDuration = std::chrono::duration_cast<std::chrono::seconds>(now - recordPtr->lastActivityTime);
+                    
                     if (idleDuration >= idleTimeout_)
                     {
                         // Check if the engine has any active jobs before unloading
@@ -404,11 +415,39 @@ namespace kolosal
                                               engineId.c_str(), idleDuration.count(), idleTimeout_.count());
                         recordPtr->engine->unloadModel();
                         recordPtr->isLoaded.store(false);
-                        recordPtr->engine = nullptr; // Release engine instance to free memory
+                        recordPtr->engine = nullptr;
                         ServerLogger::logInfo("Engine ID \'%s\' unloaded due to inactivity.", engineId.c_str());
+                    }
+                    else
+                    {
+                        // Calculate when this engine will become idle
+                        auto timeWhenIdle = recordPtr->lastActivityTime + idleTimeout_;
+                        if (timeWhenIdle < nextCheckTime)
+                        {
+                            nextCheckTime = timeWhenIdle;
+                        }
                     }
                 }
             }
+            
+            // If no loaded engines, use longer interval
+            if (!hasLoadedEngines)
+            {
+                nextCheckTime = now + std::chrono::seconds(60);
+            }
+            
+            // Calculate time until next check (but cap it)
+            auto timeUntilNextCheck = std::chrono::duration_cast<std::chrono::seconds>(nextCheckTime - now);
+            timeUntilNextCheck = std::max(timeUntilNextCheck, std::chrono::seconds(1)); // At least 1 second
+            
+            // Cap the maximum check interval based on idle timeout to ensure timely unloading
+            auto maxCheckInterval = std::max(idleTimeout_ / 2, std::chrono::seconds(5)); // At most half the idle timeout, minimum 5 seconds
+            timeUntilNextCheck = std::min(timeUntilNextCheck, maxCheckInterval);
+            
+            // Set the next check interval for the next iteration
+            nextCheckInterval = timeUntilNextCheck;
+            
+            ServerLogger::logDebug("Next autoscaling check in %lld seconds", timeUntilNextCheck.count());
         }
         ServerLogger::logInfo("Autoscaling thread finished.");
     }
