@@ -19,7 +19,6 @@ struct ModelConfig {
     LoadingParameters loadParams;      // Model loading parameters
     int mainGpuId = 0;                // GPU ID to use for this model
     bool loadImmediately = true;      // Whether to load immediately (true) vs lazy load on first use (false)
-    bool preloadContext = false;      // Whether to preload context for faster inference
     
     ModelConfig() = default;
     ModelConfig(const std::string& modelId, const std::string& modelPath, bool load = true)
@@ -49,32 +48,40 @@ struct AuthConfig {
  * @brief Server startup configuration
  */
 struct KOLOSAL_SERVER_API ServerConfig {    // Basic server settings
+#pragma warning(push)
+#pragma warning(disable: 4251)
     std::string port = "8080";
     std::string host = "0.0.0.0";
-    int maxConnections = 100;
-    std::chrono::seconds requestTimeout{30};
+#pragma warning(pop)
     bool allowPublicAccess = false;    // Enable/disable external network access
     bool allowInternetAccess = false;  // Enable/disable internet access (UPnP + public IP detection)
       // Logging configuration
+#pragma warning(push)
+#pragma warning(disable: 4251)
     std::string logLevel = "INFO";    // DEBUG, INFO, WARN, ERROR
     std::string logFile = "";         // Empty means console only
+#pragma warning(pop)
     bool enableAccessLog = false;     // Whether to log all requests
     bool quietMode = false;           // Suppress routine operational messages
     bool showRequestDetails = true;   // Show detailed request processing logs
     
     // Performance settings
-    int workerThreads = 0;            // 0 = auto-detect based on CPU cores
-    size_t maxRequestSize = 16 * 1024 * 1024; // 16MB max request size
+#pragma warning(push)
+#pragma warning(disable: 4251)
     std::chrono::seconds idleTimeout{300}; // Model idle timeout
     
     // Models to load at startup
     std::vector<ModelConfig> models;
+#pragma warning(pop)
     
     // Authentication configuration
     AuthConfig auth;
       // Feature flags
     bool enableHealthCheck = true;
     bool enableMetrics = false;
+    
+    // Internal flags
+    bool helpOrVersionShown = false;  // Tracks if help/version was displayed
     
     ServerConfig() = default;
     

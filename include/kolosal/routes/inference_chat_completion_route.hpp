@@ -6,8 +6,6 @@
 #include <memory>
 
 namespace kolosal {
-    
-    class CompletionMonitor;
 
     /**
      * @brief Route for handling inference chat completion requests using raw inference interface parameters
@@ -24,7 +22,6 @@ namespace kolosal {
         void handle(SocketType sock, const std::string& body) override;
         
     private:
-        CompletionMonitor* monitor_;  // Pointer to singleton instance
     };
 
 } // namespace kolosal

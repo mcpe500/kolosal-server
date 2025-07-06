@@ -2,17 +2,17 @@
 #define KOLOSAL_NODE_MANAGER_H
 
 #include "export.hpp"
-#include "inference.h" // Assuming InferenceEngine is defined here
+#include "inference.h"
 #include <vector>
 #include <memory>
 #include <string>
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
-#include <chrono> // Added for time tracking
-#include <thread> // Added for autoscaling thread
-#include <atomic> // Added for thread control
-#include <condition_variable> // Added for autoscaling thread synchronization
+#include <chrono>
+#include <thread>
+#include <atomic>
+#include <condition_variable>
 
 namespace kolosal {
 
@@ -25,7 +25,7 @@ namespace kolosal {
  */
 class KOLOSAL_SERVER_API NodeManager {
 public:
-    NodeManager(std::chrono::seconds idleTimeout = std::chrono::seconds(300)); // Added idleTimeout parameter
+    NodeManager(std::chrono::seconds idleTimeout = std::chrono::seconds(300));
     ~NodeManager();
 
     NodeManager(const NodeManager&) = delete;
@@ -110,23 +110,21 @@ public:
 private:
     struct EngineRecord {
         std::shared_ptr<InferenceEngine> engine;
-        std::string modelPath;                 // Metadata: Path to the model file
-        LoadingParameters loadParams;          // Metadata: Parameters used to load the model
-        int mainGpuId;                         // Metadata: Main GPU ID for the engine
-        std::chrono::steady_clock::time_point lastActivityTime; // For autoscaling
-        std::atomic<bool> isLoaded{false};     // Tracks if the model is currently loaded
-        std::atomic<bool> isLoading{false};    // Tracks if the model is currently being loaded
-        std::atomic<bool> markedForRemoval{false}; // Tracks if engine is being removed
-        mutable std::mutex engineMutex;        // Per-engine mutex for thread safety
-        std::condition_variable loadingCv;     // For waiting on model loading
+        std::string modelPath;
+        LoadingParameters loadParams;
+        int mainGpuId;
+        std::chrono::steady_clock::time_point lastActivityTime;
+        std::atomic<bool> isLoaded{false};
+        std::atomic<bool> isLoading{false};
+        std::atomic<bool> markedForRemoval{false};
+        mutable std::mutex engineMutex;
+        std::condition_variable loadingCv;
         
         EngineRecord() : mainGpuId(0), lastActivityTime(std::chrono::steady_clock::now()) {}
         
-        // Disable copy operations to avoid mutex copying issues
         EngineRecord(const EngineRecord&) = delete;
         EngineRecord& operator=(const EngineRecord&) = delete;
         
-        // Enable move operations
         EngineRecord(EngineRecord&& other) noexcept 
             : engine(std::move(other.engine))
             , modelPath(std::move(other.modelPath))
@@ -153,15 +151,20 @@ private:
         }
     };
 
+#pragma warning(push)
+#pragma warning(disable: 4251)
     std::unordered_map<std::string, std::shared_ptr<EngineRecord>> engines_;
-    mutable std::shared_mutex engineMapMutex_; // Shared mutex for engines map (allows concurrent reads)
+    mutable std::shared_mutex engineMapMutex_;
 
-    // Autoscaling members
     std::thread autoscalingThread_;
     std::atomic<bool> stopAutoscaling_{false};
     std::condition_variable autoscalingCv_;
-    mutable std::mutex autoscalingMutex_; // Separate mutex for autoscaling
+#pragma warning(pop)
+    mutable std::mutex autoscalingMutex_;
+#pragma warning(push)
+#pragma warning(disable: 4251)
     std::chrono::seconds idleTimeout_;
+#pragma warning(pop)
 
     /**
      * @brief The main loop for the autoscaling thread.

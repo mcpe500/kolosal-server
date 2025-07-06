@@ -230,7 +230,7 @@ namespace kolosal
 
         // Wait for all download threads to complete with progressive timeout
         int completed = 0;
-        int total = futures_to_wait.size();
+        int total = static_cast<int>(futures_to_wait.size());
 
         for (auto &pair : futures_to_wait)
         {

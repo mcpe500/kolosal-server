@@ -265,8 +265,11 @@ namespace kolosal
                 }
             };
             
+#pragma warning(push)
+#pragma warning(disable: 4251)
             std::unique_ptr<RateLimiter> rateLimiter_;
             std::unique_ptr<CorsHandler> corsHandler_;
+#pragma warning(pop)
             ApiKeyConfig apiKeyConfig_;
             mutable HeaderCache headerCache_;
         };

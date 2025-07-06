@@ -8,21 +8,36 @@
 namespace kolosal
 {    bool ServerConfig::loadFromArgs(int argc, char *argv[])
     {
-        // Automatically detect and load configuration files in working directory
-        // Check for config files in this order: config.yaml, config.json
+        // Automatically detect and load configuration files
+        // Check for config files in this order: 
+        // 1. System-wide installation (/etc/kolosal/config.yaml) - preferred for installed versions
+        // 2. Local working directory (config.yaml, config.json) - for development
+        // 3. User home directory (~/.kolosal/config.yaml)
         bool configLoaded = false;
         
-        // Try config.yaml first
-        std::ifstream yamlFile("config.yaml");
-        if (yamlFile.good()) {
-            yamlFile.close();
-            if (loadFromFile("config.yaml")) {
-                std::cout << "Loaded configuration from config.yaml" << std::endl;
+        // First try system-wide config (installed version)
+        std::ifstream systemFile("/etc/kolosal/config.yaml");
+        if (systemFile.good()) {
+            systemFile.close();
+            if (loadFromFile("/etc/kolosal/config.yaml")) {
+                std::cout << "Loaded configuration from /etc/kolosal/config.yaml" << std::endl;
                 configLoaded = true;
             }
         }
         
-        // If config.yaml not found or failed, try config.json
+        // If no system config found, try config.yaml in working directory (development)
+        if (!configLoaded) {
+            std::ifstream yamlFile("config.yaml");
+            if (yamlFile.good()) {
+                yamlFile.close();
+                if (loadFromFile("config.yaml")) {
+                    std::cout << "Loaded configuration from config.yaml" << std::endl;
+                    configLoaded = true;
+                }
+            }
+        }
+        
+        // If config.yaml not found, try config.json in working directory
         if (!configLoaded) {
             std::ifstream jsonFile("config.json");
             if (jsonFile.good()) {
@@ -30,6 +45,22 @@ namespace kolosal
                 if (loadFromFile("config.json")) {
                     std::cout << "Loaded configuration from config.json" << std::endl;
                     configLoaded = true;
+                }
+            }
+        }
+        
+        // If still no config found, try user home directory
+        if (!configLoaded) {
+            const char* homeDir = getenv("HOME");
+            if (homeDir) {
+                std::string userConfigPath = std::string(homeDir) + "/.kolosal/config.yaml";
+                std::ifstream userFile(userConfigPath);
+                if (userFile.good()) {
+                    userFile.close();
+                    if (loadFromFile(userConfigPath)) {
+                        std::cout << "Loaded configuration from " << userConfigPath << std::endl;
+                        configLoaded = true;
+                    }
                 }
             }
         }
@@ -58,14 +89,6 @@ namespace kolosal
                 {
                     return false;
                 }
-            }
-            else if ((arg == "--max-connections") && i + 1 < argc)
-            {
-                maxConnections = std::stoi(argv[++i]);
-            }
-            else if ((arg == "--worker-threads") && i + 1 < argc)
-            {
-                workerThreads = std::stoi(argv[++i]);
             }
 
             // Logging options
@@ -174,18 +197,11 @@ namespace kolosal
             }
 
             // Performance options
-            else if ((arg == "--request-timeout") && i + 1 < argc)
-            {
-                requestTimeout = std::chrono::seconds(std::stoi(argv[++i]));
-            }
             else if ((arg == "--idle-timeout") && i + 1 < argc)
             {
                 idleTimeout = std::chrono::seconds(std::stoi(argv[++i]));
             }
-            else if ((arg == "--max-request-size") && i + 1 < argc)
-            {
-                maxRequestSize = std::stoul(argv[++i]);
-            } // Feature flags
+            // Feature flags
             else if (arg == "--enable-metrics")
             {
                 enableMetrics = true;
@@ -215,11 +231,13 @@ namespace kolosal
             else if (arg == "-h" || arg == "--help")
             {
                 printHelp();
+                helpOrVersionShown = true;
                 return false;
             }
             else if (arg == "-v" || arg == "--version")
             {
                 printVersion();
+                helpOrVersionShown = true;
                 return false;
             }
             else if (arg.front() == '-')
@@ -244,14 +262,6 @@ namespace kolosal
                     port = server["port"].as<std::string>();
                 if (server["host"])
                     host = server["host"].as<std::string>();
-                if (server["max_connections"])
-                    maxConnections = server["max_connections"].as<int>();
-                if (server["worker_threads"])
-                    workerThreads = server["worker_threads"].as<int>();
-                if (server["request_timeout"])
-                    requestTimeout = std::chrono::seconds(server["request_timeout"].as<int>());
-                if (server["max_request_size"])
-                    maxRequestSize = server["max_request_size"].as<size_t>();
                 if (server["idle_timeout"])
                     idleTimeout = std::chrono::seconds(server["idle_timeout"].as<int>());
                 if (server["allow_public_access"])
@@ -366,8 +376,6 @@ namespace kolosal
                         model.loadImmediately = modelConfig["load_at_startup"].as<bool>();
                     if (modelConfig["main_gpu_id"])
                         model.mainGpuId = modelConfig["main_gpu_id"].as<int>();
-                    if (modelConfig["preload_context"])
-                        model.preloadContext = modelConfig["preload_context"].as<bool>();
                     if (modelConfig["load_params"])
                     {
                         auto params = modelConfig["load_params"];
@@ -423,10 +431,6 @@ namespace kolosal
             YAML::Node config; // Server settings
             config["server"]["port"] = port;
             config["server"]["host"] = host;
-            config["server"]["max_connections"] = maxConnections;
-            config["server"]["worker_threads"] = workerThreads;
-            config["server"]["request_timeout"] = static_cast<int>(requestTimeout.count());
-            config["server"]["max_request_size"] = maxRequestSize;
             config["server"]["idle_timeout"] = static_cast<int>(idleTimeout.count());
             config["server"]["allow_public_access"] = allowPublicAccess;
             config["server"]["allow_internet_access"] = allowInternetAccess;            // Logging settings
@@ -459,7 +463,6 @@ namespace kolosal
                 modelNode["path"] = model.path;
                 modelNode["load_immediately"] = model.loadImmediately;
                 modelNode["main_gpu_id"] = model.mainGpuId;
-                modelNode["preload_context"] = model.preloadContext;
                 modelNode["load_params"]["n_ctx"] = model.loadParams.n_ctx;
                 modelNode["load_params"]["n_keep"] = model.loadParams.n_keep;
                 modelNode["load_params"]["use_mmap"] = model.loadParams.use_mmap;
@@ -505,7 +508,7 @@ namespace kolosal
                 return false;
             }
         }
-        catch (const std::exception &e)
+        catch (const std::exception &)
         {
             std::cerr << "Error: Invalid port number: " << port << std::endl;
             return false;
@@ -513,20 +516,6 @@ namespace kolosal
         if (logLevel != "DEBUG" && logLevel != "INFO" && logLevel != "WARN" && logLevel != "WARNING" && logLevel != "ERROR")
         {
             std::cerr << "Error: Invalid log level: " << logLevel << std::endl;
-            return false;
-        }
-
-        // Validate worker threads
-        if (workerThreads < 0)
-        {
-            std::cerr << "Error: Worker threads must be non-negative" << std::endl;
-            return false;
-        }
-
-        // Validate max connections
-        if (maxConnections <= 0)
-        {
-            std::cerr << "Error: Max connections must be positive" << std::endl;
             return false;
         }
 
@@ -606,9 +595,6 @@ namespace kolosal
         std::cout << "  Host: " << host << std::endl;
         std::cout << "  Public Access: " << (allowPublicAccess ? "Enabled" : "Disabled") << std::endl;
         std::cout << "  Internet Access: " << (allowInternetAccess ? "Enabled" : "Disabled") << std::endl;
-        std::cout << "  Max Connections: " << maxConnections << std::endl;
-        std::cout << "  Worker Threads: " << (workerThreads == 0 ? "Auto" : std::to_string(workerThreads)) << std::endl;
-        std::cout << "  Request Timeout: " << requestTimeout.count() << "s" << std::endl;
         std::cout << "  Idle Timeout: " << idleTimeout.count() << "s" << std::endl;
 
         std::cout << "\nLogging:" << std::endl;
@@ -662,11 +648,7 @@ namespace kolosal
         std::cout << "    -p, --port PORT           Server port (default: 8080)\n";
         std::cout << "    --host HOST               Server host (default: 0.0.0.0)\n";
         std::cout << "    -c, --config FILE         Load configuration from YAML file\n";
-        std::cout << "    --max-connections N       Maximum concurrent connections (default: 100)\n";
-        std::cout << "    --worker-threads N        Number of worker threads (default: auto)\n";
-        std::cout << "    --request-timeout SEC     Request timeout in seconds (default: 30)\n";
-        std::cout << "    --idle-timeout SEC        Model idle timeout in seconds (default: 300)\n";
-        std::cout << "    --max-request-size BYTES  Maximum request size in bytes (default: 16MB)\n\n";
+        std::cout << "    --idle-timeout SEC        Model idle timeout in seconds (default: 300)\n\n";
 
         std::cout << "  Logging:\n";
         std::cout << "    --log-level LEVEL         Log level: DEBUG, INFO, WARN, ERROR (default: INFO)\n";

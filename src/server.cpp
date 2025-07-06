@@ -231,7 +231,7 @@ namespace kolosal
 				continue;
 			}
 
-			if (bind(listen_sock, p->ai_addr, p->ai_addrlen) == -1)
+			if (bind(listen_sock, p->ai_addr, static_cast<int>(p->ai_addrlen)) == -1)
 			{
 #ifdef _WIN32
 				closesocket(listen_sock);
@@ -294,7 +294,7 @@ namespace kolosal
 			tv.tv_sec = 1; // 1 second timeout
 			tv.tv_usec = 0;
 
-			int select_result = select(listen_sock + 1, &readfds, NULL, NULL, &tv);
+			int select_result = select(static_cast<int>(listen_sock) + 1, &readfds, NULL, NULL, &tv);
 
 			if (select_result == -1)
 			{
@@ -452,7 +452,7 @@ namespace kolosal
 										ServerLogger::logDebug("[Thread %d] Content-Length: %d",
 															   std::this_thread::get_id(), contentLength);
 									}
-									catch (const std::exception &e)
+									catch (const std::exception &)
 									{
 										ServerLogger::logWarning("[Thread %d] Invalid Content-Length header: %s",
 																 std::this_thread::get_id(), lengthStr.c_str());
@@ -472,7 +472,7 @@ namespace kolosal
 								// If Content-Length indicates there's more data to read
 								if (contentLength > 0 && body.length() < static_cast<size_t>(contentLength))
 								{
-									int remaining = contentLength - body.length();
+									int remaining = static_cast<int>(contentLength - body.length());
 									std::vector<char> bodyBuffer(remaining + 1, 0);
 
 									int totalRead = 0;

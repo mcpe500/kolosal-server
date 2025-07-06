@@ -81,9 +81,12 @@ private:
 	std::string getCurrentTimestamp();
 
 	LogLevel minLevel;
+#pragma warning(push)
+#pragma warning(disable: 4251)
 	std::vector<LogEntry> logs;
 	std::ofstream logFile;
 	std::string logFilePath;
+#pragma warning(pop)
 	std::mutex logMutex;
 	
 	// Quiet mode settings

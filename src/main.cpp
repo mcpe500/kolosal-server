@@ -239,7 +239,12 @@ int main(int argc, char *argv[])
     ServerConfig config;
     if (!config.loadFromArgs(argc, argv))
     {
-        return config.validate() ? 0 : 1; // Return 0 for help/version, 1 for errors
+        // If help or version was shown, exit successfully
+        if (config.helpOrVersionShown) {
+            return 0;
+        }
+        // Otherwise, it was an error - validate and return appropriate code
+        return config.validate() ? 0 : 1;
     }
 
     // Set up signal handlers for graceful shutdown
@@ -303,7 +308,7 @@ int main(int argc, char *argv[])
         std::cout << "Server will only be accessible from this machine" << std::endl;
     }
 
-    if (!server.init(config.port, bindHost))
+    if (!server.init(config.port, bindHost, config.idleTimeout))
     {
         std::cerr << "Failed to initialize server on " << bindHost << ":" << config.port << std::endl;
         return 1;
@@ -347,20 +352,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    // Enable metrics if configured
-    if (config.enableMetrics)
-    {
-        try
-        {
-            server.enableMetrics();
-            ServerLogger::logInfo("System metrics monitoring enabled");
-        }
-        catch (const std::exception &e)
-        {
-            std::cerr << "Failed to enable metrics: " << e.what() << std::endl;
-            return 1;
-        }
-    } // Load models if specified
+    // Load models if specified
     if (!config.models.empty())
     {
         auto &downloadManager = DownloadManager::getInstance();
@@ -544,15 +536,6 @@ int main(int argc, char *argv[])
         std::cout << "  PUT  /v1/auth/config         - Update authentication configuration" << std::endl;
         std::cout << "  GET  /v1/auth/stats          - Get authentication statistics" << std::endl;
         std::cout << "  POST /v1/auth/clear          - Clear rate limit data" << std::endl;
-    }
-    if (config.enableMetrics)
-    {
-        std::cout << "\nMetrics endpoints:" << std::endl;
-        std::cout << "  GET  /metrics                - System monitoring metrics" << std::endl;
-        std::cout << "  GET  /v1/metrics             - System monitoring metrics" << std::endl;
-        std::cout << "  GET  /system/metrics         - System monitoring metrics" << std::endl;
-        std::cout << "  GET  /completion-metrics     - Completion performance metrics" << std::endl;
-        std::cout << "  GET  /v1/completion-metrics  - Completion performance metrics" << std::endl;
     }
 
     std::cout << "\nPress Ctrl+C to stop the server..." << std::endl;
