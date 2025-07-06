@@ -19,7 +19,6 @@ struct ModelConfig {
     LoadingParameters loadParams;      // Model loading parameters
     int mainGpuId = 0;                // GPU ID to use for this model
     bool loadImmediately = true;      // Whether to load immediately (true) vs lazy load on first use (false)
-    bool preloadContext = false;      // Whether to preload context for faster inference
     
     ModelConfig() = default;
     ModelConfig(const std::string& modelId, const std::string& modelPath, bool load = true)
@@ -54,11 +53,6 @@ struct KOLOSAL_SERVER_API ServerConfig {    // Basic server settings
     std::string port = "8080";
     std::string host = "0.0.0.0";
 #pragma warning(pop)
-    int maxConnections = 100;
-#pragma warning(push)
-#pragma warning(disable: 4251)
-    std::chrono::seconds requestTimeout{30};
-#pragma warning(pop)
     bool allowPublicAccess = false;    // Enable/disable external network access
     bool allowInternetAccess = false;  // Enable/disable internet access (UPnP + public IP detection)
       // Logging configuration
@@ -72,8 +66,6 @@ struct KOLOSAL_SERVER_API ServerConfig {    // Basic server settings
     bool showRequestDetails = true;   // Show detailed request processing logs
     
     // Performance settings
-    int workerThreads = 0;            // 0 = auto-detect based on CPU cores
-    size_t maxRequestSize = 16 * 1024 * 1024; // 16MB max request size
 #pragma warning(push)
 #pragma warning(disable: 4251)
     std::chrono::seconds idleTimeout{300}; // Model idle timeout
