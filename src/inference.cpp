@@ -371,13 +371,36 @@ namespace
 
 			batch = llama_batch_init(params.n_ctx, 0, 1);
 
-			std::thread inferenceThread(&LlamaInferenceService::start, this);
-			inferenceThread.detach();
+			inferenceThread = std::thread(&LlamaInferenceService::start, this);
 		}
 
 		~LlamaInferenceService()
 		{
 			stop();
+
+			// Wait for the inference thread to finish before cleaning up resources
+			if (inferenceThread.joinable()) {
+				inferenceThread.join();
+			}
+
+			// Clean up all remaining jobs to prevent accessing freed resources
+			{
+				std::lock_guard<std::mutex> lock(mtx);
+				for (auto& job : jobs) {
+					std::lock_guard<std::mutex> jobLock(job->mtx);
+					if (!job->isFinished) {
+						job->hasError = true;
+						job->errorMessage = "Service is shutting down";
+						job->isFinished = true;
+						job->cv.notify_all();
+					}
+					if (job->smpl) {
+						common_sampler_free(job->smpl);
+						job->smpl = nullptr;
+					}
+				}
+				jobs.clear();
+			}
 
 			llama_free(context);
 			llama_free_model(model);
@@ -389,6 +412,8 @@ namespace
 		void stop() override
 		{
 			should_terminate = true;
+			// Wake up the inference thread if it's waiting
+			cv.notify_all();
 		}
 
 		void start() override
@@ -405,10 +430,16 @@ namespace
 					current_jobs = jobs; // Copy jobs to process without holding the lock
 				}
 
+				// Check for shutdown again after acquiring jobs
+				if (should_terminate) break;
+
 				bool batch_has_tokens = false;
 
 				for (auto job : current_jobs)
 				{
+					// Check for shutdown in the job processing loop
+					if (should_terminate) break;
+
 					std::lock_guard<std::mutex> jobLock(job->mtx);
 
 					if (job->isFinished || job->hasError)
@@ -416,9 +447,14 @@ namespace
 
 					if (checkCancellation(job) || (job->n_remain <= 0 && job->params.maxNewTokens != 0)) {
 						saveSession(job);
-						common_sampler_free(job->smpl);
-						llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-						llama_kv_self_update(context);
+						if (job->smpl) {
+							common_sampler_free(job->smpl);
+							job->smpl = nullptr;
+						}
+						if (!should_terminate && context) {
+							llama_kv_self_seq_rm(context, job->seqId, -1, -1);
+							llama_kv_self_update(context);
+						}
 						job->isFinished = true;
 						job->cv.notify_all();
 						continue;
@@ -426,9 +462,14 @@ namespace
 
 					if (!ensureContextCapacity(job))
 					{
-						common_sampler_free(job->smpl);
-						llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-						llama_kv_self_update(context);
+						if (job->smpl) {
+							common_sampler_free(job->smpl);
+							job->smpl = nullptr;
+						}
+						if (!should_terminate && context) {
+							llama_kv_self_seq_rm(context, job->seqId, -1, -1);
+							llama_kv_self_update(context);
+						}
 						job->hasError = true;
 						job->isFinished = true;
 						job->errorMessage = "Context overflow even after trimming.";
@@ -443,9 +484,14 @@ namespace
 
 						if (!sampleNextToken(job)) {
 							saveSession(job);
-							common_sampler_free(job->smpl);
-							llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-							llama_kv_self_update(context);
+							if (job->smpl) {
+								common_sampler_free(job->smpl);
+								job->smpl = nullptr;
+							}
+							if (!should_terminate && context) {
+								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
+								llama_kv_self_update(context);
+							}
 							job->isFinished = true;
 							job->cv.notify_all();
 							continue;
@@ -456,9 +502,14 @@ namespace
 					}
 					else {
 						if (!loadSession(job)) {
-							common_sampler_free(job->smpl);
-							llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-							llama_kv_self_update(context);
+							if (job->smpl) {
+								common_sampler_free(job->smpl);
+								job->smpl = nullptr;
+							}
+							if (!should_terminate && context) {
+								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
+								llama_kv_self_update(context);
+							}
 							job->hasError = true;
 							job->isFinished = true;
 							job->errorMessage = "Failed to load sessions";
@@ -467,9 +518,14 @@ namespace
 						}
 
 						if (!getInputTokens(job)) {
-							common_sampler_free(job->smpl);
-							llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-							llama_kv_self_update(context);
+							if (job->smpl) {
+								common_sampler_free(job->smpl);
+								job->smpl = nullptr;
+							}
+							if (!should_terminate && context) {
+								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
+								llama_kv_self_update(context);
+							}
 							job->hasError = true;
 							job->isFinished = true;
 							job->errorMessage = "Failed to tokenize input";
@@ -478,9 +534,14 @@ namespace
 						}
 
 						if (!ensureNonEmptyInput(job)) {
-							common_sampler_free(job->smpl);
-							llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-							llama_kv_self_update(context);
+							if (job->smpl) {
+								common_sampler_free(job->smpl);
+								job->smpl = nullptr;
+							}
+							if (!should_terminate && context) {
+								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
+								llama_kv_self_update(context);
+							}
 							job->hasError = true;
 							job->isFinished = true;
 							job->errorMessage = "Failed to ensure input content";
@@ -527,9 +588,14 @@ namespace
 						}
 
 						if (!ensureContextCapacity(job)) {
-							common_sampler_free(job->smpl);
-							llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-							llama_kv_self_update(context);
+							if (job->smpl) {
+								common_sampler_free(job->smpl);
+								job->smpl = nullptr;
+							}
+							if (!should_terminate && context) {
+								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
+								llama_kv_self_update(context);
+							}
 							job->hasError = true;
 							job->isFinished = true;
 							job->errorMessage = "Context overflow even after trimming.";
@@ -539,7 +605,7 @@ namespace
 					}
 				}
 
-				if (batch_has_tokens)
+				if (batch_has_tokens && !should_terminate && context)
 				{
 					if (llama_decode(context, batch))
 					{
@@ -556,6 +622,20 @@ namespace
 					}
 
 					common_batch_clear(batch);
+				}
+			}
+			
+			// Ensure all remaining jobs are properly cleaned up when exiting
+			{
+				std::lock_guard<std::mutex> lock(mtx);
+				for (auto& job : jobs) {
+					std::lock_guard<std::mutex> jobLock(job->mtx);
+					if (!job->isFinished) {
+						job->hasError = true;
+						job->errorMessage = "Service is shutting down";
+						job->isFinished = true;
+						job->cv.notify_all();
+					}
 				}
 			}
 		}
@@ -679,6 +759,7 @@ namespace
 		std::vector<std::shared_ptr<Job>>	jobs;
 		std::atomic<bool>					should_terminate{ false };
 		toolcall::client::ptr               tc_client;
+		std::thread							inferenceThread;
 
 		const int n_batch;
 		const int n_keep;
