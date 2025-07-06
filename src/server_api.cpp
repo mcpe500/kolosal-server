@@ -33,8 +33,12 @@ namespace kolosal
         std::unique_ptr<NodeManager> nodeManager;
 
         Impl()
-            : nodeManager(std::make_unique<NodeManager>())
         {
+        }
+        
+        void initNodeManager(std::chrono::seconds idleTimeout)
+        {
+            nodeManager = std::make_unique<NodeManager>(idleTimeout);
         }
     };
 
@@ -50,11 +54,14 @@ namespace kolosal
         static ServerAPI instance;
         return instance;
     }
-    bool ServerAPI::init(const std::string &port, const std::string &host)
+    bool ServerAPI::init(const std::string &port, const std::string &host, std::chrono::seconds idleTimeout)
     {
         try
         {
-            ServerLogger::logInfo("Initializing server on %s:%s", host.c_str(), port.c_str());
+            ServerLogger::logInfo("Initializing server on %s:%s with idle timeout: %lld seconds", host.c_str(), port.c_str(), idleTimeout.count());
+
+            // Initialize NodeManager with configured idle timeout
+            pImpl->initNodeManager(idleTimeout);
 
             pImpl->server = std::make_unique<Server>(port, host);
             if (!pImpl->server->init())
