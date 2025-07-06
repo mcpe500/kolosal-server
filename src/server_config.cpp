@@ -8,21 +8,36 @@
 namespace kolosal
 {    bool ServerConfig::loadFromArgs(int argc, char *argv[])
     {
-        // Automatically detect and load configuration files in working directory
-        // Check for config files in this order: config.yaml, config.json
+        // Automatically detect and load configuration files
+        // Check for config files in this order: 
+        // 1. System-wide installation (/etc/kolosal/config.yaml) - preferred for installed versions
+        // 2. Local working directory (config.yaml, config.json) - for development
+        // 3. User home directory (~/.kolosal/config.yaml)
         bool configLoaded = false;
         
-        // Try config.yaml first
-        std::ifstream yamlFile("config.yaml");
-        if (yamlFile.good()) {
-            yamlFile.close();
-            if (loadFromFile("config.yaml")) {
-                std::cout << "Loaded configuration from config.yaml" << std::endl;
+        // First try system-wide config (installed version)
+        std::ifstream systemFile("/etc/kolosal/config.yaml");
+        if (systemFile.good()) {
+            systemFile.close();
+            if (loadFromFile("/etc/kolosal/config.yaml")) {
+                std::cout << "Loaded configuration from /etc/kolosal/config.yaml" << std::endl;
                 configLoaded = true;
             }
         }
         
-        // If config.yaml not found or failed, try config.json
+        // If no system config found, try config.yaml in working directory (development)
+        if (!configLoaded) {
+            std::ifstream yamlFile("config.yaml");
+            if (yamlFile.good()) {
+                yamlFile.close();
+                if (loadFromFile("config.yaml")) {
+                    std::cout << "Loaded configuration from config.yaml" << std::endl;
+                    configLoaded = true;
+                }
+            }
+        }
+        
+        // If config.yaml not found, try config.json in working directory
         if (!configLoaded) {
             std::ifstream jsonFile("config.json");
             if (jsonFile.good()) {
@@ -30,6 +45,22 @@ namespace kolosal
                 if (loadFromFile("config.json")) {
                     std::cout << "Loaded configuration from config.json" << std::endl;
                     configLoaded = true;
+                }
+            }
+        }
+        
+        // If still no config found, try user home directory
+        if (!configLoaded) {
+            const char* homeDir = getenv("HOME");
+            if (homeDir) {
+                std::string userConfigPath = std::string(homeDir) + "/.kolosal/config.yaml";
+                std::ifstream userFile(userConfigPath);
+                if (userFile.good()) {
+                    userFile.close();
+                    if (loadFromFile(userConfigPath)) {
+                        std::cout << "Loaded configuration from " << userConfigPath << std::endl;
+                        configLoaded = true;
+                    }
                 }
             }
         }

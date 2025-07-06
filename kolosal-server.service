@@ -19,10 +19,10 @@ User=kolosal
 Group=kolosal
 
 # Working directory
-WorkingDirectory=/opt/kolosal-server
+WorkingDirectory=/var/lib/kolosal
 
 # Main service command
-ExecStart=/usr/local/bin/kolosal-server -c /opt/kolosal-server/config.yaml
+ExecStart=/usr/bin/kolosal-server --config /etc/kolosal/config.yaml
 
 # Restart configuration
 Restart=always
@@ -35,7 +35,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/kolosal-server /var/log/kolosal-server /var/cache/kolosal-server
+ReadWritePaths=/var/lib/kolosal /tmp /var/log
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
