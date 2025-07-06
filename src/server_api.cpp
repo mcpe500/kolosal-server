@@ -10,9 +10,7 @@
 #include "kolosal/routes/engine_status_route.hpp"
 #include "kolosal/routes/health_status_route.hpp"
 #include "kolosal/routes/auth_config_route.hpp"
-#include "kolosal/routes/system_metrics_route.hpp"
-#include "kolosal/routes/completion_metrics_route.hpp"
-#include "kolosal/routes/combined_metrics_route.hpp"
+
 #include "kolosal/routes/download_progress_route.hpp"
 #include "kolosal/routes/downloads_status_route.hpp"
 #include "kolosal/routes/cancel_download_route.hpp"
@@ -82,9 +80,7 @@ namespace kolosal
             pImpl->server->addRoute(std::make_unique<ResumeDownloadRoute>());
             pImpl->server->addRoute(std::make_unique<CancelAllDownloadsRoute>());
 
-            // Register metrics routes
-            pImpl->server->addRoute(std::make_unique<CombinedMetricsRoute>()); // Handles /metrics and /v1/metrics
-            pImpl->server->addRoute(std::make_unique<SystemMetricsRoute>());   // Handles /system/metrics
+            ServerLogger::logInfo("Routes registered successfully");
 
             // Start server in a background thread
             std::thread([this]()
@@ -124,19 +120,6 @@ namespace kolosal
             pImpl->server.reset();
             ServerLogger::logInfo("Server shutdown complete");
         }
-    }
-    void ServerAPI::enableMetrics()
-    {
-        if (!pImpl->server)
-        {
-            throw std::runtime_error("Server not initialized - call init() first");
-        }
-
-        ServerLogger::logInfo("Enabling system metrics monitoring");
-        pImpl->server->addRoute(std::make_unique<SystemMetricsRoute>());
-
-        ServerLogger::logInfo("Enabling completion metrics monitoring");
-        pImpl->server->addRoute(std::make_unique<CompletionMetricsRoute>());
     }
 
     NodeManager &ServerAPI::getNodeManager()

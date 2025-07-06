@@ -1,128 +1,9 @@
 #include "kolosal/metrics_converter.hpp"
-#include "kolosal/system_monitor.hpp"
 
 namespace kolosal
 {
     namespace utils
     {
-
-        SystemMetricsResponseModel convertToSystemMetricsResponse(const SystemMetrics &metrics, bool gpuMonitoringAvailable)
-        {
-            SystemMetricsResponseModel response;
-
-            response.timestamp = metrics.timestamp;
-
-            // Convert CPU info
-            if (metrics.cpuUsage >= 0)
-            {
-                response.cpu.usage_percent = metrics.cpuUsage;
-            }
-
-            // Convert memory info
-            response.memory.total_bytes = metrics.totalRAM;
-            response.memory.used_bytes = metrics.usedRAM;
-            response.memory.free_bytes = metrics.freeRAM;
-            response.memory.total_formatted = SystemMonitor::formatBytes(metrics.totalRAM);
-            response.memory.used_formatted = SystemMonitor::formatBytes(metrics.usedRAM);
-            response.memory.free_formatted = SystemMonitor::formatBytes(metrics.freeRAM);
-            if (metrics.ramUtilization >= 0)
-            {
-                response.memory.utilization_percent = metrics.ramUtilization;
-            }
-
-            // Convert GPU info
-            response.gpus.clear();
-            for (const auto &gpu : metrics.gpus)
-            {
-                GpuInfoDto gpuDto;
-                gpuDto.id = gpu.id;
-                gpuDto.name = gpu.name;
-                gpuDto.vendor = gpu.vendor;
-
-                if (gpu.utilization >= 0)
-                {
-                    gpuDto.utilization_percent = gpu.utilization;
-                }
-                if (gpu.memoryUtilization >= 0)
-                {
-                    gpuDto.memory_utilization_percent = gpu.memoryUtilization;
-                }
-
-                gpuDto.total_memory_bytes = gpu.totalMemory;
-                gpuDto.used_memory_bytes = gpu.usedMemory;
-                gpuDto.free_memory_bytes = gpu.freeMemory;
-                gpuDto.total_memory_formatted = SystemMonitor::formatBytes(gpu.totalMemory);
-                gpuDto.used_memory_formatted = SystemMonitor::formatBytes(gpu.usedMemory);
-                gpuDto.free_memory_formatted = SystemMonitor::formatBytes(gpu.freeMemory);
-
-                if (gpu.temperature >= 0)
-                {
-                    gpuDto.temperature_celsius = gpu.temperature;
-                }
-                if (gpu.powerUsage >= 0)
-                {
-                    gpuDto.power_usage_watts = gpu.powerUsage;
-                }
-
-                // Add driver version only for the first GPU to avoid redundancy
-                if (gpu.id == 0 && !gpu.driverVersion.empty())
-                {
-                    gpuDto.driver_version = gpu.driverVersion;
-                }
-
-                response.gpus.push_back(gpuDto);
-            }
-
-            response.gpu_monitoring_available = gpuMonitoringAvailable;
-
-            // Create summary statistics
-            double totalGpuUtilization = 0.0;
-            double totalVramUtilization = 0.0;
-            int validGpuReadings = 0;
-            int validVramReadings = 0;
-
-            for (const auto &gpu : metrics.gpus)
-            {
-                if (gpu.utilization >= 0)
-                {
-                    totalGpuUtilization += gpu.utilization;
-                    validGpuReadings++;
-                }
-                if (gpu.memoryUtilization >= 0)
-                {
-                    totalVramUtilization += gpu.memoryUtilization;
-                    validVramReadings++;
-                }
-            }
-
-            if (metrics.cpuUsage >= 0)
-            {
-                response.summary.cpu_usage_percent = metrics.cpuUsage;
-            }
-            if (metrics.ramUtilization >= 0)
-            {
-                response.summary.ram_utilization_percent = metrics.ramUtilization;
-            }
-            response.summary.gpu_count = static_cast<int>(metrics.gpus.size());
-            if (validGpuReadings > 0)
-            {
-                response.summary.average_gpu_utilization_percent = totalGpuUtilization / validGpuReadings;
-            }
-            if (validVramReadings > 0)
-            {
-                response.summary.average_vram_utilization_percent = totalVramUtilization / validVramReadings;
-            }
-
-            // Set metadata
-            response.metadata.version = "1.0";
-            response.metadata.server = "kolosal-server";
-            response.metadata.monitoring_capabilities = nlohmann::json{
-                {"cpu", true},
-                {"memory", true},
-                {"gpu", gpuMonitoringAvailable}};
-
-            return response;
-        }
 
         CompletionMetricsResponseModel convertToCompletionMetricsResponse(const AggregatedCompletionMetrics &metrics)
         {
@@ -226,26 +107,6 @@ namespace kolosal
             response.timing_totals.total_time_to_first_token_ms = metrics.totalTimeToFirstToken;
             response.timing_totals.total_output_generation_time_ms = metrics.totalOutputGenerationTime;
             response.last_updated = metrics.lastUpdated;
-
-            return response;
-        }
-
-        CombinedMetricsResponseModel convertToCombinedMetricsResponse(
-            const SystemMetrics &systemMetrics,
-            bool gpuMonitoringAvailable,
-            const AggregatedCompletionMetrics &completionMetrics)
-        {
-
-            CombinedMetricsResponseModel response;
-
-            // Convert system metrics
-            response.system_metrics = convertToSystemMetricsResponse(systemMetrics, gpuMonitoringAvailable);
-
-            // Convert completion metrics
-            response.completion_metrics = convertToCompletionMetricsResponse(completionMetrics);
-
-            // Use the most recent timestamp
-            response.timestamp = systemMetrics.timestamp;
 
             return response;
         }

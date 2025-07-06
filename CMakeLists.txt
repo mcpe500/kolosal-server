@@ -32,7 +32,6 @@ option(USE_CUDA   "Compile with CUDA support" OFF)
 option(USE_VULKAN "Compile with VULKAN support" OFF)
 option(USE_MPI    "Compile with MPI support" OFF)
 option(DEBUG      "Compile with debugging information" OFF)
-option(USE_CPPUPROFILE_GPU "Enable cppuprofile GPU monitoring" ON)
 
 # Define include directories.
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -48,9 +47,7 @@ set(SOURCES
     src/logger.cpp
     src/download_utils.cpp
     src/download_manager.cpp
-    src/system_monitor.cpp
-    src/completion_monitor.cpp
-    src/enhanced_gpu_monitor.cpp
+
     src/routes/chat_completion_route.cpp
     src/routes/completion_route.cpp
     src/routes/inference_completion_route.cpp
@@ -61,16 +58,14 @@ set(SOURCES
     src/routes/engine_status_route.cpp
     src/routes/health_status_route.cpp    
     src/routes/auth_config_route.cpp    
-    src/routes/system_metrics_route.cpp    
-    src/routes/completion_metrics_route.cpp
-    src/routes/combined_metrics_route.cpp
+
     src/routes/download_progress_route.cpp
     src/routes/downloads_status_route.cpp
     src/routes/cancel_download_route.cpp
     src/routes/pause_download_route.cpp
     src/routes/resume_download_route.cpp
     src/routes/cancel_all_downloads_route.cpp
-    src/metrics_converter.cpp
+
     src/auth/rate_limiter.cpp
     src/auth/cors_handler.cpp
     src/auth/auth_middleware.cpp
@@ -221,7 +216,6 @@ target_compile_definitions(kolosal_server PUBLIC
   $<$<BOOL:${USE_VULKAN}>:USE_VULKAN>
   $<$<BOOL:${USE_MPI}>:USE_MPI>
   $<$<BOOL:${DEBUG}>:DEBUG>
-  $<$<BOOL:${USE_CPPUPROFILE_GPU}>:USE_CPPUPROFILE_GPU>
 )
 
 # Add subdirectories for external libraries
@@ -249,21 +243,8 @@ if(NOT TARGET yaml-cpp)
     endif()
 endif()
 
-# Add cppuprofile if GPU monitoring is enabled
-if(USE_CPPUPROFILE_GPU)
-    # Configure cppuprofile with NVIDIA support
-    set(GPU_MONITOR_NVIDIA ON CACHE BOOL "Enable NVIDIA GPU monitoring in cppuprofile" FORCE)
-    add_subdirectory(external/cppuprofile/lib)
-    message(STATUS "cppuprofile GPU monitoring enabled")
-endif()
-
 # Link libraries
 set(KOLOSAL_LINK_LIBRARIES llama common ggml toolcall yaml-cpp)
-
-# Add cppuprofile if enabled
-if(USE_CPPUPROFILE_GPU)
-    list(APPEND KOLOSAL_LINK_LIBRARIES cppuprofile)
-endif()
 
 target_link_libraries(kolosal_server PRIVATE ${KOLOSAL_LINK_LIBRARIES})
 
@@ -309,7 +290,7 @@ target_link_libraries(kolosal_server PRIVATE Threads::Threads)
 
 # Platform-specific link libraries for the main library.
 if(WIN32)
-    target_link_libraries(kolosal_server PRIVATE ws2_32 pdh psapi)
+    target_link_libraries(kolosal_server PRIVATE ws2_32)
     # Copy the libcurl.dll to the bin directory
     add_custom_command(TARGET kolosal_server POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -328,48 +309,6 @@ else()
         # RHEL/CentOS/Fedora specific
         message(STATUS "Detected RedHat-based system")
     endif()
-endif()
-
-# Try to find and link NVML for GPU monitoring
-if(WIN32)
-    find_library(NVML_LIBRARY nvidia-ml 
-        HINTS 
-        "C:/Program Files/NVIDIA Corporation/NVSMI"
-        "C:/Windows/System32"
-        NO_DEFAULT_PATH
-    )
-else()
-    # Linux NVML detection
-    find_library(NVML_LIBRARY nvidia-ml 
-        HINTS 
-        "/usr/lib/x86_64-linux-gnu"
-        "/usr/lib64"
-        "/usr/local/cuda/lib64"
-        "/usr/lib/nvidia"
-        "/usr/lib/x86_64-linux-gnu/nvidia/current"
-        "/usr/local/cuda/lib"
-        "/usr/lib/nvidia-current"
-        "/usr/lib/x86_64-linux-gnu/nvidia-384"
-        "/usr/lib/x86_64-linux-gnu/nvidia-390"
-        "/usr/lib/x86_64-linux-gnu/nvidia-410"
-        "/usr/lib/x86_64-linux-gnu/nvidia-440"
-        "/usr/lib/x86_64-linux-gnu/nvidia-450"
-        "/usr/lib/x86_64-linux-gnu/nvidia-460"
-        "/usr/lib/x86_64-linux-gnu/nvidia-470"
-        "/usr/lib/x86_64-linux-gnu/nvidia-480"
-        "/usr/lib/x86_64-linux-gnu/nvidia-510"
-        "/usr/lib/x86_64-linux-gnu/nvidia-520"
-        "/usr/lib/x86_64-linux-gnu/nvidia-530"
-        NO_DEFAULT_PATH
-    )
-endif()
-
-if(NVML_LIBRARY)
-    target_link_libraries(kolosal_server PRIVATE ${NVML_LIBRARY})
-    message(STATUS "Found NVML: ${NVML_LIBRARY}")
-    target_compile_definitions(kolosal_server PRIVATE NVML_AVAILABLE)
-else()
-    message(STATUS "NVML not found - GPU monitoring will be limited")
 endif()
 
 # Add aggressive optimization flags for better performance

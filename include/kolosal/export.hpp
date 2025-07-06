@@ -1,5 +1,12 @@
 #pragma once
 
+#ifdef _WIN32
+// Suppress C4251 warnings for STL containers in exported classes
+// These warnings are benign when all modules use the same runtime
+#pragma warning(push)
+#pragma warning(disable: 4251)
+#endif
+
 #ifdef KOLOSAL_SERVER_STATIC
     // For static library linking, no import/export needed
     #define KOLOSAL_SERVER_API
@@ -16,4 +23,8 @@
     #else
         #define KOLOSAL_SERVER_API
     #endif
+#endif
+
+#ifdef _WIN32
+#pragma warning(pop)
 #endif

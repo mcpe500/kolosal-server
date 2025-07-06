@@ -505,7 +505,7 @@ namespace kolosal
                 return false;
             }
         }
-        catch (const std::exception &e)
+        catch (const std::exception &)
         {
             std::cerr << "Error: Invalid port number: " << port << std::endl;
             return false;

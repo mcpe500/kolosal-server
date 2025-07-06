@@ -109,8 +109,11 @@ namespace kolosal {
         DownloadManager(const DownloadManager&) = delete;
         DownloadManager& operator=(const DownloadManager&) = delete;
 
+#pragma warning(push)
+#pragma warning(disable: 4251)
         std::map<std::string, std::shared_ptr<DownloadProgress>> downloads_;
         std::map<std::string, std::future<void>> download_futures_;
+#pragma warning(pop)
         mutable std::mutex downloads_mutex_;        // Internal method to perform the actual download
         void performDownload(std::shared_ptr<DownloadProgress> progress);
         

@@ -157,10 +157,13 @@ namespace kolosal
              */
             std::string trim(const std::string &str) const;
 
+#pragma warning(push)
+#pragma warning(disable: 4251)
             Config config_;
             std::unordered_set<std::string> allowedOriginsSet_; // For faster lookup
             std::unordered_set<std::string> allowedMethodsSet_; // For faster lookup
             std::unordered_set<std::string> allowedHeadersSet_; // For faster lookup
+#pragma warning(pop)
         };
 
     } // namespace auth

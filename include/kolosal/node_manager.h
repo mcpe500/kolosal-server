@@ -153,6 +153,8 @@ private:
         }
     };
 
+#pragma warning(push)
+#pragma warning(disable: 4251)
     std::unordered_map<std::string, std::shared_ptr<EngineRecord>> engines_;
     mutable std::shared_mutex engineMapMutex_; // Shared mutex for engines map (allows concurrent reads)
 
@@ -160,8 +162,12 @@ private:
     std::thread autoscalingThread_;
     std::atomic<bool> stopAutoscaling_{false};
     std::condition_variable autoscalingCv_;
+#pragma warning(pop)
     mutable std::mutex autoscalingMutex_; // Separate mutex for autoscaling
+#pragma warning(push)
+#pragma warning(disable: 4251)
     std::chrono::seconds idleTimeout_;
+#pragma warning(pop)
 
     /**
      * @brief The main loop for the autoscaling thread.
