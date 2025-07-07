@@ -357,8 +357,11 @@ if(UNIX AND NOT APPLE)
     
 endif()
 
-# Install header files.
-install(DIRECTORY include/
-    DESTINATION include
-    FILES_MATCHING PATTERN "*.hpp"
-)
+# Install header files only for development packages
+option(INSTALL_HEADERS "Install header files for development" OFF)
+if(INSTALL_HEADERS)
+    install(DIRECTORY include/
+        DESTINATION include
+        FILES_MATCHING PATTERN "*.hpp"
+    )
+endif()
