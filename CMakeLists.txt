@@ -62,6 +62,7 @@ set(SOURCES
     src/routes/engine_status_route.cpp
     src/routes/health_status_route.cpp    
     src/routes/auth_config_route.cpp    
+    src/routes/server_logs_route.cpp    
 
     src/routes/download_progress_route.cpp
     src/routes/downloads_status_route.cpp

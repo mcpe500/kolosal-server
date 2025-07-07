@@ -10,6 +10,7 @@
 #include "kolosal/routes/engine_status_route.hpp"
 #include "kolosal/routes/health_status_route.hpp"
 #include "kolosal/routes/auth_config_route.hpp"
+#include "kolosal/routes/server_logs_route.hpp"
 
 #include "kolosal/routes/download_progress_route.hpp"
 #include "kolosal/routes/downloads_status_route.hpp"
@@ -80,6 +81,7 @@ namespace kolosal
             pImpl->server->addRoute(std::make_unique<EngineStatusRoute>());
             pImpl->server->addRoute(std::make_unique<HealthStatusRoute>());
             pImpl->server->addRoute(std::make_unique<AuthConfigRoute>());
+            pImpl->server->addRoute(std::make_unique<ServerLogsRoute>());
             pImpl->server->addRoute(std::make_unique<DownloadProgressRoute>());
             pImpl->server->addRoute(std::make_unique<DownloadsStatusRoute>());
             pImpl->server->addRoute(std::make_unique<CancelDownloadRoute>());
