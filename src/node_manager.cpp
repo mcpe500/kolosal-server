@@ -2,6 +2,7 @@
 #include "kolosal/logger.hpp" // Assuming a logger is available
 #include "kolosal/download_utils.hpp"
 #include <filesystem>
+#include <algorithm> // For std::max and std::min
 
 namespace kolosal
 {
@@ -10,6 +11,21 @@ namespace kolosal
         : idleTimeout_(idleTimeout), stopAutoscaling_(false)
     {
         ServerLogger::logInfo("NodeManager initialized with idle timeout: %lld seconds.", idleTimeout_.count());
+        
+        // Initialize the dynamic inference loader
+        inferenceLoader_ = std::make_unique<InferenceLoader>(".");
+        
+        // Scan for available inference engines
+        if (inferenceLoader_->scanForEngines()) {
+            auto availableEngines = inferenceLoader_->getAvailableEngines();
+            ServerLogger::logInfo("Found %zu available inference engines:", availableEngines.size());
+            for (const auto& engine : availableEngines) {
+                ServerLogger::logInfo("  - %s: %s", engine.name.c_str(), engine.description.c_str());
+            }
+        } else {
+            ServerLogger::logWarning("No inference engines found. Ensure inference plugins are in the current directory.");
+        }
+        
         autoscalingThread_ = std::thread(&NodeManager::autoscalingLoop, this);
     }
 
@@ -51,7 +67,7 @@ namespace kolosal
         ServerLogger::logInfo("All engines unloaded and NodeManager shut down complete.");
     }
 
-    bool NodeManager::addEngine(const std::string &engineId, const char *modelPath, const LoadingParameters &loadParams, int mainGpuId)
+    bool NodeManager::addEngine(const std::string &engineId, const char *modelPath, const LoadingParameters &loadParams, int mainGpuId, const std::string& engineType)
     {
         // First check if engine already exists (read lock)
         {
@@ -82,9 +98,28 @@ namespace kolosal
             }
         }
 
-        // Create engine instance and load model (outside of map lock)
-        auto engine = std::make_shared<InferenceEngine>();
-        if (!engine->loadModel(actualModelPath.c_str(), loadParams, mainGpuId))
+        // Create engine instance using dynamic loader
+        ServerLogger::logInfo("Creating %s inference engine for ID '%s'", engineType.c_str(), engineId.c_str());
+        
+        // Load the inference engine plugin if not already loaded
+        if (!inferenceLoader_->isEngineLoaded(engineType)) {
+            if (!inferenceLoader_->loadEngine(engineType)) {
+                ServerLogger::logError("Failed to load %s inference engine: %s", 
+                                     engineType.c_str(), inferenceLoader_->getLastError().c_str());
+                return false;
+            }
+        }
+        
+        // Create engine instance from the loaded plugin
+        auto engineInstance = inferenceLoader_->createEngineInstance(engineType);
+        if (!engineInstance) {
+            ServerLogger::logError("Failed to create %s inference engine instance: %s", 
+                                 engineType.c_str(), inferenceLoader_->getLastError().c_str());
+            return false;
+        }
+        
+        // Load the model
+        if (!engineInstance->loadModel(actualModelPath.c_str(), loadParams, mainGpuId))
         {
             ServerLogger::logError("Failed to load model for engine ID \'%s\' from path \'%s\'.", engineId.c_str(), actualModelPath.c_str());
             return false;
@@ -92,8 +127,16 @@ namespace kolosal
 
         // Create record and add to map (exclusive lock only for map modification)
         auto recordPtr = std::make_shared<EngineRecord>();
-        recordPtr->engine = engine;
+        recordPtr->engine = std::shared_ptr<IInferenceEngine>(engineInstance.release(), 
+                                                               [loader = inferenceLoader_.get(), engineType](IInferenceEngine* ptr) {
+                                                                   // Custom deleter that properly destroys the engine using the plugin
+                                                                   if (ptr && loader->isEngineLoaded(engineType)) {
+                                                                       auto instance = loader->createEngineInstance(engineType);
+                                                                       // The engineInstance destructor will handle cleanup
+                                                                   }
+                                                               });
         recordPtr->modelPath = actualModelPath;
+        recordPtr->engineType = engineType;
         recordPtr->loadParams = loadParams;
         recordPtr->mainGpuId = mainGpuId;
         recordPtr->isLoaded.store(true);
@@ -121,7 +164,7 @@ namespace kolosal
         return true;
     }
 
-    std::shared_ptr<InferenceEngine> NodeManager::getEngine(const std::string &engineId)
+    std::shared_ptr<IInferenceEngine> NodeManager::getEngine(const std::string &engineId)
     {
         // First, get shared access to find the engine record
         std::shared_ptr<EngineRecord> recordPtr;
@@ -180,9 +223,33 @@ namespace kolosal
             engineLock.unlock(); // Release lock during potentially long loading operation
             
             ServerLogger::logInfo("Engine ID \'%s\' was unloaded due to inactivity. Attempting to reload.", engineId.c_str());
-            auto newEngine = std::make_shared<InferenceEngine>();
             
-            bool loadSuccess = newEngine->loadModel(recordPtr->modelPath.c_str(), recordPtr->loadParams, recordPtr->mainGpuId);
+            // Create new engine instance using dynamic loader
+            std::string engineType = recordPtr->engineType;
+            if (!inferenceLoader_->isEngineLoaded(engineType)) {
+                if (!inferenceLoader_->loadEngine(engineType)) {
+                    ServerLogger::logError("Failed to reload %s inference engine: %s", 
+                                         engineType.c_str(), inferenceLoader_->getLastError().c_str());
+                    // Re-acquire lock to update state
+                    engineLock.lock();
+                    recordPtr->isLoading.store(false);
+                    recordPtr->loadingCv.notify_all();
+                    return nullptr;
+                }
+            }
+            
+            auto newEngineInstance = inferenceLoader_->createEngineInstance(engineType);
+            if (!newEngineInstance) {
+                ServerLogger::logError("Failed to create %s inference engine instance during reload: %s", 
+                                     engineType.c_str(), inferenceLoader_->getLastError().c_str());
+                // Re-acquire lock to update state
+                engineLock.lock();
+                recordPtr->isLoading.store(false);
+                recordPtr->loadingCv.notify_all();
+                return nullptr;
+            }
+            
+            bool loadSuccess = newEngineInstance->loadModel(recordPtr->modelPath.c_str(), recordPtr->loadParams, recordPtr->mainGpuId);
             
             // Re-acquire lock to update state
             engineLock.lock();
@@ -190,7 +257,7 @@ namespace kolosal
             
             if (loadSuccess && !recordPtr->markedForRemoval.load())
             {
-                recordPtr->engine = newEngine;
+                recordPtr->engine = std::shared_ptr<IInferenceEngine>(newEngineInstance.release());
                 recordPtr->isLoaded.store(true);
                 ServerLogger::logInfo("Successfully reloaded engine ID \'%s\'.", engineId.c_str());
             }
@@ -438,11 +505,11 @@ namespace kolosal
             
             // Calculate time until next check (but cap it)
             auto timeUntilNextCheck = std::chrono::duration_cast<std::chrono::seconds>(nextCheckTime - now);
-            timeUntilNextCheck = std::max(timeUntilNextCheck, std::chrono::seconds(1)); // At least 1 second
+            timeUntilNextCheck = (std::max)(timeUntilNextCheck, std::chrono::seconds(1)); // At least 1 second
             
             // Cap the maximum check interval based on idle timeout to ensure timely unloading
-            auto maxCheckInterval = std::max(idleTimeout_ / 2, std::chrono::seconds(5)); // At most half the idle timeout, minimum 5 seconds
-            timeUntilNextCheck = std::min(timeUntilNextCheck, maxCheckInterval);
+            auto maxCheckInterval = (std::max)(idleTimeout_ / 2, std::chrono::seconds(5)); // At most half the idle timeout, minimum 5 seconds
+            timeUntilNextCheck = (std::min)(timeUntilNextCheck, maxCheckInterval);
             
             // Set the next check interval for the next iteration
             nextCheckInterval = timeUntilNextCheck;
@@ -452,7 +519,7 @@ namespace kolosal
         ServerLogger::logInfo("Autoscaling thread finished.");
     }
 
-    bool NodeManager::registerEngine(const std::string &engineId, const char *modelPath, const LoadingParameters &loadParams, int mainGpuId)
+    bool NodeManager::registerEngine(const std::string &engineId, const char *modelPath, const LoadingParameters &loadParams, int mainGpuId, const std::string& engineType)
     {
         // First check if engine already exists (read lock)
         {
@@ -487,6 +554,7 @@ namespace kolosal
         auto recordPtr = std::make_shared<EngineRecord>();
         recordPtr->engine = nullptr;            // No engine instance yet
         recordPtr->modelPath = actualModelPath; // Store the actual local path
+        recordPtr->engineType = engineType;     // Store the engine type
         recordPtr->loadParams = loadParams;
         recordPtr->mainGpuId = mainGpuId;
         recordPtr->isLoaded.store(false); // Mark as not loaded for lazy loading

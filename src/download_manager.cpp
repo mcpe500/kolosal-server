@@ -380,7 +380,7 @@ namespace kolosal
                 {
                     ServerLogger::logWarning("Invalid percentage value %.2f for model %s, clamping to valid range", 
                                            percentage, progress->model_id.c_str());
-                    percentage = std::max(0.0, std::min(100.0, percentage));
+                    percentage = (std::max)(0.0, (std::min)(100.0, percentage));
                     if (std::isnan(percentage) || std::isinf(percentage))
                     {
                         percentage = 0.0;
