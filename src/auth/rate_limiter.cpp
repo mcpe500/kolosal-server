@@ -3,9 +3,15 @@
 #include <algorithm>
 
 namespace kolosal
-{
-    namespace auth
+{    namespace auth
     {
+
+        RateLimiter::RateLimiter()
+            : config_(), lastGlobalCleanup_(std::chrono::steady_clock::now())
+        {
+            ServerLogger::logInfo("Rate limiter initialized with default config - Max requests: %zu, Window: %lld seconds, Enabled: %s",
+                                  config_.maxRequests, config_.windowSize.count(), config_.enabled ? "true" : "false");
+        }
 
         RateLimiter::RateLimiter(const Config &config)
             : config_(config), lastGlobalCleanup_(std::chrono::steady_clock::now())
@@ -24,16 +30,22 @@ namespace kolosal
                 return RateLimitResult{true, 0, config_.maxRequests, config_.windowSize};
             }
 
-            // Perform periodic cleanup
-            performPeriodicCleanup();
+            // Perform periodic cleanup only occasionally to reduce overhead
+            auto now = std::chrono::steady_clock::now();
+            if (now - lastGlobalCleanup_ > GLOBAL_CLEANUP_INTERVAL)
+            {
+                performPeriodicCleanup();
+            }
 
             // Get or create client data
             auto &clientData = clients_[clientIP];
 
-            // Clean up old requests for this client
-            cleanupOldRequests(clientData);
+            // Clean up old requests for this client only if it hasn't been cleaned recently
+            if (now - clientData.lastCleanup > std::chrono::seconds(10))
+            {
+                cleanupOldRequests(clientData);
+            }
 
-            auto now = std::chrono::steady_clock::now();
             size_t currentRequests = clientData.requests.size();
 
             // Check if we've exceeded the rate limit

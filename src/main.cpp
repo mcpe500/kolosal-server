@@ -239,7 +239,12 @@ int main(int argc, char *argv[])
     ServerConfig config;
     if (!config.loadFromArgs(argc, argv))
     {
-        return config.validate() ? 0 : 1; // Return 0 for help/version, 1 for errors
+        // If help or version was shown, exit successfully
+        if (config.helpOrVersionShown) {
+            return 0;
+        }
+        // Otherwise, it was an error - validate and return appropriate code
+        return config.validate() ? 0 : 1;
     }
 
     // Set up signal handlers for graceful shutdown
@@ -252,6 +257,38 @@ int main(int argc, char *argv[])
     // Print startup banner
     std::cout << "Starting Kolosal Server v1.0.0..." << std::endl;
     config.printSummary();
+    
+    // Configure logger based on loaded config
+    auto& logger = ServerLogger::instance();
+    
+    // Convert string log level to enum
+    LogLevel logLevel = LogLevel::SERVER_INFO; // default
+    if (config.logLevel == "ERROR") {
+        logLevel = LogLevel::SERVER_ERROR;
+    } else if (config.logLevel == "WARNING" || config.logLevel == "WARN") {
+        logLevel = LogLevel::SERVER_WARNING;
+    } else if (config.logLevel == "INFO") {
+        logLevel = LogLevel::SERVER_INFO;
+    } else if (config.logLevel == "DEBUG") {
+        logLevel = LogLevel::SERVER_DEBUG;
+    }
+    
+    logger.setLevel(logLevel);
+    logger.setQuietMode(config.quietMode);
+    logger.setShowRequestDetails(config.showRequestDetails);
+    
+    // Set log file if specified
+    if (!config.logFile.empty()) {
+        if (!logger.setLogFile(config.logFile)) {
+            std::cerr << "Warning: Failed to open log file: " << config.logFile << std::endl;
+        }
+    }
+    
+    ServerLogger::logInfo("Logger configured - Level: %s, Quiet: %s, Details: %s", 
+                         config.logLevel.c_str(),
+                         config.quietMode ? "true" : "false",
+                         config.showRequestDetails ? "true" : "false");
+
     // Initialize the server
     ServerAPI &server = ServerAPI::instance();
 
@@ -271,7 +308,7 @@ int main(int argc, char *argv[])
         std::cout << "Server will only be accessible from this machine" << std::endl;
     }
 
-    if (!server.init(config.port, bindHost))
+    if (!server.init(config.port, bindHost, config.idleTimeout))
     {
         std::cerr << "Failed to initialize server on " << bindHost << ":" << config.port << std::endl;
         return 1;
@@ -358,7 +395,7 @@ int main(int argc, char *argv[])
                                                               modelConfig.type,
                                                               modelConfig.loadParams,
                                                               modelConfig.mainGpuId,
-                                                              modelConfig.loadAtStartup);
+                                                              modelConfig.loadImmediately);
 
             if (success)
             {
@@ -369,7 +406,7 @@ int main(int argc, char *argv[])
                     ServerLogger::logInfo("Model '%s' download started from URL: %s", modelConfig.id.c_str(), modelConfig.path.c_str());
                     asyncDownloads++;
                 }
-                else if (modelConfig.loadAtStartup)
+                else if (modelConfig.loadImmediately)
                 {
                     std::cout << "✓ Model '" << modelConfig.id << "' loaded successfully" << std::endl;
                     ServerLogger::logInfo("Model '%s' loaded successfully", modelConfig.id.c_str());
@@ -525,15 +562,6 @@ int main(int argc, char *argv[])
         std::cout << "  PUT  /v1/auth/config         - Update authentication configuration" << std::endl;
         std::cout << "  GET  /v1/auth/stats          - Get authentication statistics" << std::endl;
         std::cout << "  POST /v1/auth/clear          - Clear rate limit data" << std::endl;
-    }
-    if (config.enableMetrics)
-    {
-        std::cout << "\nMetrics endpoints:" << std::endl;
-        std::cout << "  GET  /metrics                - System monitoring metrics" << std::endl;
-        std::cout << "  GET  /v1/metrics             - System monitoring metrics" << std::endl;
-        std::cout << "  GET  /system/metrics         - System monitoring metrics" << std::endl;
-        std::cout << "  GET  /completion-metrics     - Completion performance metrics" << std::endl;
-        std::cout << "  GET  /v1/completion-metrics  - Completion performance metrics" << std::endl;
     }
 
     std::cout << "\nPress Ctrl+C to stop the server..." << std::endl;

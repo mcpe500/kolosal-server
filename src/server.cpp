@@ -9,6 +9,7 @@
 #include <json.hpp>
 #include <algorithm>
 #include <cctype>
+#include <sstream>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -255,7 +256,7 @@ namespace kolosal
 				continue;
 			}
 
-			if (bind(listen_sock, p->ai_addr, p->ai_addrlen) == -1)
+			if (bind(listen_sock, p->ai_addr, static_cast<int>(p->ai_addrlen)) == -1)
 			{
 #ifdef _WIN32
 				closesocket(listen_sock);
@@ -318,7 +319,7 @@ namespace kolosal
 			tv.tv_sec = 1; // 1 second timeout
 			tv.tv_usec = 0;
 
-			int select_result = select(listen_sock + 1, &readfds, NULL, NULL, &tv);
+			int select_result = select(static_cast<int>(listen_sock) + 1, &readfds, NULL, NULL, &tv);
 
 			if (select_result == -1)
 			{
@@ -361,12 +362,13 @@ namespace kolosal
 			inet_ntop(client_addr.ss_family,
 					  client_addr.ss_family == AF_INET ? (void *)&(((struct sockaddr_in *)&client_addr)->sin_addr) : (void *)&(((struct sockaddr_in6 *)&client_addr)->sin6_addr),
 					  clientIP, sizeof(clientIP));
-#endif
-			ServerLogger::logInfo("New client connection from %s", clientIP); // Spawn a thread to handle this client
+#endif			ServerLogger::logDebug("New client connection from %s", clientIP);			// Spawn a thread to handle this client
 			std::thread([this, client_sock, clientIP]()
 						{
-							ServerLogger::logInfo("[Thread %d] Processing request from %s",
-												  std::this_thread::get_id(), clientIP);							// Read the HTTP request with improved error handling
+							ServerLogger::logDebug("[Thread %d] Processing request from %s",
+												  std::this_thread::get_id(), clientIP);
+
+							// Read the HTTP request with improved error handling
 							const int bufferSize = 16384; // Increased buffer size for larger headers
 							char buffer[bufferSize];
 							std::string request;
@@ -444,11 +446,9 @@ namespace kolosal
 							parse_request_line(requestLine, method, path);
 
 							// Parse headers for authentication middleware
-							auto headers = parseHeaders(request);
-
-							ServerLogger::logInfo("[Thread %d] Processing %s request for %s from %s",
+							auto headers = parseHeaders(request);ServerLogger::logDebug("[Thread %d] Processing %s request for %s from %s",
 												  std::this_thread::get_id(), method.c_str(), path.c_str(), clientIP); // Process authentication middleware
-							ServerLogger::logInfo("[Thread %d] Calling auth middleware for %s %s from %s",
+							ServerLogger::logDebug("[Thread %d] Calling auth middleware for %s %s from %s",
 												  std::this_thread::get_id(), method.c_str(), path.c_str(), clientIP);
 
 							auth::AuthMiddleware::RequestInfo authRequest(method, path, clientIP);
@@ -456,7 +456,7 @@ namespace kolosal
 
 							auto authResult = authMiddleware_->processRequest(authRequest);
 
-							ServerLogger::logInfo("[Thread %d] Auth middleware result - Allowed: %s, Status: %d, Reason: %s",
+							ServerLogger::logDebug("[Thread %d] Auth middleware result - Allowed: %s, Status: %d, Reason: %s",
 												  std::this_thread::get_id(),
 												  authResult.allowed ? "true" : "false",
 												  authResult.statusCode,
@@ -497,9 +497,7 @@ namespace kolosal
 							// Handle CORS preflight requests
 							if (authResult.isPreflight)
 							{
-								send_response(client_sock, authResult.statusCode, "", responseHeaders);
-
-								ServerLogger::logInfo("[Thread %d] CORS preflight request handled",
+								send_response(client_sock, authResult.statusCode, "", responseHeaders);								ServerLogger::logDebug("[Thread %d] CORS preflight request handled",
 													  std::this_thread::get_id());
 
 #ifdef _WIN32
@@ -519,7 +517,7 @@ namespace kolosal
 									ServerLogger::logDebug("[Thread %d] Content-Length: %d",
 														   std::this_thread::get_id(), contentLength);
 								}
-								catch (const std::exception &e)
+								catch (const std::exception &)
 								{
 									ServerLogger::logWarning("[Thread %d] Invalid Content-Length header: %s",
 															 std::this_thread::get_id(), it->second.c_str());
@@ -538,7 +536,7 @@ namespace kolosal
 								// If Content-Length indicates there's more data to read
 								if (contentLength > 0 && body.length() < static_cast<size_t>(contentLength))
 								{
-									int remaining = contentLength - body.length();
+									int remaining = static_cast<int>(contentLength - body.length());
 									std::vector<char> bodyBuffer(remaining + 1, 0);
 
 									int totalRead = 0;
@@ -594,9 +592,7 @@ namespace kolosal
 
 								nlohmann::json jError = {{"error", {{"message", "Not found"}, {"type", "invalid_request_error"}, {"param", nullptr}, {"code", nullptr}}}};
 								send_response(client_sock, 404, jError.dump(), responseHeaders);
-							}
-
-							ServerLogger::logInfo("[Thread %d] Completed request for %s",
+							}							ServerLogger::logDebug("[Thread %d] Completed request for %s",
 												  std::this_thread::get_id(), path.c_str());
 
 #ifdef _WIN32
