@@ -15,3 +15,6 @@ out/
 build/
 models/**
 downloads/**
+
+# Ignore build artifacts and binaries
+external/mupdf/
