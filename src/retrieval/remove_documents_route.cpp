@@ -3,7 +3,7 @@
 #include "kolosal/utils.hpp"
 #include "kolosal/server_api.hpp"
 #include "kolosal/logger.hpp"
-#include "kolosal/completion_monitor.hpp"
+// #include "kolosal/completion_monitor.hpp"
 #include <json.hpp>
 #include <iostream>
 #include <stdexcept>
@@ -21,7 +21,7 @@ namespace retrieval
 std::atomic<long long> RemoveDocumentsRoute::request_counter_{0};
 
 RemoveDocumentsRoute::RemoveDocumentsRoute()
-    : monitor_(std::make_unique<CompletionMonitor>())
+    // : monitor_(std::make_unique<CompletionMonitor>())
 {
     ServerLogger::logInfo("RemoveDocumentsRoute initialized");
 }
@@ -88,7 +88,7 @@ void RemoveDocumentsRoute::handle(SocketType sock, const std::string& body)
                               std::this_thread::get_id(), request.ids.size(), requestId.c_str());
 
         // Start monitoring
-        monitor_->startRequest("document-removal", "remove_documents");
+        // monitor_->startRequest("document-removal", "remove_documents");
 
         // Initialize document service if needed
         {
@@ -138,7 +138,7 @@ void RemoveDocumentsRoute::handle(SocketType sock, const std::string& body)
         RemoveDocumentsResponse response = response_future.get();
 
         // Complete monitoring
-        monitor_->completeRequest(requestId);
+        // monitor_->completeRequest(requestId);
 
         // Send successful response
         std::map<std::string, std::string> headers = {
@@ -157,7 +157,7 @@ void RemoveDocumentsRoute::handle(SocketType sock, const std::string& body)
         // Mark request as failed if monitoring was started
         if (!requestId.empty())
         {
-            monitor_->failRequest(requestId);
+            // monitor_->failRequest(requestId);
         }
 
         ServerLogger::logError("[Thread %u] JSON parsing error: %s", std::this_thread::get_id(), ex.what());
@@ -168,7 +168,7 @@ void RemoveDocumentsRoute::handle(SocketType sock, const std::string& body)
         // Mark request as failed if monitoring was started
         if (!requestId.empty())
         {
-            monitor_->failRequest(requestId);
+            // monitor_->failRequest(requestId);
         }
 
         ServerLogger::logError("[Thread %u] Error handling remove documents request: %s", std::this_thread::get_id(), ex.what());

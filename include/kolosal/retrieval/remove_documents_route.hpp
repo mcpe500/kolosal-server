@@ -3,6 +3,7 @@
 #include "../routes/route_interface.hpp"
 #include "../export.hpp"
 #include "document_service.hpp"
+#include "../completion_monitor.hpp"
 #include <string>
 #include <memory>
 #include <atomic>
@@ -10,8 +11,6 @@
 
 namespace kolosal
 {
-
-class CompletionMonitor;
 
 namespace retrieval
 {
