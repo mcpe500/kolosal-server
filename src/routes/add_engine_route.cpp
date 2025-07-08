@@ -52,6 +52,7 @@ namespace kolosal
             std::string modelPath = request.model_path;
             bool loadImmediately = request.load_immediately;
             int mainGpuId = request.main_gpu_id;
+            std::string inferenceEngine = request.inference_engine;
 
             // Convert model loading parameters to LoadingParameters struct
             LoadingParameters loadParams;
@@ -97,6 +98,7 @@ namespace kolosal
                         engine_params.load_immediately = loadImmediately;
                         engine_params.main_gpu_id = mainGpuId;
                         engine_params.loading_params = loadParams;
+                        engine_params.inference_engine = inferenceEngine;
 
                         bool download_started = download_manager.startDownloadWithEngine(engineId, modelPathStr, downloadPath, engine_params);
 
@@ -160,6 +162,7 @@ namespace kolosal
                     engine_params.load_immediately = loadImmediately;
                     engine_params.main_gpu_id = mainGpuId;
                     engine_params.loading_params = loadParams;
+                    engine_params.inference_engine = inferenceEngine;
 
                     bool download_started = download_manager.startDownloadWithEngine(engineId, modelPathStr, downloadPath, engine_params);
 
@@ -307,12 +310,12 @@ namespace kolosal
             bool success = false;
             if (loadImmediately)
             {
-                success = nodeManager.addEngine(engineId, actualModelPath.c_str(), loadParams, mainGpuId);
+                success = nodeManager.addEngine(engineId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
             }
             else
             {
                 // Register the engine for lazy loading - model will be loaded on first access
-                success = nodeManager.registerEngine(engineId, actualModelPath.c_str(), loadParams, mainGpuId);
+                success = nodeManager.registerEngine(engineId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
                 ServerLogger::logInfo("Engine '%s' registered with load_immediately=false (will load on first access)", engineId.c_str());
             }
             if (success)

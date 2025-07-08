@@ -46,17 +46,20 @@ bool InferenceLoader::scanForEngines() {
                 // Check if this looks like an inference engine library
                 if (filename.find("llama-") == 0 && 
                     (filename.size() > 4 && filename.substr(filename.size() - 4) == LIBRARY_EXTENSION)) {
-                    // Extract engine name (e.g., "cpu" from "llama-cpu.dll")
-                    std::string engine_name = filename.substr(6); // Remove "llama-"
+                    // Use full library name as engine name (e.g., "llama-cpu" from "llama-cpu.dll")
+                    std::string engine_name = filename;
                     size_t dot_pos = engine_name.find_last_of('.');
                     if (dot_pos != std::string::npos) {
                         engine_name = engine_name.substr(0, dot_pos);
                     }
                     
+                    // Extract descriptive name for display (e.g., "cpu" from "llama-cpu")
+                    std::string display_name = engine_name.substr(6); // Remove "llama-"
+                    
                     InferenceEngineInfo info;
-                    info.name = engine_name;
+                    info.name = engine_name;  // Use full name as identifier
                     info.version = "1.0.0"; // TODO: Extract from library
-                    info.description = "Inference engine for " + engine_name + " acceleration";
+                    info.description = "Inference engine for " + display_name + " acceleration";
                     info.library_path = entry.path().string();
                     info.is_loaded = false;
                     
@@ -235,7 +238,7 @@ void InferenceLoader::unloadLibrary(const std::string& engine_name) {
 }
 
 std::string InferenceLoader::getLibraryName(const std::string& engine_name) const {
-    return "llama-" + engine_name + LIBRARY_EXTENSION;
+    return engine_name + LIBRARY_EXTENSION;
 }
 
 void InferenceLoader::setLastError(const std::string& error) const {

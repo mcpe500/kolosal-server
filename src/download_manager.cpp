@@ -496,7 +496,8 @@ namespace kolosal
                     progress->engine_params->engine_id,
                     actualModelPath.c_str(),
                     progress->engine_params->loading_params,
-                    progress->engine_params->main_gpu_id);
+                    progress->engine_params->main_gpu_id,
+                    progress->engine_params->inference_engine);
             }
             else
             {
@@ -505,7 +506,8 @@ namespace kolosal
                     progress->engine_params->engine_id,
                     actualModelPath.c_str(),
                     progress->engine_params->loading_params,
-                    progress->engine_params->main_gpu_id);
+                    progress->engine_params->main_gpu_id,
+                    progress->engine_params->inference_engine);
             }
 
             std::lock_guard<std::mutex> lock(downloads_mutex_);
@@ -536,7 +538,8 @@ namespace kolosal
 
     // Add a helper method for startup model loading
     bool DownloadManager::loadModelAtStartup(const std::string &model_id, const std::string &model_path,
-                                             const LoadingParameters &load_params, int main_gpu_id, bool load_immediately)
+                                             const LoadingParameters &load_params, int main_gpu_id, bool load_immediately,
+                                             const std::string& inference_engine)
     {
         // First check if an engine with this ID already exists
         auto &nodeManager = ServerAPI::instance().getNodeManager();
@@ -569,6 +572,7 @@ namespace kolosal
                     engine_params.load_immediately = load_immediately;
                     engine_params.main_gpu_id = main_gpu_id;
                     engine_params.loading_params = load_params;
+                    engine_params.inference_engine = inference_engine;
 
                     // Start download with engine creation (will resume automatically)
                     return startDownloadWithEngine(model_id, model_path, download_path, engine_params);
@@ -582,11 +586,11 @@ namespace kolosal
                     auto &node_manager = ServerAPI::instance().getNodeManager();
                     if (load_immediately)
                     {
-                        return node_manager.addEngine(model_id, download_path.c_str(), load_params, main_gpu_id);
+                        return node_manager.addEngine(model_id, download_path.c_str(), load_params, main_gpu_id, inference_engine);
                     }
                     else
                     {
-                        return node_manager.registerEngine(model_id, download_path.c_str(), load_params, main_gpu_id);
+                        return node_manager.registerEngine(model_id, download_path.c_str(), load_params, main_gpu_id, inference_engine);
                     }
                 }
             }
@@ -600,6 +604,7 @@ namespace kolosal
                 engine_params.load_immediately = load_immediately;
                 engine_params.main_gpu_id = main_gpu_id;
                 engine_params.loading_params = load_params;
+                engine_params.inference_engine = inference_engine;
 
                 // Start download with engine creation
                 return startDownloadWithEngine(model_id, model_path, download_path, engine_params);
@@ -611,11 +616,11 @@ namespace kolosal
             auto &node_manager = ServerAPI::instance().getNodeManager();
             if (load_immediately)
             {
-                return node_manager.addEngine(model_id, model_path.c_str(), load_params, main_gpu_id);
+                return node_manager.addEngine(model_id, model_path.c_str(), load_params, main_gpu_id, inference_engine);
             }
             else
             {
-                return node_manager.registerEngine(model_id, model_path.c_str(), load_params, main_gpu_id);
+                return node_manager.registerEngine(model_id, model_path.c_str(), load_params, main_gpu_id, inference_engine);
             }
         }
     }

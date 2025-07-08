@@ -127,14 +127,7 @@ namespace kolosal
 
         // Create record and add to map (exclusive lock only for map modification)
         auto recordPtr = std::make_shared<EngineRecord>();
-        recordPtr->engine = std::shared_ptr<IInferenceEngine>(engineInstance.release(), 
-                                                               [loader = inferenceLoader_.get(), engineType](IInferenceEngine* ptr) {
-                                                                   // Custom deleter that properly destroys the engine using the plugin
-                                                                   if (ptr && loader->isEngineLoaded(engineType)) {
-                                                                       auto instance = loader->createEngineInstance(engineType);
-                                                                       // The engineInstance destructor will handle cleanup
-                                                                   }
-                                                               });
+        recordPtr->engine = std::shared_ptr<IInferenceEngine>(engineInstance.release());
         recordPtr->modelPath = actualModelPath;
         recordPtr->engineType = engineType;
         recordPtr->loadParams = loadParams;
