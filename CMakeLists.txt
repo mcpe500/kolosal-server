@@ -60,6 +60,7 @@ set(SOURCES
     src/routes/inference_chat_completion_route.cpp
     src/routes/add_engine_route.cpp
     src/routes/list_engines_route.cpp
+    src/routes/list_inference_engines_route.cpp
     src/routes/remove_engine_route.cpp
     src/routes/engine_status_route.cpp
     src/routes/health_status_route.cpp    

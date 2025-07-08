@@ -95,6 +95,13 @@ public:
     std::vector<std::string> listEngineIds() const;
 
     /**
+     * @brief Get list of all available inference engine libraries.
+     * 
+     * @return A vector of InferenceEngineInfo structures containing details about available engines.
+     */
+    std::vector<InferenceEngineInfo> getAvailableInferenceEngines() const;
+
+    /**
      * @brief Validates if a model file exists without loading it.
      * 
      * @param modelPath Path to the model file (local or URL).

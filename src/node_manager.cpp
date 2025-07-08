@@ -344,6 +344,14 @@ namespace kolosal
         return ids;
     }
 
+    std::vector<InferenceEngineInfo> NodeManager::getAvailableInferenceEngines() const
+    {
+        if (inferenceLoader_) {
+            return inferenceLoader_->getAvailableEngines();
+        }
+        return {};
+    }
+
     // Helper function to validate model file existence
     bool NodeManager::validateModelFile(const std::string &modelPath)
     {
