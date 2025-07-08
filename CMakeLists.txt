@@ -261,12 +261,14 @@ if(WIN32)
     endforeach()
     
     if(MUPDF_MISSING)
-        # Add custom target to build MuPDF using Visual Studio solution
-        # First retarget the solution to current VS version, then build
+        # Add custom target to build MuPDF using devenv (Visual Studio)
+        # devenv can automatically retarget projects to the current VS version
         add_custom_target(mupdf_build
-            COMMAND msbuild mupdf.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
+            COMMAND devenv mupdf.sln /upgrade
+            COMMAND devenv mupdf.sln /build "Release|x64" /project libmupdf
+            COMMAND devenv mupdf.sln /build "Release|x64" /project libthirdparty
             WORKING_DIRECTORY ${MUPDF_PATH}/platform/win32
-            COMMENT "Building MuPDF libraries using msbuild with VS2022 toolset"
+            COMMENT "Building MuPDF libraries using devenv with auto-upgrade"
         )
         add_dependencies(kolosal_server mupdf_build)
     endif()
@@ -410,31 +412,6 @@ target_include_directories(kolosal_server PRIVATE ${CURL_INCLUDE_DIR})
 target_link_libraries(kolosal_server PRIVATE ${CURL_LIBRARIES})
 
 # MuPDF linking handled in main configuration section above
-
-# Configure MuPDF for the main server
-set(MUPDF_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/mupdf")
-target_include_directories(kolosal_server PRIVATE 
-    ${MUPDF_PATH}/include
-    ${MUPDF_PATH}/thirdparty/zlib/contrib/minizip
-    ${MUPDF_PATH}/thirdparty/zlib
-)
-
-# Link MuPDF libraries to main server
-if(WIN32)
-    # For Windows, we'll need to build MuPDF or use prebuilt libraries
-    # Point to the correct x64/Release directory where the libraries are built
-    target_link_directories(kolosal_server PRIVATE 
-        ${MUPDF_PATH}/platform/win32/x64/Release
-    )
-    target_link_libraries(kolosal_server PRIVATE 
-        libmupdf libthirdparty
-    )
-else()
-    # For Unix systems, link standard MuPDF libraries
-    target_link_libraries(kolosal_server PRIVATE 
-        mupdf mupdf-third
-    )
-endif()
 
 # llama.cpp include directories are handled by the inference library
 # target_include_directories(kolosal_server PUBLIC
