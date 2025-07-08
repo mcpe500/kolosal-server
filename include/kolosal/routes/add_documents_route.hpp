@@ -3,7 +3,7 @@
 #include "route_interface.hpp"
 #include "../export.hpp"
 #include "../retrieval/document_service.hpp"
-#include "../completion_monitor.hpp"
+// #include "../completion_monitor.hpp"
 #include <string>
 #include <memory>
 #include <atomic>
@@ -60,7 +60,7 @@ private:
                           const std::string& param = "");
 
     static std::atomic<long long> request_counter_;
-    std::unique_ptr<CompletionMonitor> monitor_;
+    // std::unique_ptr<CompletionMonitor> monitor_;
     std::unique_ptr<kolosal::retrieval::DocumentService> document_service_;
     std::mutex service_mutex_;
 };
