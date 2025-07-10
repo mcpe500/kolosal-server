@@ -1,9 +1,9 @@
-#include "kolosal/routes/add_engine_route.hpp"
+#include "kolosal/routes/add_model_route.hpp"
 #include "kolosal/utils.hpp"
 #include "kolosal/server_api.hpp"
 #include "kolosal/node_manager.h"
 #include "kolosal/logger.hpp"
-#include "kolosal/models/add_engine_request_model.hpp"
+#include "kolosal/models/add_model_request_model.hpp"
 #include "kolosal/download_utils.hpp"
 #include "kolosal/download_manager.hpp"
 #include "inference_interface.h"
@@ -18,12 +18,12 @@ using json = nlohmann::json;
 namespace kolosal
 {
 
-    bool AddEngineRoute::match(const std::string &method, const std::string &path)
+    bool AddModelRoute::match(const std::string &method, const std::string &path)
     {
-        return (method == "POST" && (path == "/engines" || path == "/v1/engines"));
+        return (method == "POST" && (path == "/models" || path == "/v1/models"));
     }
 
-    void AddEngineRoute::handle(SocketType sock, const std::string &body)
+    void AddModelRoute::handle(SocketType sock, const std::string &body)
     {
         try
         {
@@ -37,7 +37,7 @@ namespace kolosal
             ServerLogger::logDebug("[Thread %u] Received add engine request", std::this_thread::get_id());
 
             // Parse the request using the DTO model
-            AddEngineRequest request;
+            AddModelRequest request;
             request.from_json(j);
 
             if (!request.validate())
@@ -48,7 +48,7 @@ namespace kolosal
             }
 
             // Extract values from the model
-            std::string engineId = request.engine_id;
+            std::string modelId = request.model_id;
             std::string modelPath = request.model_path;
             bool loadImmediately = request.load_immediately;
             int mainGpuId = request.main_gpu_id;
@@ -94,28 +94,28 @@ namespace kolosal
 
                         // Prepare engine creation parameters
                         EngineCreationParams engine_params;
-                        engine_params.engine_id = engineId;
+                        engine_params.model_id = modelId;
                         engine_params.load_immediately = loadImmediately;
                         engine_params.main_gpu_id = mainGpuId;
                         engine_params.loading_params = loadParams;
                         engine_params.inference_engine = inferenceEngine;
 
-                        bool download_started = download_manager.startDownloadWithEngine(engineId, modelPathStr, downloadPath, engine_params);
+                        bool download_started = download_manager.startDownloadWithEngine(modelId, modelPathStr, downloadPath, engine_params);
 
                         if (!download_started)
                         {
                             // Check if download is already in progress
-                            if (download_manager.isDownloadInProgress(engineId))
+                            if (download_manager.isDownloadInProgress(modelId))
                             {
                                 json jResponse = {
-                                    {"message", "Model download already in progress. Use /download-progress/" + engineId + " to check status."},
-                                    {"engine_id", engineId},
+                                    {"message", "Model download already in progress. Use /download-progress/" + modelId + " to check status."},
+                                    {"model_id", modelId},
                                     {"download_status", "in_progress"},
                                     {"download_url", modelPathStr},
-                                    {"progress_endpoint", "/download-progress/" + engineId}};
+                                    {"progress_endpoint", "/download-progress/" + modelId}};
 
                                 send_response(sock, 202, jResponse.dump());
-                                ServerLogger::logInfo("[Thread %u] Download already in progress for engine: %s", std::this_thread::get_id(), engineId.c_str());
+                                ServerLogger::logInfo("[Thread %u] Download already in progress for model: %s", std::this_thread::get_id(), modelId.c_str());
                                 return;
                             }
                             else
@@ -134,15 +134,15 @@ namespace kolosal
                         // Return response indicating download resume has started
                         json jResponse = {
                             {"message", "Model download resume started successfully. Engine will be created once download completes."},
-                            {"engine_id", engineId},
+                            {"model_id", modelId},
                             {"download_status", "resuming"},
                             {"download_url", modelPathStr},
                             {"local_path", downloadPath},
-                            {"progress_endpoint", "/download-progress/" + engineId},
+                            {"progress_endpoint", "/download-progress/" + modelId},
                             {"note", "Check download progress using the progress_endpoint. Engine creation will be deferred until download completes."}};
 
                         send_response(sock, 202, jResponse.dump());
-                        ServerLogger::logInfo("[Thread %u] Started async download resume for engine %s from URL: %s", std::this_thread::get_id(), engineId.c_str(), modelPathStr.c_str());
+                        ServerLogger::logInfo("[Thread %u] Started async download resume for model %s from URL: %s", std::this_thread::get_id(), modelId.c_str(), modelPathStr.c_str());
                         return;
                     }
                     else
@@ -158,28 +158,28 @@ namespace kolosal
 
                     // Prepare engine creation parameters
                     EngineCreationParams engine_params;
-                    engine_params.engine_id = engineId;
+                    engine_params.model_id = modelId;
                     engine_params.load_immediately = loadImmediately;
                     engine_params.main_gpu_id = mainGpuId;
                     engine_params.loading_params = loadParams;
                     engine_params.inference_engine = inferenceEngine;
 
-                    bool download_started = download_manager.startDownloadWithEngine(engineId, modelPathStr, downloadPath, engine_params);
+                    bool download_started = download_manager.startDownloadWithEngine(modelId, modelPathStr, downloadPath, engine_params);
 
                     if (!download_started)
                     {
                         // Check if download is already in progress
-                        if (download_manager.isDownloadInProgress(engineId))
+                        if (download_manager.isDownloadInProgress(modelId))
                         {
                             json jResponse = {
-                                {"message", "Model download already in progress. Use /download-progress/" + engineId + " to check status."},
-                                {"engine_id", engineId},
+                                {"message", "Model download already in progress. Use /download-progress/" + modelId + " to check status."},
+                                {"model_id", modelId},
                                 {"download_status", "in_progress"},
                                 {"download_url", modelPathStr},
-                                {"progress_endpoint", "/download-progress/" + engineId}};
+                                {"progress_endpoint", "/download-progress/" + modelId}};
 
                             send_response(sock, 202, jResponse.dump());
-                            ServerLogger::logInfo("[Thread %u] Download already in progress for engine: %s", std::this_thread::get_id(), engineId.c_str());
+                            ServerLogger::logInfo("[Thread %u] Download already in progress for model: %s", std::this_thread::get_id(), modelId.c_str());
                             return;
                         }
                         else
@@ -198,15 +198,15 @@ namespace kolosal
                     // Return response indicating download has started
                     json jResponse = {
                         {"message", "Model download started successfully. Engine will be created once download completes."},
-                        {"engine_id", engineId},
+                        {"model_id", modelId},
                         {"download_status", "started"},
                         {"download_url", modelPathStr},
                         {"local_path", downloadPath},
-                        {"progress_endpoint", "/download-progress/" + engineId},
+                        {"progress_endpoint", "/download-progress/" + modelId},
                         {"note", "Check download progress using the progress_endpoint. Engine creation will be deferred until download completes."}};
 
                     send_response(sock, 202, jResponse.dump());
-                    ServerLogger::logInfo("[Thread %u] Started async download for engine %s from URL: %s", std::this_thread::get_id(), engineId.c_str(), modelPathStr.c_str());
+                    ServerLogger::logInfo("[Thread %u] Started async download for model %s from URL: %s", std::this_thread::get_id(), modelId.c_str(), modelPathStr.c_str());
                     return;
                 }
             }
@@ -291,37 +291,37 @@ namespace kolosal
             // Log configuration warnings for potentially problematic settings
             if (loadParams.n_ctx > 32768)
             {
-                ServerLogger::logWarning("[Thread %u] Large context size (n_ctx=%d) may cause high memory usage for engine '%s'",
-                                         std::this_thread::get_id(), loadParams.n_ctx, engineId.c_str());
+                ServerLogger::logWarning("[Thread %u] Large context size (n_ctx=%d) may cause high memory usage for model '%s'",
+                                         std::this_thread::get_id(), loadParams.n_ctx, modelId.c_str());
             }
 
             if (loadParams.n_gpu_layers > 0 && mainGpuId == -1)
             {
-                ServerLogger::logInfo("[Thread %u] GPU layers enabled but main_gpu_id is auto-select (-1) for engine '%s'",
-                                      std::this_thread::get_id(), engineId.c_str());
+                ServerLogger::logInfo("[Thread %u] GPU layers enabled but main_gpu_id is auto-select (-1) for model '%s'",
+                                      std::this_thread::get_id(), modelId.c_str());
             }
 
             if (loadParams.n_batch > 4096)
             {
-                ServerLogger::logWarning("[Thread %u] Large batch size (n_batch=%d) may cause high memory usage for engine '%s'",
-                                         std::this_thread::get_id(), loadParams.n_batch, engineId.c_str());
+                ServerLogger::logWarning("[Thread %u] Large batch size (n_batch=%d) may cause high memory usage for model '%s'",
+                                         std::this_thread::get_id(), loadParams.n_batch, modelId.c_str());
             } // Get the NodeManager and attempt to add the engine
             auto &nodeManager = ServerAPI::instance().getNodeManager();
             bool success = false;
             if (loadImmediately)
             {
-                success = nodeManager.addEngine(engineId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
+                success = nodeManager.addEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
             }
             else
             {
                 // Register the engine for lazy loading - model will be loaded on first access
-                success = nodeManager.registerEngine(engineId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
-                ServerLogger::logInfo("Engine '%s' registered with load_immediately=false (will load on first access)", engineId.c_str());
+                success = nodeManager.registerEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
+                ServerLogger::logInfo("Model '%s' registered with load_immediately=false (will load on first access)", modelId.c_str());
             }
             if (success)
             {
                 json response = {
-                    {"engine_id", engineId},
+                    {"model_id", modelId},
                     {"model_path", modelPath},
                     {"status", loadImmediately ? "loaded" : "created"},
                     {"load_immediately", loadImmediately},
@@ -339,16 +339,16 @@ namespace kolosal
                 }
 
                 send_response(sock, 201, response.dump());
-                ServerLogger::logInfo("[Thread %u] Successfully added engine '%s'", std::this_thread::get_id(), engineId.c_str());
+                ServerLogger::logInfo("[Thread %u] Successfully added model '%s'", std::this_thread::get_id(), modelId.c_str());
             }
             else
             {
-                // Model loading failed - check if it's a duplicate engine ID first
+                // Model loading failed - check if it's a duplicate model ID first
                 auto existingEngineIds = nodeManager.listEngineIds();
                 bool engineExists = false;
                 for (const auto &existingId : existingEngineIds)
                 {
-                    if (existingId == engineId)
+                    if (existingId == modelId)
                     {
                         engineExists = true;
                         break;
@@ -357,13 +357,13 @@ namespace kolosal
 
                 if (engineExists)
                 {
-                    errorMessage = "Engine ID '" + engineId + "' already exists. Please choose a different engine ID.";
+                    errorMessage = "Model ID '" + modelId + "' already exists. Please choose a different model ID.";
                     errorType = "invalid_request_error";
                     errorCode = 409; // Conflict
 
-                    json jError = {{"error", {{"message", errorMessage}, {"type", errorType}, {"param", "engine_id"}, {"code", "engine_id_exists"}}}};
+                    json jError = {{"error", {{"message", errorMessage}, {"type", errorType}, {"param", "model_id"}, {"code", "model_id_exists"}}}};
                     send_response(sock, errorCode, jError.dump());
-                    ServerLogger::logError("[Thread %u] Engine ID '%s' already exists", std::this_thread::get_id(), engineId.c_str());
+                    ServerLogger::logError("[Thread %u] Model ID '%s' already exists", std::this_thread::get_id(), modelId.c_str());
                 }
                 else
                 {
@@ -387,7 +387,7 @@ namespace kolosal
                     }
 
                     json errorDetails = {
-                        {"engine_id", engineId},
+                        {"model_id", modelId},
                         {"model_path", actualModelPath},
                         {"n_ctx", loadParams.n_ctx},
                         {"n_gpu_layers", loadParams.n_gpu_layers},
@@ -402,7 +402,7 @@ namespace kolosal
 
                     json jError = {{"error", {{"message", errorMessage}, {"type", errorType}, {"param", "model_path"}, {"code", "model_loading_failed"}, {"details", errorDetails}}}};
                     send_response(sock, errorCode, jError.dump());
-                    ServerLogger::logError("[Thread %u] Failed to load model for engine '%s' from path '%s'", std::this_thread::get_id(), engineId.c_str(), actualModelPath.c_str());
+                    ServerLogger::logError("[Thread %u] Failed to load model for model '%s' from path '%s'", std::this_thread::get_id(), modelId.c_str(), actualModelPath.c_str());
                 }
             }
         }

@@ -58,11 +58,11 @@ set(SOURCES
     src/routes/completion_route.cpp
     src/routes/inference_completion_route.cpp
     src/routes/inference_chat_completion_route.cpp
-    src/routes/add_engine_route.cpp
-    src/routes/list_engines_route.cpp
+    src/routes/add_model_route.cpp
+    src/routes/list_models_route.cpp
     src/routes/list_inference_engines_route.cpp
-    src/routes/remove_engine_route.cpp
-    src/routes/engine_status_route.cpp
+    src/routes/remove_model_route.cpp
+    src/routes/model_status_route.cpp
     src/routes/health_status_route.cpp    
     src/routes/auth_config_route.cpp    
     src/routes/server_logs_route.cpp    

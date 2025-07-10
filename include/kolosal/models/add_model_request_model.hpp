@@ -7,17 +7,17 @@
 #include <json.hpp>
 
 /**
- * @brief Model for add engine request parameters
+ * @brief Model for add model request parameters
  * 
- * This model represents the JSON request body for adding a new engine to the server.
+ * This model represents the JSON request body for adding a new model to the server.
  * It includes validation for all required and optional parameters.
  */
-class KOLOSAL_SERVER_API AddEngineRequest : public IModel {
+class KOLOSAL_SERVER_API AddModelRequest : public IModel {
 public:
     // Required fields
 #pragma warning(push)
 #pragma warning(disable: 4251)
-    std::string engine_id;
+    std::string model_id;
     std::string model_path;
 #pragma warning(pop)
     
@@ -128,7 +128,7 @@ public:
     } loading_parameters;
 
     bool validate() const override {
-        if (engine_id.empty()) {
+        if (model_id.empty()) {
             return false;
         }
 
@@ -175,14 +175,14 @@ public:
         }
 
         // Check for required fields
-        if (!j.contains("engine_id") || !j.contains("model_path")) {
-            throw std::runtime_error("Missing required fields: engine_id and model_path are required");
+        if (!j.contains("model_id") || !j.contains("model_path")) {
+            throw std::runtime_error("Missing required fields: model_id and model_path are required");
         }
 
-        if (!j["engine_id"].is_string()) {
-            throw std::runtime_error("engine_id must be a string");
+        if (!j["model_id"].is_string()) {
+            throw std::runtime_error("model_id must be a string");
         }
-        j.at("engine_id").get_to(engine_id);
+        j.at("model_id").get_to(model_id);
 
         if (!j["model_path"].is_string()) {
             throw std::runtime_error("model_path must be a string");
@@ -222,7 +222,7 @@ public:
 
     nlohmann::json to_json() const override {
         nlohmann::json j = {
-            {"engine_id", engine_id},
+            {"model_id", model_id},
             {"model_path", model_path},
             {"load_immediately", load_immediately},
             {"main_gpu_id", main_gpu_id},

@@ -96,7 +96,7 @@ namespace kolosal
                 if (progress->engine_params)
                 {
                     response["engine_creation"] = {
-                        {"engine_id", progress->engine_params->engine_id},
+                        {"model_id", progress->engine_params->model_id},
                         {"load_immediately", progress->engine_params->load_immediately},
                         {"main_gpu_id", progress->engine_params->main_gpu_id}};
                 }

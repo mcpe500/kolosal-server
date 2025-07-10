@@ -1,16 +1,15 @@
-#ifndef KOLOSAL_LIST_ENGINES_ROUTE_HPP
-#define KOLOSAL_LIST_ENGINES_ROUTE_HPP
+#pragma once
 
+#include "../export.hpp"
 #include "route_interface.hpp"
+#include <string>
 
 namespace kolosal {
 
-    class ListEnginesRoute : public IRoute {
+    class KOLOSAL_SERVER_API AddModelRoute : public IRoute {
     public:
         bool match(const std::string& method, const std::string& path) override;
         void handle(SocketType sock, const std::string& body) override;
     };
 
 } // namespace kolosal
-
-#endif // KOLOSAL_LIST_ENGINES_ROUTE_HPP

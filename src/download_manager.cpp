@@ -57,11 +57,11 @@ namespace kolosal
     {
         // First check if an engine with this ID already exists
         auto &nodeManager = ServerAPI::instance().getNodeManager();
-        auto [engineExists, engineLoaded] = nodeManager.getEngineStatus(engine_params.engine_id);
+        auto [engineExists, engineLoaded] = nodeManager.getEngineStatus(engine_params.model_id);
         
         if (engineExists)
         {
-            ServerLogger::logInfo("Engine '%s' already exists on the server. Skipping download and engine creation.", engine_params.engine_id.c_str());
+            ServerLogger::logInfo("Engine '%s' already exists on the server. Skipping download and engine creation.", engine_params.model_id.c_str());
             
             // Create a completed download entry for consistency
             std::lock_guard<std::mutex> lock(downloads_mutex_);
@@ -467,14 +467,14 @@ namespace kolosal
         {
             // Get the NodeManager and check if engine already exists
             auto &nodeManager = ServerAPI::instance().getNodeManager();
-            auto [engineExists, engineLoaded] = nodeManager.getEngineStatus(progress->engine_params->engine_id);
+            auto [engineExists, engineLoaded] = nodeManager.getEngineStatus(progress->engine_params->model_id);
             
             if (engineExists)
             {
                 std::lock_guard<std::mutex> lock(downloads_mutex_);
                 progress->status = "engine_already_exists";
                 progress->end_time = std::chrono::system_clock::now();
-                ServerLogger::logInfo("Engine '%s' already exists, skipping engine creation after download", progress->engine_params->engine_id.c_str());
+                ServerLogger::logInfo("Engine '%s' already exists, skipping engine creation after download", progress->engine_params->model_id.c_str());
                 return;
             }
 
@@ -493,7 +493,7 @@ namespace kolosal
             {
                 // Load immediately - use addEngine
                 success = nodeManager.addEngine(
-                    progress->engine_params->engine_id,
+                    progress->engine_params->model_id,
                     actualModelPath.c_str(),
                     progress->engine_params->loading_params,
                     progress->engine_params->main_gpu_id,
@@ -503,7 +503,7 @@ namespace kolosal
             {
                 // Lazy loading - use registerEngine
                 success = nodeManager.registerEngine(
-                    progress->engine_params->engine_id,
+                    progress->engine_params->model_id,
                     actualModelPath.c_str(),
                     progress->engine_params->loading_params,
                     progress->engine_params->main_gpu_id,
@@ -568,7 +568,7 @@ namespace kolosal
 
                     // Create engine creation parameters for resume
                     EngineCreationParams engine_params;
-                    engine_params.engine_id = model_id;
+                    engine_params.model_id = model_id;
                     engine_params.load_immediately = load_immediately;
                     engine_params.main_gpu_id = main_gpu_id;
                     engine_params.loading_params = load_params;
@@ -600,7 +600,7 @@ namespace kolosal
 
                 // Create engine creation parameters
                 EngineCreationParams engine_params;
-                engine_params.engine_id = model_id;
+                engine_params.model_id = model_id;
                 engine_params.load_immediately = load_immediately;
                 engine_params.main_gpu_id = main_gpu_id;
                 engine_params.loading_params = load_params;

@@ -1,4 +1,4 @@
-#include "kolosal/routes/list_engines_route.hpp"
+#include "kolosal/routes/list_models_route.hpp"
 #include "kolosal/utils.hpp"
 #include "kolosal/server_api.hpp"
 #include "kolosal/node_manager.h"
@@ -12,46 +12,46 @@ using json = nlohmann::json;
 namespace kolosal
 {
 
-    bool ListEnginesRoute::match(const std::string &method, const std::string &path)
+    bool ListModelsRoute::match(const std::string &method, const std::string &path)
     {
-        return (method == "GET" && (path == "/engines" || path == "/v1/engines"));
+        return (method == "GET" && (path == "/models" || path == "/v1/models"));
     }
 
-    void ListEnginesRoute::handle(SocketType sock, const std::string &body)
+    void ListModelsRoute::handle(SocketType sock, const std::string &body)
     {
         try
         {
-            ServerLogger::logDebug("[Thread %u] Received list engines request", std::this_thread::get_id());
+            ServerLogger::logDebug("[Thread %u] Received list models request", std::this_thread::get_id());
 
             // Get the NodeManager and list engines
             auto &nodeManager = ServerAPI::instance().getNodeManager();
             auto engineIds = nodeManager.listEngineIds();
 
-            json enginesList = json::array();
+            json modelsList = json::array();
             for (const auto &engineId : engineIds)
             {
                 // Check engine status without loading it (to avoid triggering lazy model loading)
                 auto [exists, isLoaded] = nodeManager.getEngineStatus(engineId);
 
-                json engineInfo = {
-                    {"engine_id", engineId},
+                json modelInfo = {
+                    {"model_id", engineId},
                     {"status", isLoaded ? "loaded" : "unloaded"},
                     {"last_accessed", "recently"} // Could be enhanced with actual timestamps
                 };
 
-                enginesList.push_back(engineInfo);
+                modelsList.push_back(modelInfo);
             }
 
             json response = {
-                {"engines", enginesList},
-                {"total_count", enginesList.size()}};
+                {"models", modelsList},
+                {"total_count", modelsList.size()}};
 
             send_response(sock, 200, response.dump());
-            ServerLogger::logDebug("[Thread %u] Successfully listed %zu engines", std::this_thread::get_id(), enginesList.size());
+            ServerLogger::logDebug("[Thread %u] Successfully listed %zu models", std::this_thread::get_id(), modelsList.size());
         }
         catch (const std::exception &ex)
         {
-            ServerLogger::logError("[Thread %u] Error handling list engines request: %s", std::this_thread::get_id(), ex.what());
+            ServerLogger::logError("[Thread %u] Error handling list models request: %s", std::this_thread::get_id(), ex.what());
 
             json jError = {{"error", {{"message", std::string("Server error: ") + ex.what()}, {"type", "server_error"}, {"param", nullptr}, {"code", nullptr}}}};
 
