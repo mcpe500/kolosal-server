@@ -1,9 +1,7 @@
 #include "kolosal/server_api.hpp"
 #include "kolosal/server.hpp"
-#include "kolosal/routes/chat_completion_route.hpp"
+#include "kolosal/routes/oai_completions_route.hpp"
 #include "kolosal/routes/completion_route.hpp"
-#include "kolosal/routes/inference_completion_route.hpp"
-#include "kolosal/routes/inference_chat_completion_route.hpp"
 #include "kolosal/routes/models_route.hpp"
 #include "kolosal/routes/list_inference_engines_route.hpp"
 #include "kolosal/routes/health_status_route.hpp"
@@ -64,10 +62,8 @@ namespace kolosal
                 return false;
             }            // Register routes
             ServerLogger::logInfo("Registering routes");
-            pImpl->server->addRoute(std::make_unique<ChatCompletionsRoute>());
-            pImpl->server->addRoute(std::make_unique<CompletionsRoute>());
-            pImpl->server->addRoute(std::make_unique<InferenceCompletionRoute>());
-            pImpl->server->addRoute(std::make_unique<InferenceChatCompletionRoute>());
+            pImpl->server->addRoute(std::make_unique<OaiCompletionsRoute>());
+            pImpl->server->addRoute(std::make_unique<CompletionRoute>());
             pImpl->server->addRoute(std::make_unique<ModelsRoute>());
             pImpl->server->addRoute(std::make_unique<ListInferenceEnginesRoute>());
             pImpl->server->addRoute(std::make_unique<HealthStatusRoute>());
