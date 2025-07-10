@@ -54,15 +54,39 @@ namespace kolosal
                     std::string filename = entry.path().filename().string();
 
                     // Check if this looks like an inference engine library
-                    if (filename.find("llama-") == 0 &&
-                        (filename.size() > 4 && filename.substr(filename.size() - 4) == LIBRARY_EXTENSION))
+                    bool is_engine_lib = false;
+                    std::string engine_name;
+                    
+                    std::string ext_to_check = LIBRARY_EXTENSION;
+                    
+                    // Check Windows style first
+                    if (filename.find("llama-") == 0 && filename.size() > ext_to_check.size() && 
+                        filename.substr(filename.size() - ext_to_check.size()) == ext_to_check)
                     {
-                        // Use full library name as engine name (e.g., "llama-cpu" from "llama-cpu.dll")
-                        std::string engine_name = filename;
-                        size_t dot_pos = engine_name.find_last_of('.');
-                        if (dot_pos != std::string::npos)
+                        // Windows style: "llama-cpu.dll"
+                        is_engine_lib = true;
+                        engine_name = filename.substr(0, filename.size() - ext_to_check.size());
+                    }
+                    // Check Unix style
+                    else if (filename.find("libllama-") == 0 && filename.size() > (3 + ext_to_check.size()) && 
+                             filename.substr(filename.size() - ext_to_check.size()) == ext_to_check)
+                    {
+                        // Unix style: "libllama-cpu.so"
+                        is_engine_lib = true;
+                        engine_name = filename.substr(3, filename.size() - 3 - ext_to_check.size()); // Remove "lib" prefix and extension
+                    }
+                    
+                    if (is_engine_lib)
+                    {
+                        // Validate engine name format (should be "llama-xxx")
+                        if (engine_name.find("llama-") != 0)
                         {
-                            engine_name = engine_name.substr(0, dot_pos);
+                            continue;
+                        }
+                        
+                        if (engine_name.length() <= 6)
+                        {
+                            continue;
                         }
 
                         // Extract descriptive name for display (e.g., "cpu" from "llama-cpu")
@@ -302,7 +326,11 @@ namespace kolosal
 
     std::string InferenceLoader::getLibraryName(const std::string &engine_name) const
     {
+#ifdef _WIN32
         return engine_name + LIBRARY_EXTENSION;
+#else
+        return "lib" + engine_name + LIBRARY_EXTENSION;
+#endif
     }
 
     void InferenceLoader::setLastError(const std::string &error) const

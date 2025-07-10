@@ -189,6 +189,13 @@ private:
     void autoscalingLoop();
 
     /**
+     * @brief Finds the best directory to search for inference engine plugins.
+     * 
+     * @return Path to the plugins directory
+     */
+    std::string findPluginsDirectory();
+
+    /**
      * @brief Validates if a model file exists (either local path or URL).
      * 
      * @param modelPath Path to the model file (local or URL).

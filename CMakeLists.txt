@@ -285,15 +285,15 @@ if(UNIX AND NOT APPLE)
         _LARGEFILE64_SOURCE
     )
     
-    # Set RPATH for proper library loading when installed
+    # Set RPATH for proper library loading when installed and during development
     set_target_properties(kolosal_server_exe PROPERTIES
-        INSTALL_RPATH "$ORIGIN/../lib:/usr/lib"
+        INSTALL_RPATH "$ORIGIN:$ORIGIN/../lib:/usr/lib"
         BUILD_WITH_INSTALL_RPATH TRUE
         INSTALL_RPATH_USE_LINK_PATH TRUE
     )
     
     set_target_properties(kolosal_server PROPERTIES
-        INSTALL_RPATH "$ORIGIN:/usr/lib"
+        INSTALL_RPATH "$ORIGIN:$ORIGIN/../lib:/usr/lib"
         BUILD_WITH_INSTALL_RPATH TRUE
         INSTALL_RPATH_USE_LINK_PATH TRUE
     )

@@ -4,6 +4,15 @@
 #include <filesystem>
 #include <algorithm> // For std::max and std::min
 
+#ifdef _WIN32
+#include <windows.h>
+#define LIBRARY_EXTENSION ".dll"
+#else
+#include <unistd.h>
+#include <limits.h>
+#define LIBRARY_EXTENSION ".so"
+#endif
+
 namespace kolosal
 {
 
@@ -12,8 +21,10 @@ namespace kolosal
     {
         ServerLogger::logInfo("NodeManager initialized with idle timeout: %lld seconds.", idleTimeout_.count());
 
-        // Initialize the dynamic inference loader
-        inferenceLoader_ = std::make_unique<InferenceLoader>(".");
+        // Initialize the dynamic inference loader with smart plugin discovery
+        std::string pluginsDir = findPluginsDirectory();
+        ServerLogger::logInfo("Using plugins directory: %s", pluginsDir.c_str());
+        inferenceLoader_ = std::make_unique<InferenceLoader>(pluginsDir);
 
         // Scan for available inference engines
         if (inferenceLoader_->scanForEngines())
@@ -27,7 +38,7 @@ namespace kolosal
         }
         else
         {
-            ServerLogger::logWarning("No inference engines found. Ensure inference plugins are in the current directory.");
+            ServerLogger::logWarning("No inference engines found. Ensure inference plugins are available.");
         }
 
         autoscalingThread_ = std::thread(&NodeManager::autoscalingLoop, this);
@@ -852,6 +863,82 @@ namespace kolosal
                                   static_cast<double>(result.total_bytes) / (1024.0 * 1024.0));
             return localPath;
         }
+    }
+
+    std::string NodeManager::findPluginsDirectory()
+    {
+        std::vector<std::string> searchPaths;
+        
+        // First, try to get the executable directory
+#ifdef _WIN32
+        char exePath[MAX_PATH];
+        if (GetModuleFileNameA(NULL, exePath, MAX_PATH) != 0)
+        {
+            std::string executablePath = exePath;
+            size_t lastSlash = executablePath.find_last_of("\\/");
+            if (lastSlash != std::string::npos)
+            {
+                searchPaths.push_back(executablePath.substr(0, lastSlash));
+            }
+        }
+#else
+        char exePath[PATH_MAX];
+        ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+        if (len != -1)
+        {
+            exePath[len] = '\0';
+            std::string executablePath = exePath;
+            size_t lastSlash = executablePath.find_last_of('/');
+            if (lastSlash != std::string::npos)
+            {
+                searchPaths.push_back(executablePath.substr(0, lastSlash));
+            }
+        }
+#endif
+        
+        // Add current working directory as fallback
+        searchPaths.push_back(".");
+        
+        // Add common installation paths on Linux
+#ifndef _WIN32
+        searchPaths.push_back("/usr/lib");
+        searchPaths.push_back("/usr/local/lib");
+#endif
+        
+        // Check each path for inference engine libraries
+        for (const std::string& path : searchPaths)
+        {
+            if (!std::filesystem::exists(path))
+                continue;
+                
+            try
+            {
+                for (const auto& entry : std::filesystem::directory_iterator(path))
+                {
+                    if (entry.is_regular_file())
+                    {
+                        std::string filename = entry.path().filename().string();
+                        
+                        // Check for inference engine libraries
+                        if ((filename.find("llama-") == 0 && filename.substr(filename.size() - std::string(LIBRARY_EXTENSION).size()) == LIBRARY_EXTENSION) ||
+                            (filename.find("libllama-") == 0 && filename.substr(filename.size() - std::string(LIBRARY_EXTENSION).size()) == LIBRARY_EXTENSION))
+                        {
+                            ServerLogger::logInfo("Found inference engines in: %s", path.c_str());
+                            return path;
+                        }
+                    }
+                }
+            }
+            catch (const std::exception& e)
+            {
+                ServerLogger::logWarning("Error scanning directory %s: %s", path.c_str(), e.what());
+                continue;
+            }
+        }
+        
+        // If no engines found, return current directory as fallback
+        ServerLogger::logWarning("No inference engines found in any search path, using current directory");
+        return ".";
     }
 
 } // namespace kolosal
