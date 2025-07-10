@@ -47,6 +47,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/mupdf/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/mupdf/thirdparty/zlib/contrib/minizip)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/mupdf/thirdparty/zlib)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/minizip)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/maddy/include)
 
 # Define source files.
 set(SOURCES
@@ -78,6 +79,7 @@ set(SOURCES
     src/routes/models_route.cpp
     src/routes/parse_docx_route.cpp
     src/routes/parse_pdf_route.cpp
+    src/routes/parse_html_route.cpp
     src/routes/pause_download_route.cpp
     src/routes/resume_download_route.cpp
     src/routes/retrieve_route.cpp
@@ -90,6 +92,7 @@ set(SOURCES
     src/retrieval/document_service.cpp
     src/retrieval/parse_docx.cpp
     src/retrieval/parse_pdf.cpp
+    src/retrieval/parse_html.cpp
     
     src/models/embedding_request_model.cpp
     src/models/embedding_response_model.cpp
