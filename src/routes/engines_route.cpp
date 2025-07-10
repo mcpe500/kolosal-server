@@ -1,4 +1,4 @@
-#include "kolosal/routes/list_inference_engines_route.hpp"
+#include "kolosal/routes/engines_route.hpp"
 #include "kolosal/utils.hpp"
 #include "kolosal/server_api.hpp"
 #include "kolosal/node_manager.h"
@@ -12,12 +12,12 @@ using json = nlohmann::json;
 namespace kolosal
 {
 
-    bool ListInferenceEnginesRoute::match(const std::string &method, const std::string &path)
+    bool EnginesRoute::match(const std::string &method, const std::string &path)
     {
         return (method == "GET" && (path == "/inference-engines" || path == "/v1/inference-engines"));
     }
 
-    void ListInferenceEnginesRoute::handle(SocketType sock, const std::string &body)
+    void EnginesRoute::handle(SocketType sock, const std::string &body)
     {
         try
         {

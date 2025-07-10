@@ -1,5 +1,5 @@
-#ifndef KOLOSAL_LIST_INFERENCE_ENGINES_ROUTE_HPP
-#define KOLOSAL_LIST_INFERENCE_ENGINES_ROUTE_HPP
+#ifndef KOLOSAL_ENGINES_ROUTE_HPP
+#define KOLOSAL_ENGINES_ROUTE_HPP
 
 #include "route_interface.hpp"
 
@@ -12,7 +12,7 @@ namespace kolosal
      * Handles GET requests to /inference-engines and /v1/inference-engines
      * Returns a list of all available inference engine libraries that can be loaded
      */
-    class ListInferenceEnginesRoute : public IRoute
+    class EnginesRoute : public IRoute
     {
     public:
         /**
@@ -33,4 +33,4 @@ namespace kolosal
 
 } // namespace kolosal
 
-#endif // KOLOSAL_LIST_INFERENCE_ENGINES_ROUTE_HPP
+#endif // KOLOSAL_ENGINES_ROUTE_HPP
