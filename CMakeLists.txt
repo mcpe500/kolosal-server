@@ -57,7 +57,7 @@ set(SOURCES
     src/routes/oai_completions_route.cpp
     src/routes/completion_route.cpp
     src/routes/models_route.cpp
-    src/routes/list_inference_engines_route.cpp
+    src/routes/engines_route.cpp
     src/routes/health_status_route.cpp    
     src/routes/auth_config_route.cpp    
     src/routes/server_logs_route.cpp    
