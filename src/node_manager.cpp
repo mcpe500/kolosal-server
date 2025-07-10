@@ -2,6 +2,16 @@
 #include "kolosal/logger.hpp" // Assuming a logger is available
 #include "kolosal/download_utils.hpp"
 #include <filesystem>
+#include <algorithm> // For std::max and std::min
+
+#ifdef _WIN32
+#include <windows.h>
+#define LIBRARY_EXTENSION ".dll"
+#else
+#include <unistd.h>
+#include <limits.h>
+#define LIBRARY_EXTENSION ".so"
+#endif
 
 namespace kolosal
 {
@@ -10,6 +20,27 @@ namespace kolosal
         : idleTimeout_(idleTimeout), stopAutoscaling_(false)
     {
         ServerLogger::logInfo("NodeManager initialized with idle timeout: %lld seconds.", idleTimeout_.count());
+
+        // Initialize the dynamic inference loader with smart plugin discovery
+        std::string pluginsDir = findPluginsDirectory();
+        ServerLogger::logInfo("Using plugins directory: %s", pluginsDir.c_str());
+        inferenceLoader_ = std::make_unique<InferenceLoader>(pluginsDir);
+
+        // Scan for available inference engines
+        if (inferenceLoader_->scanForEngines())
+        {
+            auto availableEngines = inferenceLoader_->getAvailableEngines();
+            ServerLogger::logInfo("Found %zu available inference engines:", availableEngines.size());
+            for (const auto &engine : availableEngines)
+            {
+                ServerLogger::logInfo("  - %s: %s", engine.name.c_str(), engine.description.c_str());
+            }
+        }
+        else
+        {
+            ServerLogger::logWarning("No inference engines found. Ensure inference plugins are available.");
+        }
+
         autoscalingThread_ = std::thread(&NodeManager::autoscalingLoop, this);
     }
 
@@ -17,13 +48,13 @@ namespace kolosal
     {
         ServerLogger::logInfo("NodeManager shutting down.");
         stopAutoscaling_.store(true);
-        
+
         // Wake up autoscaling thread
         {
             std::lock_guard<std::mutex> lock(autoscalingMutex_);
             autoscalingCv_.notify_one();
         }
-        
+
         if (autoscalingThread_.joinable())
         {
             autoscalingThread_.join();
@@ -32,26 +63,42 @@ namespace kolosal
 
         // Get exclusive access to engines map
         std::unique_lock<std::shared_mutex> mapLock(engineMapMutex_);
-        
-        // Mark all engines for removal and unload them
-        for (auto& [id, recordPtr] : engines_)
+
+        // Mark all engines for removal and unload them safely
+        for (auto &[id, recordPtr] : engines_)
         {
-            if (recordPtr)        {
-            recordPtr->markedForRemoval.store(true);
-            std::lock_guard<std::mutex> engineLock(recordPtr->engineMutex);
-            
-            if (recordPtr->isLoaded.load() && recordPtr->engine)
+            if (recordPtr)
             {
-                ServerLogger::logInfo("Unloading engine ID \'%s\' during shutdown.", id.c_str());
-                recordPtr->engine->unloadModel();
+                recordPtr->markedForRemoval.store(true);
+                std::lock_guard<std::mutex> engineLock(recordPtr->engineMutex);
+
+                if (recordPtr->isLoaded.load() && recordPtr->engine)
+                {
+                    ServerLogger::logInfo("Unloading engine ID \'%s\' during shutdown.", id.c_str());
+                    try
+                    {
+                        recordPtr->engine->unloadModel();
+                        ServerLogger::logInfo("Successfully unloaded engine ID \'%s\'.", id.c_str());
+                    }
+                    catch (const std::exception &e)
+                    {
+                        ServerLogger::logError("Exception while unloading engine ID \'%s\': %s", id.c_str(), e.what());
+                    }
+                    catch (...)
+                    {
+                        ServerLogger::logError("Unknown exception while unloading engine ID \'%s\'", id.c_str());
+                    }
+                }
+
+                // Wake up any threads waiting on this engine
+                recordPtr->loadingCv.notify_all();
             }
-        }
         }
         engines_.clear();
         ServerLogger::logInfo("All engines unloaded and NodeManager shut down complete.");
     }
 
-    bool NodeManager::addEngine(const std::string &engineId, const char *modelPath, const LoadingParameters &loadParams, int mainGpuId)
+    bool NodeManager::addEngine(const std::string &engineId, const char *modelPath, const LoadingParameters &loadParams, int mainGpuId, const std::string &engineType)
     {
         // First check if engine already exists (read lock)
         {
@@ -82,18 +129,91 @@ namespace kolosal
             }
         }
 
-        // Create engine instance and load model (outside of map lock)
-        auto engine = std::make_shared<InferenceEngine>();
-        if (!engine->loadModel(actualModelPath.c_str(), loadParams, mainGpuId))
+        // Create engine instance using dynamic loader with safety handlers
+        ServerLogger::logInfo("Creating %s inference engine for ID '%s'", engineType.c_str(), engineId.c_str());
+
+        std::shared_ptr<IInferenceEngine> enginePtr;
+
+        try
         {
-            ServerLogger::logError("Failed to load model for engine ID \'%s\' from path \'%s\'.", engineId.c_str(), actualModelPath.c_str());
+            // Load the inference engine plugin if not already loaded
+            if (!inferenceLoader_->isEngineLoaded(engineType))
+            {
+                ServerLogger::logInfo("Loading %s inference engine plugin...", engineType.c_str());
+                if (!inferenceLoader_->loadEngine(engineType))
+                {
+                    ServerLogger::logError("Failed to load %s inference engine: %s",
+                                           engineType.c_str(), inferenceLoader_->getLastError().c_str());
+                    return false;
+                }
+                ServerLogger::logInfo("Successfully loaded %s inference engine plugin", engineType.c_str());
+            }
+
+            // Create engine instance from the loaded plugin
+            ServerLogger::logInfo("Creating inference engine instance...");
+            auto engineInstance = inferenceLoader_->createEngineInstance(engineType);
+            if (!engineInstance)
+            {
+                ServerLogger::logError("Failed to create %s inference engine instance: %s",
+                                       engineType.c_str(), inferenceLoader_->getLastError().c_str());
+                return false;
+            }
+
+            // Load the model with safety handling
+            ServerLogger::logInfo("Loading model for engine '%s' from path: %s", engineId.c_str(), actualModelPath.c_str());
+            bool loadSuccess = false;
+            try
+            {
+                loadSuccess = engineInstance->loadModel(actualModelPath.c_str(), loadParams, mainGpuId);
+            }
+            catch (const std::exception &e)
+            {
+                ServerLogger::logError("Exception during model loading for engine '%s': %s", engineId.c_str(), e.what());
+                loadSuccess = false;
+            }
+            catch (...)
+            {
+                ServerLogger::logError("Unknown exception during model loading for engine '%s'", engineId.c_str());
+                loadSuccess = false;
+            }
+
+            if (!loadSuccess)
+            {
+                ServerLogger::logError("Failed to load model for engine ID '%s' from path '%s'", engineId.c_str(), actualModelPath.c_str());
+                // Ensure engine is properly cleaned up
+                try
+                {
+                    if (engineInstance)
+                    {
+                        engineInstance->unloadModel();
+                    }
+                }
+                catch (...)
+                {
+                    ServerLogger::logWarning("Exception during cleanup after failed model load for engine '%s'", engineId.c_str());
+                }
+                return false;
+            }
+
+            enginePtr = std::shared_ptr<IInferenceEngine>(engineInstance.release());
+            ServerLogger::logInfo("Successfully loaded model for engine '%s'", engineId.c_str());
+        }
+        catch (const std::exception &e)
+        {
+            ServerLogger::logError("Exception during engine creation for '%s': %s", engineId.c_str(), e.what());
+            return false;
+        }
+        catch (...)
+        {
+            ServerLogger::logError("Unknown exception during engine creation for '%s'", engineId.c_str());
             return false;
         }
 
         // Create record and add to map (exclusive lock only for map modification)
         auto recordPtr = std::make_shared<EngineRecord>();
-        recordPtr->engine = engine;
+        recordPtr->engine = enginePtr;
         recordPtr->modelPath = actualModelPath;
+        recordPtr->engineType = engineType;
         recordPtr->loadParams = loadParams;
         recordPtr->mainGpuId = mainGpuId;
         recordPtr->isLoaded.store(true);
@@ -111,17 +231,17 @@ namespace kolosal
         }
 
         ServerLogger::logInfo("Successfully added and loaded engine with ID \'%s\'. Model: %s", engineId.c_str(), actualModelPath.c_str());
-        
+
         // Notify autoscaling thread about new engine
         {
             std::lock_guard<std::mutex> lock(autoscalingMutex_);
             autoscalingCv_.notify_one();
         }
-        
+
         return true;
     }
 
-    std::shared_ptr<InferenceEngine> NodeManager::getEngine(const std::string &engineId)
+    std::shared_ptr<IInferenceEngine> NodeManager::getEngine(const std::string &engineId)
     {
         // First, get shared access to find the engine record
         std::shared_ptr<EngineRecord> recordPtr;
@@ -133,7 +253,7 @@ namespace kolosal
                 ServerLogger::logWarning("Engine with ID \'%s\' not found.", engineId.c_str());
                 return nullptr;
             }
-            
+
             recordPtr = it->second; // Get shared ownership of the record
             if (!recordPtr || recordPtr->markedForRemoval.load())
             {
@@ -141,28 +261,27 @@ namespace kolosal
                 return nullptr;
             }
         }
-        
+
         // Now work with the engine record without holding the map lock
         std::unique_lock<std::mutex> engineLock(recordPtr->engineMutex);
-        
+
         // Update activity time first
         recordPtr->lastActivityTime = std::chrono::steady_clock::now();
-        
+
         if (!recordPtr->isLoaded.load())
         {
             // Check if another thread is already loading
             if (recordPtr->isLoading.load())
             {
                 ServerLogger::logDebug("Engine ID \'%s\' is being loaded by another thread. Waiting...", engineId.c_str());
-                recordPtr->loadingCv.wait(engineLock, [recordPtr] { 
-                    return !recordPtr->isLoading.load() || recordPtr->markedForRemoval.load(); 
-                });
-                
+                recordPtr->loadingCv.wait(engineLock, [recordPtr]
+                                          { return !recordPtr->isLoading.load() || recordPtr->markedForRemoval.load(); });
+
                 if (recordPtr->markedForRemoval.load())
                 {
                     return nullptr;
                 }
-                
+
                 if (recordPtr->isLoaded.load() && recordPtr->engine)
                 {
                     ServerLogger::logDebug("Engine ID \'%s\' loaded by another thread.", engineId.c_str());
@@ -174,21 +293,100 @@ namespace kolosal
                     return nullptr;
                 }
             }
-            
+
             // This thread will handle the loading
             recordPtr->isLoading.store(true);
             engineLock.unlock(); // Release lock during potentially long loading operation
-            
+
             ServerLogger::logInfo("Engine ID \'%s\' was unloaded due to inactivity. Attempting to reload.", engineId.c_str());
-            auto newEngine = std::make_shared<InferenceEngine>();
-            
-            bool loadSuccess = newEngine->loadModel(recordPtr->modelPath.c_str(), recordPtr->loadParams, recordPtr->mainGpuId);
-            
+
+            // Create new engine instance using dynamic loader with safety handlers
+            std::string engineType = recordPtr->engineType;
+            std::shared_ptr<IInferenceEngine> newEngine;
+
+            try
+            {
+                if (!inferenceLoader_->isEngineLoaded(engineType))
+                {
+                    ServerLogger::logInfo("Reloading %s inference engine plugin...", engineType.c_str());
+                    if (!inferenceLoader_->loadEngine(engineType))
+                    {
+                        ServerLogger::logError("Failed to reload %s inference engine: %s",
+                                               engineType.c_str(), inferenceLoader_->getLastError().c_str());
+                        // Re-acquire lock to update state
+                        engineLock.lock();
+                        recordPtr->isLoading.store(false);
+                        recordPtr->loadingCv.notify_all();
+                        return nullptr;
+                    }
+                }
+
+                ServerLogger::logInfo("Creating new inference engine instance for reload...");
+                auto newEngineInstance = inferenceLoader_->createEngineInstance(engineType);
+                if (!newEngineInstance)
+                {
+                    ServerLogger::logError("Failed to create %s inference engine instance during reload: %s",
+                                           engineType.c_str(), inferenceLoader_->getLastError().c_str());
+                    // Re-acquire lock to update state
+                    engineLock.lock();
+                    recordPtr->isLoading.store(false);
+                    recordPtr->loadingCv.notify_all();
+                    return nullptr;
+                }
+
+                bool loadSuccess = false;
+                try
+                {
+                    ServerLogger::logInfo("Reloading model from path: %s", recordPtr->modelPath.c_str());
+                    loadSuccess = newEngineInstance->loadModel(recordPtr->modelPath.c_str(), recordPtr->loadParams, recordPtr->mainGpuId);
+                }
+                catch (const std::exception &e)
+                {
+                    ServerLogger::logError("Exception during model reload for engine '%s': %s", engineId.c_str(), e.what());
+                    loadSuccess = false;
+                }
+                catch (...)
+                {
+                    ServerLogger::logError("Unknown exception during model reload for engine '%s'", engineId.c_str());
+                    loadSuccess = false;
+                }
+
+                if (loadSuccess)
+                {
+                    newEngine = std::shared_ptr<IInferenceEngine>(newEngineInstance.release());
+                    ServerLogger::logInfo("Successfully reloaded model for engine '%s'", engineId.c_str());
+                }
+                else
+                {
+                    ServerLogger::logError("Failed to reload model for engine '%s'", engineId.c_str());
+                    // Ensure cleanup
+                    try
+                    {
+                        if (newEngineInstance)
+                        {
+                            newEngineInstance->unloadModel();
+                        }
+                    }
+                    catch (...)
+                    {
+                        ServerLogger::logWarning("Exception during cleanup after failed model reload for engine '%s'", engineId.c_str());
+                    }
+                }
+            }
+            catch (const std::exception &e)
+            {
+                ServerLogger::logError("Exception during engine reload for '%s': %s", engineId.c_str(), e.what());
+            }
+            catch (...)
+            {
+                ServerLogger::logError("Unknown exception during engine reload for '%s'", engineId.c_str());
+            }
+
             // Re-acquire lock to update state
             engineLock.lock();
             recordPtr->isLoading.store(false);
-            
-            if (loadSuccess && !recordPtr->markedForRemoval.load())
+
+            if (newEngine && !recordPtr->markedForRemoval.load())
             {
                 recordPtr->engine = newEngine;
                 recordPtr->isLoaded.store(true);
@@ -206,29 +404,29 @@ namespace kolosal
                 }
                 recordPtr->engine = nullptr;
             }
-            
+
             // Notify all waiting threads
             recordPtr->loadingCv.notify_all();
-            
-            if (!loadSuccess || recordPtr->markedForRemoval.load())
+
+            if (!newEngine || recordPtr->markedForRemoval.load())
             {
                 return nullptr;
             }
         }
-        
+
         // Notify autoscaling thread about activity
         {
             std::lock_guard<std::mutex> lock(autoscalingMutex_);
             autoscalingCv_.notify_one();
         }
-        
+
         return recordPtr->engine;
     }
 
     bool NodeManager::removeEngine(const std::string &engineId)
     {
         std::shared_ptr<EngineRecord> recordPtr;
-        
+
         // Get the engine record and mark it for removal
         {
             std::unique_lock<std::shared_mutex> mapLock(engineMapMutex_);
@@ -238,34 +436,46 @@ namespace kolosal
                 ServerLogger::logWarning("Attempted to remove non-existent engine with ID \'%s\'.", engineId.c_str());
                 return false;
             }
-            
+
             recordPtr = it->second;
             engines_.erase(it);
         }
-        
+
         if (recordPtr)
         {
             recordPtr->markedForRemoval.store(true);
             std::lock_guard<std::mutex> engineLock(recordPtr->engineMutex);
-            
+
             if (recordPtr->isLoaded.load() && recordPtr->engine)
             {
-                recordPtr->engine->unloadModel();
-                ServerLogger::logInfo("Engine with ID \'%s\' unloaded.", engineId.c_str());
+                ServerLogger::logInfo("Unloading engine with ID \'%s\'.", engineId.c_str());
+                try
+                {
+                    recordPtr->engine->unloadModel();
+                    ServerLogger::logInfo("Engine with ID \'%s\' unloaded successfully.", engineId.c_str());
+                }
+                catch (const std::exception &e)
+                {
+                    ServerLogger::logError("Exception while unloading engine ID \'%s\': %s", engineId.c_str(), e.what());
+                }
+                catch (...)
+                {
+                    ServerLogger::logError("Unknown exception while unloading engine ID \'%s\'", engineId.c_str());
+                }
             }
-            
+
             // Wake up any threads waiting on this engine
             recordPtr->loadingCv.notify_all();
         }
-        
+
         ServerLogger::logInfo("Engine with ID \'%s\' removed from manager.", engineId.c_str());
-        
+
         // Notify autoscaling thread
         {
             std::lock_guard<std::mutex> lock(autoscalingMutex_);
             autoscalingCv_.notify_one();
         }
-        
+
         return true;
     }
 
@@ -284,55 +494,110 @@ namespace kolosal
         return ids;
     }
 
+    std::vector<InferenceEngineInfo> NodeManager::getAvailableInferenceEngines() const
+    {
+        if (inferenceLoader_)
+        {
+            return inferenceLoader_->getAvailableEngines();
+        }
+        return {};
+    }
+
     // Helper function to validate model file existence
     bool NodeManager::validateModelFile(const std::string &modelPath)
     {
-        if (is_valid_url(modelPath))
+        try
         {
-            // For URLs, we can perform a HEAD request to check if the file exists
-            ServerLogger::logInfo("Validating URL accessibility: %s", modelPath.c_str());
+            if (is_valid_url(modelPath))
+            {
+                // For URLs, we can perform a HEAD request to check if the file exists
+                ServerLogger::logInfo("Validating URL accessibility: %s", modelPath.c_str());
 
-            // Try to get file info without downloading
-            auto result = get_url_file_info(modelPath);
-            if (!result.success)
-            {
-                ServerLogger::logError("URL validation failed: %s - %s", modelPath.c_str(), result.error_message.c_str());
-                return false;
-            }
-            ServerLogger::logInfo("URL is accessible. File size: %.2f MB",
-                                  static_cast<double>(result.total_bytes) / (1024.0 * 1024.0));
-            return true;
-        }
-        else
-        {
-            // For local paths, check if the file exists
-            if (!std::filesystem::exists(modelPath))
-            {
-                ServerLogger::logError("Local model file does not exist: %s", modelPath.c_str());
-                return false;
-            }
-
-            // Check if it's a regular file (not a directory)
-            if (!std::filesystem::is_regular_file(modelPath))
-            {
-                ServerLogger::logError("Model path is not a regular file: %s", modelPath.c_str());
-                return false;
-            }
-
-            // Get file size for logging
-            std::error_code ec;
-            auto fileSize = std::filesystem::file_size(modelPath, ec);
-            if (!ec)
-            {
-                ServerLogger::logInfo("Local model file found. Size: %.2f MB",
-                                      static_cast<double>(fileSize) / (1024.0 * 1024.0));
+                try
+                {
+                    // Try to get file info without downloading
+                    auto result = get_url_file_info(modelPath);
+                    if (!result.success)
+                    {
+                        ServerLogger::logError("URL validation failed: %s - %s", modelPath.c_str(), result.error_message.c_str());
+                        return false;
+                    }
+                    ServerLogger::logInfo("URL is accessible. File size: %.2f MB",
+                                          static_cast<double>(result.total_bytes) / (1024.0 * 1024.0));
+                    return true;
+                }
+                catch (const std::exception &e)
+                {
+                    ServerLogger::logError("Exception during URL validation for %s: %s", modelPath.c_str(), e.what());
+                    return false;
+                }
+                catch (...)
+                {
+                    ServerLogger::logError("Unknown exception during URL validation for %s", modelPath.c_str());
+                    return false;
+                }
             }
             else
             {
-                ServerLogger::logWarning("Could not determine file size for: %s", modelPath.c_str());
-            }
+                // For local paths, check if the file exists
+                try
+                {
+                    if (!std::filesystem::exists(modelPath))
+                    {
+                        ServerLogger::logError("Local model file does not exist: %s", modelPath.c_str());
+                        return false;
+                    }
 
-            return true;
+                    // Check if it's a regular file (not a directory)
+                    if (!std::filesystem::is_regular_file(modelPath))
+                    {
+                        ServerLogger::logError("Model path is not a regular file: %s", modelPath.c_str());
+                        return false;
+                    }
+                }
+                catch (const std::filesystem::filesystem_error &e)
+                {
+                    ServerLogger::logError("Filesystem error during model validation for %s: %s", modelPath.c_str(), e.what());
+                    return false;
+                }
+                catch (const std::exception &e)
+                {
+                    ServerLogger::logError("Exception during local file validation for %s: %s", modelPath.c_str(), e.what());
+                    return false;
+                }
+
+                // Get file size for logging
+                try
+                {
+                    std::error_code ec;
+                    auto fileSize = std::filesystem::file_size(modelPath, ec);
+                    if (!ec)
+                    {
+                        ServerLogger::logInfo("Local model file found. Size: %.2f MB",
+                                              static_cast<double>(fileSize) / (1024.0 * 1024.0));
+                    }
+                    else
+                    {
+                        ServerLogger::logWarning("Could not determine file size for: %s", modelPath.c_str());
+                    }
+                }
+                catch (...)
+                {
+                    ServerLogger::logWarning("Exception while getting file size for: %s", modelPath.c_str());
+                }
+
+                return true;
+            }
+        }
+        catch (const std::exception &e)
+        {
+            ServerLogger::logError("Exception during model file validation for %s: %s", modelPath.c_str(), e.what());
+            return false;
+        }
+        catch (...)
+        {
+            ServerLogger::logError("Unknown exception during model file validation for %s", modelPath.c_str());
+            return false;
         }
     }
 
@@ -345,15 +610,15 @@ namespace kolosal
     void NodeManager::autoscalingLoop()
     {
         ServerLogger::logInfo("Autoscaling thread started.");
-        
+
         // Initial check interval
         auto nextCheckInterval = std::chrono::seconds(10);
-        
+
         while (!stopAutoscaling_.load())
         {
             {
                 std::unique_lock<std::mutex> autoscalingLock(autoscalingMutex_);
-                
+
                 // Wait for a timeout or a notification
                 if (autoscalingCv_.wait_for(autoscalingLock, nextCheckInterval, [this]
                                             { return stopAutoscaling_.load(); }))
@@ -367,16 +632,16 @@ namespace kolosal
             }
 
             auto now = std::chrono::steady_clock::now();
-            ServerLogger::logDebug("Autoscaling check at %lld (next check interval was: %lld seconds)", 
+            ServerLogger::logDebug("Autoscaling check at %lld (next check interval was: %lld seconds)",
                                    std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count(),
                                    std::chrono::duration_cast<std::chrono::seconds>(nextCheckInterval).count());
-            
+
             // Get snapshot of engines to process
             std::vector<std::pair<std::string, std::shared_ptr<EngineRecord>>> engineSnapshot;
             {
                 std::shared_lock<std::shared_mutex> mapLock(engineMapMutex_);
                 engineSnapshot.reserve(engines_.size());
-                for (const auto& [id, recordPtr] : engines_)
+                for (const auto &[id, recordPtr] : engines_)
                 {
                     if (recordPtr && !recordPtr->markedForRemoval.load())
                     {
@@ -384,23 +649,23 @@ namespace kolosal
                     }
                 }
             }
-            
+
             // Process engines without holding the map lock
             auto nextCheckTime = std::chrono::steady_clock::now() + std::chrono::seconds(60); // Default to 60 seconds
             bool hasLoadedEngines = false;
-            
-            for (const auto& [engineId, recordPtr] : engineSnapshot)
+
+            for (const auto &[engineId, recordPtr] : engineSnapshot)
             {
                 if (recordPtr->markedForRemoval.load())
                     continue;
-                    
+
                 std::lock_guard<std::mutex> engineLock(recordPtr->engineMutex);
-                
+
                 if (recordPtr->isLoaded.load() && recordPtr->engine && !recordPtr->markedForRemoval.load())
                 {
                     hasLoadedEngines = true;
                     auto idleDuration = std::chrono::duration_cast<std::chrono::seconds>(now - recordPtr->lastActivityTime);
-                    
+
                     if (idleDuration >= idleTimeout_)
                     {
                         // Check if the engine has any active jobs before unloading
@@ -429,30 +694,30 @@ namespace kolosal
                     }
                 }
             }
-            
+
             // If no loaded engines, use longer interval
             if (!hasLoadedEngines)
             {
                 nextCheckTime = now + std::chrono::seconds(60);
             }
-            
+
             // Calculate time until next check (but cap it)
             auto timeUntilNextCheck = std::chrono::duration_cast<std::chrono::seconds>(nextCheckTime - now);
-            timeUntilNextCheck = std::max(timeUntilNextCheck, std::chrono::seconds(1)); // At least 1 second
-            
+            timeUntilNextCheck = (std::max)(timeUntilNextCheck, std::chrono::seconds(1)); // At least 1 second
+
             // Cap the maximum check interval based on idle timeout to ensure timely unloading
-            auto maxCheckInterval = std::max(idleTimeout_ / 2, std::chrono::seconds(5)); // At most half the idle timeout, minimum 5 seconds
-            timeUntilNextCheck = std::min(timeUntilNextCheck, maxCheckInterval);
-            
+            auto maxCheckInterval = (std::max)(idleTimeout_ / 2, std::chrono::seconds(5)); // At most half the idle timeout, minimum 5 seconds
+            timeUntilNextCheck = (std::min)(timeUntilNextCheck, maxCheckInterval);
+
             // Set the next check interval for the next iteration
             nextCheckInterval = timeUntilNextCheck;
-            
+
             ServerLogger::logDebug("Next autoscaling check in %lld seconds", timeUntilNextCheck.count());
         }
         ServerLogger::logInfo("Autoscaling thread finished.");
     }
 
-    bool NodeManager::registerEngine(const std::string &engineId, const char *modelPath, const LoadingParameters &loadParams, int mainGpuId)
+    bool NodeManager::registerEngine(const std::string &engineId, const char *modelPath, const LoadingParameters &loadParams, int mainGpuId, const std::string &engineType)
     {
         // First check if engine already exists (read lock)
         {
@@ -487,6 +752,7 @@ namespace kolosal
         auto recordPtr = std::make_shared<EngineRecord>();
         recordPtr->engine = nullptr;            // No engine instance yet
         recordPtr->modelPath = actualModelPath; // Store the actual local path
+        recordPtr->engineType = engineType;     // Store the engine type
         recordPtr->loadParams = loadParams;
         recordPtr->mainGpuId = mainGpuId;
         recordPtr->isLoaded.store(false); // Mark as not loaded for lazy loading
@@ -507,7 +773,7 @@ namespace kolosal
         return true;
     }
 
-    std::pair<bool, bool> NodeManager::getEngineStatus(const std::string& engineId) const
+    std::pair<bool, bool> NodeManager::getEngineStatus(const std::string &engineId) const
     {
         std::shared_lock<std::shared_mutex> mapLock(engineMapMutex_);
         auto it = engines_.find(engineId);
@@ -515,17 +781,17 @@ namespace kolosal
         {
             return std::make_pair(false, false); // Engine not found
         }
-        
-        const auto& recordPtr = it->second;
+
+        const auto &recordPtr = it->second;
         if (!recordPtr || recordPtr->markedForRemoval.load())
         {
             return std::make_pair(false, false); // Engine marked for removal
         }
-        
+
         return std::make_pair(true, recordPtr->isLoaded.load()); // Engine exists, return load status
     }
 
-    std::string NodeManager::handleUrlDownload(const std::string& engineId, const std::string& modelPath)
+    std::string NodeManager::handleUrlDownload(const std::string &engineId, const std::string &modelPath)
     {
         ServerLogger::logInfo("Model path for engine \'%s\' is a URL. Starting download: %s", engineId.c_str(), modelPath.c_str());
 
@@ -597,6 +863,82 @@ namespace kolosal
                                   static_cast<double>(result.total_bytes) / (1024.0 * 1024.0));
             return localPath;
         }
+    }
+
+    std::string NodeManager::findPluginsDirectory()
+    {
+        std::vector<std::string> searchPaths;
+        
+        // First, try to get the executable directory
+#ifdef _WIN32
+        char exePath[MAX_PATH];
+        if (GetModuleFileNameA(NULL, exePath, MAX_PATH) != 0)
+        {
+            std::string executablePath = exePath;
+            size_t lastSlash = executablePath.find_last_of("\\/");
+            if (lastSlash != std::string::npos)
+            {
+                searchPaths.push_back(executablePath.substr(0, lastSlash));
+            }
+        }
+#else
+        char exePath[PATH_MAX];
+        ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+        if (len != -1)
+        {
+            exePath[len] = '\0';
+            std::string executablePath = exePath;
+            size_t lastSlash = executablePath.find_last_of('/');
+            if (lastSlash != std::string::npos)
+            {
+                searchPaths.push_back(executablePath.substr(0, lastSlash));
+            }
+        }
+#endif
+        
+        // Add current working directory as fallback
+        searchPaths.push_back(".");
+        
+        // Add common installation paths on Linux
+#ifndef _WIN32
+        searchPaths.push_back("/usr/lib");
+        searchPaths.push_back("/usr/local/lib");
+#endif
+        
+        // Check each path for inference engine libraries
+        for (const std::string& path : searchPaths)
+        {
+            if (!std::filesystem::exists(path))
+                continue;
+                
+            try
+            {
+                for (const auto& entry : std::filesystem::directory_iterator(path))
+                {
+                    if (entry.is_regular_file())
+                    {
+                        std::string filename = entry.path().filename().string();
+                        
+                        // Check for inference engine libraries
+                        if ((filename.find("llama-") == 0 && filename.substr(filename.size() - std::string(LIBRARY_EXTENSION).size()) == LIBRARY_EXTENSION) ||
+                            (filename.find("libllama-") == 0 && filename.substr(filename.size() - std::string(LIBRARY_EXTENSION).size()) == LIBRARY_EXTENSION))
+                        {
+                            ServerLogger::logInfo("Found inference engines in: %s", path.c_str());
+                            return path;
+                        }
+                    }
+                }
+            }
+            catch (const std::exception& e)
+            {
+                ServerLogger::logWarning("Error scanning directory %s: %s", path.c_str(), e.what());
+                continue;
+            }
+        }
+        
+        // If no engines found, return current directory as fallback
+        ServerLogger::logWarning("No inference engines found in any search path, using current directory");
+        return ".";
     }
 
 } // namespace kolosal
