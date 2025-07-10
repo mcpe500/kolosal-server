@@ -60,7 +60,9 @@ namespace kolosal
             {
                 ServerLogger::logError("Failed to initialize server");
                 return false;
-            }            // Register routes
+            }            
+            
+            // Register routes
             ServerLogger::logInfo("Registering routes");
             pImpl->server->addRoute(std::make_unique<OaiCompletionsRoute>());
             pImpl->server->addRoute(std::make_unique<CompletionRoute>());
@@ -74,11 +76,10 @@ namespace kolosal
             ServerLogger::logInfo("Routes registered successfully");
 
             // Start server in a background thread
-            std::thread([this]()
-                        {
+            std::thread([this]() {
                 ServerLogger::logInfo("Starting server main loop");
-                pImpl->server->run(); })
-                .detach();
+                pImpl->server->run(); 
+            }).detach();
 
             return true;
         }
