@@ -4,11 +4,8 @@
 #include "kolosal/routes/completion_route.hpp"
 #include "kolosal/routes/inference_completion_route.hpp"
 #include "kolosal/routes/inference_chat_completion_route.hpp"
-#include "kolosal/routes/add_model_route.hpp"
-#include "kolosal/routes/list_models_route.hpp"
+#include "kolosal/routes/models_route.hpp"
 #include "kolosal/routes/list_inference_engines_route.hpp"
-#include "kolosal/routes/remove_model_route.hpp"
-#include "kolosal/routes/model_status_route.hpp"
 #include "kolosal/routes/health_status_route.hpp"
 #include "kolosal/routes/auth_config_route.hpp"
 #include "kolosal/routes/server_logs_route.hpp"
@@ -71,11 +68,8 @@ namespace kolosal
             pImpl->server->addRoute(std::make_unique<CompletionsRoute>());
             pImpl->server->addRoute(std::make_unique<InferenceCompletionRoute>());
             pImpl->server->addRoute(std::make_unique<InferenceChatCompletionRoute>());
-            pImpl->server->addRoute(std::make_unique<AddModelRoute>());
-            pImpl->server->addRoute(std::make_unique<ListModelsRoute>());
+            pImpl->server->addRoute(std::make_unique<ModelsRoute>());
             pImpl->server->addRoute(std::make_unique<ListInferenceEnginesRoute>());
-            pImpl->server->addRoute(std::make_unique<RemoveModelRoute>());
-            pImpl->server->addRoute(std::make_unique<ModelStatusRoute>());
             pImpl->server->addRoute(std::make_unique<HealthStatusRoute>());
             pImpl->server->addRoute(std::make_unique<AuthConfigRoute>());
             pImpl->server->addRoute(std::make_unique<ServerLogsRoute>());
