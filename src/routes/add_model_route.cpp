@@ -108,11 +108,11 @@ namespace kolosal
                             if (download_manager.isDownloadInProgress(modelId))
                             {
                                 json jResponse = {
-                                    {"message", "Model download already in progress. Use /download-progress/" + modelId + " to check status."},
+                                    {"message", "Model download already in progress. Use /downloads/" + modelId + " to check status."},
                                     {"model_id", modelId},
                                     {"download_status", "in_progress"},
                                     {"download_url", modelPathStr},
-                                    {"progress_endpoint", "/download-progress/" + modelId}};
+                                    {"progress_endpoint", "/downloads/" + modelId}};
 
                                 send_response(sock, 202, jResponse.dump());
                                 ServerLogger::logInfo("[Thread %u] Download already in progress for model: %s", std::this_thread::get_id(), modelId.c_str());
@@ -138,7 +138,7 @@ namespace kolosal
                             {"download_status", "resuming"},
                             {"download_url", modelPathStr},
                             {"local_path", downloadPath},
-                            {"progress_endpoint", "/download-progress/" + modelId},
+                            {"progress_endpoint", "/downloads/" + modelId},
                             {"note", "Check download progress using the progress_endpoint. Engine creation will be deferred until download completes."}};
 
                         send_response(sock, 202, jResponse.dump());
@@ -172,11 +172,11 @@ namespace kolosal
                         if (download_manager.isDownloadInProgress(modelId))
                         {
                             json jResponse = {
-                                {"message", "Model download already in progress. Use /download-progress/" + modelId + " to check status."},
+                                {"message", "Model download already in progress. Use /downloads/" + modelId + " to check status."},
                                 {"model_id", modelId},
                                 {"download_status", "in_progress"},
                                 {"download_url", modelPathStr},
-                                {"progress_endpoint", "/download-progress/" + modelId}};
+                                {"progress_endpoint", "/downloads/" + modelId}};
 
                             send_response(sock, 202, jResponse.dump());
                             ServerLogger::logInfo("[Thread %u] Download already in progress for model: %s", std::this_thread::get_id(), modelId.c_str());
@@ -202,7 +202,7 @@ namespace kolosal
                         {"download_status", "started"},
                         {"download_url", modelPathStr},
                         {"local_path", downloadPath},
-                        {"progress_endpoint", "/download-progress/" + modelId},
+                        {"progress_endpoint", "/downloads/" + modelId},
                         {"note", "Check download progress using the progress_endpoint. Engine creation will be deferred until download completes."}};
 
                     send_response(sock, 202, jResponse.dump());
