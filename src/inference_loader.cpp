@@ -1,4 +1,5 @@
 #include "kolosal/inference_loader.hpp"
+#include "kolosal/server_config.hpp"
 #include "kolosal/logger.hpp"
 #include "inference_interface.h"
 
@@ -7,6 +8,7 @@
 #include <sstream>
 
 #ifdef _WIN32
+#include <winsock2.h>
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -18,10 +20,11 @@ namespace kolosal
     InferenceLoader::InferenceLoader(const std::string &plugins_dir)
         : plugins_dir_(plugins_dir)
     {
-        // Ensure plugins directory exists or default to current directory
-        if (plugins_dir_.empty())
+        // Note: plugins_dir is deprecated and not used for engine discovery
+        // Engines are now configured through configureEngines() method
+        if (!plugins_dir_.empty())
         {
-            plugins_dir_ = ".";
+            ServerLogger::logWarning("InferenceLoader plugins_dir parameter is deprecated. Use configureEngines() instead.");
         }
     }
 
@@ -34,84 +37,70 @@ namespace kolosal
         }
     }
 
-    bool InferenceLoader::scanForEngines()
+    bool InferenceLoader::configureEngines(const std::vector<InferenceEngineConfig>& engines)
     {
         available_engines_.clear();
-
+        
         try
         {
-            if (!std::filesystem::exists(plugins_dir_))
+            for (const auto& engineConfig : engines)
             {
-                setLastError("Plugins directory does not exist: " + plugins_dir_);
-                return false;
-            }
-
-            // Look for inference engine libraries
-            for (const auto &entry : std::filesystem::directory_iterator(plugins_dir_))
-            {
-                if (entry.is_regular_file())
+                // Validate engine configuration
+                if (engineConfig.name.empty())
                 {
-                    std::string filename = entry.path().filename().string();
-
-                    // Check if this looks like an inference engine library
-                    bool is_engine_lib = false;
-                    std::string engine_name;
-                    
-                    std::string ext_to_check = LIBRARY_EXTENSION;
-                    
-                    // Check Windows style first
-                    if (filename.find("llama-") == 0 && filename.size() > ext_to_check.size() && 
-                        filename.substr(filename.size() - ext_to_check.size()) == ext_to_check)
+                    ServerLogger::logWarning("Skipping engine with empty name");
+                    continue;
+                }
+                
+                if (engineConfig.library_path.empty())
+                {
+                    ServerLogger::logWarning("Skipping engine '%s' with empty library path", engineConfig.name.c_str());
+                    continue;
+                }
+                
+                // Check if library file exists
+                if (!std::filesystem::exists(engineConfig.library_path))
+                {
+                    ServerLogger::logWarning("Engine library not found: %s for engine '%s'", 
+                                           engineConfig.library_path.c_str(), engineConfig.name.c_str());
+                    continue;
+                }
+                
+                // Create InferenceEngineInfo from config
+                InferenceEngineInfo info;
+                info.name = engineConfig.name;
+                info.version = engineConfig.version;
+                info.description = engineConfig.description.empty() 
+                    ? ("Inference engine: " + engineConfig.name) 
+                    : engineConfig.description;
+                info.library_path = engineConfig.library_path;
+                info.is_loaded = false;
+                
+                available_engines_[engineConfig.name] = info;
+                
+                ServerLogger::logInfo("Configured inference engine: %s at %s", 
+                                    engineConfig.name.c_str(), engineConfig.library_path.c_str());
+                
+                // Auto-load if specified in config
+                if (engineConfig.load_on_startup)
+                {
+                    if (loadEngine(engineConfig.name))
                     {
-                        // Windows style: "llama-cpu.dll"
-                        is_engine_lib = true;
-                        engine_name = filename.substr(0, filename.size() - ext_to_check.size());
+                        ServerLogger::logInfo("Auto-loaded inference engine: %s", engineConfig.name.c_str());
                     }
-                    // Check Unix style
-                    else if (filename.find("libllama-") == 0 && filename.size() > (3 + ext_to_check.size()) && 
-                             filename.substr(filename.size() - ext_to_check.size()) == ext_to_check)
+                    else
                     {
-                        // Unix style: "libllama-cpu.so"
-                        is_engine_lib = true;
-                        engine_name = filename.substr(3, filename.size() - 3 - ext_to_check.size()); // Remove "lib" prefix and extension
-                    }
-                    
-                    if (is_engine_lib)
-                    {
-                        // Validate engine name format (should be "llama-xxx")
-                        if (engine_name.find("llama-") != 0)
-                        {
-                            continue;
-                        }
-                        
-                        if (engine_name.length() <= 6)
-                        {
-                            continue;
-                        }
-
-                        // Extract descriptive name for display (e.g., "cpu" from "llama-cpu")
-                        std::string display_name = engine_name.substr(6); // Remove "llama-"
-
-                        InferenceEngineInfo info;
-                        info.name = engine_name; // Use full name as identifier
-                        info.version = "1.0.0";  // TODO: Extract from library
-                        info.description = "Inference engine for " + display_name + " acceleration";
-                        info.library_path = entry.path().string();
-                        info.is_loaded = false;
-
-                        available_engines_[engine_name] = info;
-
-                        ServerLogger::logInfo("Found inference engine: %s at %s", engine_name.c_str(), info.library_path.c_str());
+                        ServerLogger::logWarning("Failed to auto-load inference engine: %s", engineConfig.name.c_str());
                     }
                 }
             }
-
-            ServerLogger::logInfo("Scan complete. Found %zu inference engines.", available_engines_.size());
+            
+            ServerLogger::logInfo("Engine configuration complete. Configured %zu inference engines.", available_engines_.size());
             return !available_engines_.empty();
         }
         catch (const std::exception &e)
         {
-            setLastError("Error scanning for engines: " + std::string(e.what()));
+            setLastError("Error configuring engines: " + std::string(e.what()));
             return false;
         }
     }
@@ -142,7 +131,7 @@ namespace kolosal
         auto it = available_engines_.find(engine_name);
         if (it == available_engines_.end())
         {
-            setLastError("Engine '" + engine_name + "' is not available. Run scanForEngines() first.");
+            setLastError("Engine '" + engine_name + "' is not available. Configure engines using configureEngines() first.");
             return false;
         }
 
@@ -239,15 +228,13 @@ namespace kolosal
 
     void InferenceLoader::setPluginsDirectory(const std::string &plugins_dir)
     {
+        ServerLogger::logWarning("setPluginsDirectory() is deprecated. Use configureEngines() instead.");
         plugins_dir_ = plugins_dir;
-        if (plugins_dir_.empty())
-        {
-            plugins_dir_ = ".";
-        }
     }
 
     std::string InferenceLoader::getPluginsDirectory() const
     {
+        ServerLogger::logWarning("getPluginsDirectory() is deprecated. Use configureEngines() instead.");
         return plugins_dir_;
     }
 
@@ -322,15 +309,6 @@ namespace kolosal
             loaded_engines_.erase(it);
             ServerLogger::logInfo("Unloaded inference engine: %s", engine_name.c_str());
         }
-    }
-
-    std::string InferenceLoader::getLibraryName(const std::string &engine_name) const
-    {
-#ifdef _WIN32
-        return engine_name + LIBRARY_EXTENSION;
-#else
-        return "lib" + engine_name + LIBRARY_EXTENSION;
-#endif
     }
 
     void InferenceLoader::setLastError(const std::string &error) const

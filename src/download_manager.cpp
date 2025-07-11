@@ -2,6 +2,7 @@
 #include "kolosal/download_utils.hpp"
 #include "kolosal/logger.hpp"
 #include "kolosal/server_api.hpp"
+#include "kolosal/server_config.hpp"
 #include "kolosal/node_manager.h"
 #include "inference_interface.h"
 #include <algorithm>
@@ -514,8 +515,96 @@ namespace kolosal
 
             if (success)
             {
-                progress->status = "engine_created";
-                ServerLogger::logInfo("Engine created successfully for model: %s", progress->model_id.c_str());
+                // Verify the engine is actually functional before updating config
+                bool engineFunctional = false;
+                try
+                {
+                    auto [exists, isLoaded] = nodeManager.getEngineStatus(progress->engine_params->model_id);
+                    engineFunctional = exists && (progress->engine_params->load_immediately ? isLoaded : true);
+                }
+                catch (const std::exception &ex)
+                {
+                    ServerLogger::logWarning("Failed to verify engine status for downloaded model '%s': %s", 
+                                           progress->engine_params->model_id.c_str(), ex.what());
+                    engineFunctional = false;
+                }
+
+                if (engineFunctional)
+                {
+                    progress->status = "engine_created";
+                    ServerLogger::logInfo("Engine created successfully for model: %s", progress->model_id.c_str());
+                    
+                    // Update server configuration to include the new model
+                    bool configUpdated = false;
+                    try
+                    {
+                        auto &config = ServerConfig::getInstance();
+                        
+                        // Check if model already exists in config to avoid duplicates
+                        bool modelExistsInConfig = false;
+                        for (const auto &existingModel : config.models)
+                        {
+                            if (existingModel.id == progress->engine_params->model_id)
+                            {
+                                modelExistsInConfig = true;
+                                break;
+                            }
+                        }
+                        
+                        if (!modelExistsInConfig)
+                        {
+                            // Create new model config
+                            ModelConfig modelConfig;
+                            modelConfig.id = progress->engine_params->model_id;
+                            modelConfig.path = actualModelPath;
+                            modelConfig.loadParams = progress->engine_params->loading_params;
+                            modelConfig.mainGpuId = progress->engine_params->main_gpu_id;
+                            modelConfig.loadImmediately = progress->engine_params->load_immediately;
+                            modelConfig.inferenceEngine = progress->engine_params->inference_engine;
+                            
+                            // Add to config
+                            config.models.push_back(modelConfig);
+                            configUpdated = true;
+                            
+                            ServerLogger::logInfo("Added downloaded model '%s' to server configuration", 
+                                                 progress->engine_params->model_id.c_str());
+                        }
+                        else
+                        {
+                            configUpdated = true; // Model already exists in config
+                            ServerLogger::logInfo("Downloaded model '%s' already exists in server configuration", 
+                                                 progress->engine_params->model_id.c_str());
+                        }
+                    }
+                    catch (const std::exception &ex)
+                    {
+                        ServerLogger::logWarning("Failed to update server configuration for downloaded model '%s': %s", 
+                                               progress->engine_params->model_id.c_str(), ex.what());
+                        // Don't fail the engine creation just because config update failed
+                        configUpdated = false;
+                    }
+                }
+                else
+                {
+                    // Engine was created but is not functional
+                    progress->status = "engine_creation_failed";
+                    progress->error_message = "Engine was created but failed functionality check";
+                    ServerLogger::logError("Downloaded engine for model '%s' was created but is not functional", 
+                                         progress->engine_params->model_id.c_str());
+                    
+                    // Try to remove the non-functional engine
+                    try
+                    {
+                        nodeManager.removeEngine(progress->engine_params->model_id);
+                        ServerLogger::logInfo("Removed non-functional downloaded engine for model '%s'", 
+                                             progress->engine_params->model_id.c_str());
+                    }
+                    catch (const std::exception &ex)
+                    {
+                        ServerLogger::logWarning("Failed to remove non-functional downloaded engine for model '%s': %s", 
+                                               progress->engine_params->model_id.c_str(), ex.what());
+                    }
+                }
             }
             else
             {

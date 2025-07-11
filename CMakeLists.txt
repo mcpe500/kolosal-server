@@ -24,6 +24,11 @@ if (MINGW)
     add_compile_definitions(_WIN32_WINNT=0x602)
 endif()
 
+if (WIN32)
+    add_compile_definitions(WIN32_LEAN_AND_MEAN)
+    add_compile_definitions(NOMINMAX)
+endif()
+
 # Print UCM flags for debugging
 ucm_print_flags()
 

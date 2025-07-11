@@ -21,6 +21,10 @@
 #include <vector>
 #include <functional>
 
+// Forward declarations
+class IInferenceEngine;
+namespace kolosal { struct InferenceEngineConfig; }
+
 #ifdef _WIN32
     #include <windows.h>
     #define LIBRARY_HANDLE HMODULE
@@ -68,7 +72,7 @@ struct InferenceEngineInfo {
  * 
  * This class manages the loading and unloading of inference engine plugins
  * at runtime. It provides functionality to:
- * - Discover available inference engines
+ * - Configure available inference engines from config
  * - Load/unload engines dynamically
  * - Create engine instances
  * - Manage engine lifecycle
@@ -77,9 +81,9 @@ class InferenceLoader {
 public:
     /**
      * @brief Constructor
-     * @param plugins_dir Directory to search for inference engine plugins
+     * @param plugins_dir Directory for legacy plugin discovery (deprecated, not used)
      */
-    explicit InferenceLoader(const std::string& plugins_dir = ".");
+    explicit InferenceLoader(const std::string& plugins_dir = "");
 
     /**
      * @brief Destructor - automatically unloads all loaded engines
@@ -93,10 +97,11 @@ public:
     InferenceLoader& operator=(InferenceLoader&&) = default;
 
     /**
-     * @brief Scan for available inference engine plugins
-     * @return True if any engines were found
+     * @brief Configure available inference engines from config
+     * @param engines Vector of inference engine configurations
+     * @return True if engines were configured successfully
      */
-    bool scanForEngines();
+    bool configureEngines(const std::vector<InferenceEngineConfig>& engines);
 
     /**
      * @brief Get list of available inference engines
@@ -140,15 +145,19 @@ public:
     std::string getLastError() const;
 
     /**
-     * @brief Set the plugins directory
+     * @brief Set the plugins directory (DEPRECATED)
+     * @deprecated This method is no longer used. Use configureEngines() instead.
      * @param plugins_dir New plugins directory path
      */
+    [[deprecated("Use configureEngines() instead")]]
     void setPluginsDirectory(const std::string& plugins_dir);
 
     /**
-     * @brief Get the current plugins directory
+     * @brief Get the current plugins directory (DEPRECATED)
+     * @deprecated This method is no longer used. Use configureEngines() instead.
      * @return Current plugins directory path
      */
+    [[deprecated("Use configureEngines() instead")]]
     std::string getPluginsDirectory() const;
 
 private:
@@ -180,13 +189,6 @@ private:
      * @param engine_name Name of the engine to unload
      */
     void unloadLibrary(const std::string& engine_name);
-
-    /**
-     * @brief Get expected library name for an engine
-     * @param engine_name Name of the engine
-     * @return Expected library filename
-     */
-    std::string getLibraryName(const std::string& engine_name) const;
 
     /**
      * @brief Set the last error message

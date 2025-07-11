@@ -102,14 +102,6 @@ public:
     std::vector<InferenceEngineInfo> getAvailableInferenceEngines() const;
 
     /**
-     * @brief Rescans the plugins directory for newly available inference engines.
-     * This should be called after downloading new engine files to make them available.
-     * 
-     * @return True if the rescan was successful and engines were found, false otherwise.
-     */
-    bool rescanInferenceEngines();
-
-    /**
      * @brief Validates if a model file exists without loading it.
      * 
      * @param modelPath Path to the model file (local or URL).
@@ -124,6 +116,14 @@ public:
      * @return Local path to downloaded file, or empty string on failure
      */
     std::string handleUrlDownload(const std::string& engineId, const std::string& modelPath);
+
+    /**
+     * @brief Reconfigure inference engines with updated configuration
+     * 
+     * @param engines Vector of updated engine configurations
+     * @return True if engines were reconfigured successfully
+     */
+    bool reconfigureEngines(const std::vector<InferenceEngineConfig>& engines);
 
 private:
     struct EngineRecord {
@@ -195,13 +195,6 @@ private:
      * Periodically checks for idle engines and unloads them.
      */
     void autoscalingLoop();
-
-    /**
-     * @brief Finds the best directory to search for inference engine plugins.
-     * 
-     * @return Path to the plugins directory
-     */
-    std::string findPluginsDirectory();
 
     /**
      * @brief Validates if a model file exists (either local path or URL).
