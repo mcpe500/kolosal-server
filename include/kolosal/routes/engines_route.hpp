@@ -9,19 +9,21 @@ namespace kolosal
     /**
      * @brief Route handler for managing inference engine libraries
      * 
-     * Handles GET requests to list available inference engines and
-     * POST requests to add new inference engines to the configuration
+     * Handles GET requests to list available inference engines,
+     * POST requests to add new inference engines to the configuration,
+     * and PUT requests to set the default inference engine
      * 
      * Supported endpoints:
-     * - GET /inference-engines or /v1/inference-engines - List available engines
-     * - POST /inference-engines or /v1/inference-engines - Add new engine
+     * - GET /engines or /v1/engines - List available engines with default engine info
+     * - POST /engines or /v1/engines - Add new engine
+     * - PUT /engines or /v1/engines - Set default engine
      */
     class EnginesRoute : public IRoute
     {
     public:
         /**
          * @brief Check if this route matches the given request
-         * @param method HTTP method (GET or POST)
+         * @param method HTTP method (GET, POST, or PUT)
          * @param path Request path (should be /inference-engines or /v1/inference-engines)
          * @return True if this route should handle the request
          */
@@ -50,6 +52,13 @@ namespace kolosal
          * @param body JSON request body containing engine configuration
          */
         void handleAddEngine(SocketType sock, const std::string &body);
+
+        /**
+         * @brief Handle PUT request to set the default inference engine
+         * @param sock Socket to send response to
+         * @param body JSON request body containing default engine name
+         */
+        void handleSetDefaultEngine(SocketType sock, const std::string &body);
     };
 
 } // namespace kolosal

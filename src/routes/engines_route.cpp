@@ -16,7 +16,7 @@ namespace kolosal
 
     bool EnginesRoute::match(const std::string &method, const std::string &path)
     {
-        bool matches = ((method == "GET" || method == "POST") && (path == "/engines" || path == "/v1/engines"));
+        bool matches = ((method == "GET" || method == "POST" || method == "PUT") && (path == "/engines" || path == "/v1/engines"));
         
         // Store matched method for use in handle()
         if (matches)
@@ -38,11 +38,15 @@ namespace kolosal
         {
             handleAddEngine(sock, body);
         }
+        else if (matched_method_ == "PUT")
+        {
+            handleSetDefaultEngine(sock, body);
+        }
         else
         {
             json jError = {
                 {"error", {
-                    {"message", "Method not allowed. Use GET to list engines or POST to add engines."}, 
+                    {"message", "Method not allowed. Use GET to list engines, POST to add engines, or PUT to set default engine."}, 
                     {"type", "method_not_allowed"}, 
                     {"param", nullptr}, 
                     {"code", nullptr}
@@ -62,6 +66,10 @@ namespace kolosal
             auto &nodeManager = ServerAPI::instance().getNodeManager();
             auto availableEngines = nodeManager.getAvailableInferenceEngines();
 
+            // Get the default engine from config
+            auto& config = ServerConfig::getInstance();
+            std::string defaultEngine = config.defaultInferenceEngine;
+
             json enginesList = json::array();
             for (const auto &engine : availableEngines)
             {
@@ -70,7 +78,8 @@ namespace kolosal
                     {"version", engine.version},
                     {"description", engine.description},
                     {"library_path", engine.library_path},
-                    {"is_loaded", engine.is_loaded}
+                    {"is_loaded", engine.is_loaded},
+                    {"is_default", engine.name == defaultEngine}
                 };
 
                 enginesList.push_back(engineInfo);
@@ -78,6 +87,7 @@ namespace kolosal
 
             json response = {
                 {"inference_engines", enginesList},
+                {"default_engine", defaultEngine},
                 {"total_count", enginesList.size()}
             };
 
@@ -269,6 +279,120 @@ namespace kolosal
         catch (const std::exception &ex)
         {
             ServerLogger::logError("[Thread %u] Error handling add inference engine request: %s", std::this_thread::get_id(), ex.what());
+
+            json jError = {
+                {"error", {
+                    {"message", std::string("Server error: ") + ex.what()}, 
+                    {"type", "server_error"}, 
+                    {"param", nullptr}, 
+                    {"code", nullptr}
+                }}
+            };
+
+            send_response(sock, 500, jError.dump());
+        }
+    }
+
+    void EnginesRoute::handleSetDefaultEngine(SocketType sock, const std::string &body)
+    {
+        try
+        {
+            ServerLogger::logDebug("[Thread %u] Received set default inference engine request", std::this_thread::get_id());
+
+            // Parse JSON request body
+            json requestData;
+            try
+            {
+                requestData = json::parse(body);
+            }
+            catch (const json::parse_error &e)
+            {
+                json jError = {
+                    {"error", {
+                        {"message", "Invalid JSON in request body"}, 
+                        {"type", "invalid_request_error"}, 
+                        {"param", "body"}, 
+                        {"code", nullptr}
+                    }}
+                };
+                send_response(sock, 400, jError.dump());
+                return;
+            }
+
+            // Validate required field
+            if (!requestData.contains("engine_name"))
+            {
+                json jError = {
+                    {"error", {
+                        {"message", "Missing required field: 'engine_name' is required"}, 
+                        {"type", "invalid_request_error"}, 
+                        {"param", "body"}, 
+                        {"code", nullptr}
+                    }}
+                };
+                send_response(sock, 400, jError.dump());
+                return;
+            }
+
+            std::string engineName = requestData["engine_name"];
+
+            // Validate that the engine exists in the configuration
+            auto& config = ServerConfig::getInstance();
+            bool engineExists = false;
+            for (const auto& engine : config.inferenceEngines)
+            {
+                if (engine.name == engineName)
+                {
+                    engineExists = true;
+                    break;
+                }
+            }
+
+            if (!engineExists)
+            {
+                json jError = {
+                    {"error", {
+                        {"message", "Engine '" + engineName + "' not found in configuration"}, 
+                        {"type", "invalid_request_error"}, 
+                        {"param", "engine_name"}, 
+                        {"code", nullptr}
+                    }}
+                };
+                send_response(sock, 404, jError.dump());
+                return;
+            }
+
+            // Update the default engine in config
+            config.defaultInferenceEngine = engineName;
+
+            // Save updated config to file
+            std::string configFile = "config.yaml"; // Default config file
+            if (!config.saveToFile(configFile))
+            {
+                json jError = {
+                    {"error", {
+                        {"message", "Failed to save configuration to file"}, 
+                        {"type", "server_error"}, 
+                        {"param", nullptr}, 
+                        {"code", nullptr}
+                    }}
+                };
+                send_response(sock, 500, jError.dump());
+                return;
+            }
+
+            // Prepare response
+            json response = {
+                {"message", "Default inference engine set successfully"},
+                {"default_engine", engineName}
+            };
+
+            send_response(sock, 200, response.dump());
+            ServerLogger::logInfo("[Thread %u] Successfully set default inference engine to: %s", std::this_thread::get_id(), engineName.c_str());
+        }
+        catch (const std::exception &ex)
+        {
+            ServerLogger::logError("[Thread %u] Error handling set default inference engine request: %s", std::this_thread::get_id(), ex.what());
 
             json jError = {
                 {"error", {

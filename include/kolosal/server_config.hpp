@@ -91,6 +91,9 @@ struct KOLOSAL_SERVER_API ServerConfig {    // Basic server settings
     
     // Inference engines to make available
     std::vector<InferenceEngineConfig> inferenceEngines;
+    
+    // Default inference engine
+    std::string defaultInferenceEngine;
 #pragma warning(pop)
     
     // Authentication configuration

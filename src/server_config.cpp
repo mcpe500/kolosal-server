@@ -433,6 +433,12 @@ namespace kolosal
                 }
             }
 
+            // Load default inference engine
+            if (config["default_inference_engine"])
+            {
+                defaultInferenceEngine = config["default_inference_engine"].as<std::string>();
+            }
+
             // Load feature flags
             if (config["features"])
             {
@@ -514,6 +520,12 @@ namespace kolosal
                 engineNode["description"] = engine.description;
                 engineNode["load_on_startup"] = engine.load_on_startup;
                 config["inference_engines"].push_back(engineNode);
+            }
+
+            // Default inference engine
+            if (!defaultInferenceEngine.empty())
+            {
+                config["default_inference_engine"] = defaultInferenceEngine;
             }
 
             // Feature flags
