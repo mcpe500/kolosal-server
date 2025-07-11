@@ -503,6 +503,50 @@ namespace kolosal
         return {};
     }
 
+    bool NodeManager::rescanInferenceEngines()
+    {
+        if (inferenceLoader_)
+        {
+            ServerLogger::logInfo("Rescanning for inference engines...");
+            bool success = inferenceLoader_->scanForEngines();
+            if (success)
+            {
+                auto availableEngines = inferenceLoader_->getAvailableEngines();
+                ServerLogger::logInfo("Rescan completed. Found %zu available inference engines:", availableEngines.size());
+                for (const auto &engine : availableEngines)
+                {
+                    ServerLogger::logInfo("  - %s: %s", engine.name.c_str(), engine.description.c_str());
+                }
+            }
+            else
+            {
+                ServerLogger::logWarning("Rescan failed: %s", inferenceLoader_->getLastError().c_str());
+            }
+            return success;
+        }
+        return false;
+    }
+
+    bool NodeManager::loadInferenceEngine(const std::string& engineName)
+    {
+        if (inferenceLoader_)
+        {
+            ServerLogger::logInfo("Loading inference engine: %s", engineName.c_str());
+            bool success = inferenceLoader_->loadEngine(engineName);
+            if (success)
+            {
+                ServerLogger::logInfo("Successfully loaded inference engine: %s", engineName.c_str());
+            }
+            else
+            {
+                ServerLogger::logError("Failed to load inference engine '%s': %s", 
+                                      engineName.c_str(), inferenceLoader_->getLastError().c_str());
+            }
+            return success;
+        }
+        return false;
+    }
+
     // Helper function to validate model file existence
     bool NodeManager::validateModelFile(const std::string &modelPath)
     {
