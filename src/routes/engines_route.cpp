@@ -16,7 +16,7 @@ namespace kolosal
 
     bool EnginesRoute::match(const std::string &method, const std::string &path)
     {
-        bool matches = ((method == "GET" || method == "POST") && (path == "/inference-engines" || path == "/v1/inference-engines"));
+        bool matches = ((method == "GET" || method == "POST") && (path == "/engines" || path == "/v1/engines"));
         
         // Store matched method for use in handle()
         if (matches)
