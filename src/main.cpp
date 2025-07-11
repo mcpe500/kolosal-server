@@ -258,6 +258,10 @@ int main(int argc, char *argv[])
     std::cout << "Starting Kolosal Server v1.0.0..." << std::endl;
     config.printSummary();
     
+    // Set the singleton instance with our loaded configuration
+    // This is crucial for NodeManager to access the inference engines
+    ServerConfig::setInstance(config);
+    
     // Configure logger based on loaded config
     auto& logger = ServerLogger::instance();
     

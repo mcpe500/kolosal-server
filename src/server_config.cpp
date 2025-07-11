@@ -658,6 +658,23 @@ namespace kolosal
             std::cout << "    Origins: " << auth.cors.allowedOrigins.size() << " configured" << std::endl;
         }
 
+        std::cout << "\nInference Engines:" << std::endl;
+        if (inferenceEngines.empty())
+        {
+            std::cout << "  No inference engines configured" << std::endl;
+        }
+        else
+        {
+            for (const auto &engine : inferenceEngines)
+            {
+                std::cout << "  " << engine.name << ":" << std::endl;
+                std::cout << "    Library: " << engine.library_path << std::endl;
+                std::cout << "    Version: " << engine.version << std::endl;
+                std::cout << "    Description: " << engine.description << std::endl;
+                std::cout << "    Load on startup: " << (engine.load_on_startup ? "Yes" : "No") << std::endl;
+            }
+        }
+
         std::cout << "\nModels:" << std::endl;
         if (models.empty())
         {
