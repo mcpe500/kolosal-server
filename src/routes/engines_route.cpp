@@ -148,15 +148,48 @@ namespace kolosal
             std::string description = requestData.value("description", "");
             bool loadOnStartup = requestData.value("load_on_startup", true);
 
-            // Validate engine name uniqueness
+            // Validate engine name and path uniqueness
             auto& config = ServerConfig::getInstance();
             for (const auto& existingEngine : config.inferenceEngines)
             {
-                if (existingEngine.name == engineName)
+                if (existingEngine.name == engineName && existingEngine.library_path == libraryPath)
+                {
+                    // Engine with same name and path already exists in config
+                    // Check actual loading status from NodeManager instead of assuming
+                    auto& nodeManager = ServerAPI::instance().getNodeManager();
+                    auto availableEngines = nodeManager.getAvailableInferenceEngines();
+                    
+                    bool actuallyLoaded = false;
+                    for (const auto& engine : availableEngines)
+                    {
+                        if (engine.name == engineName && engine.library_path == libraryPath)
+                        {
+                            actuallyLoaded = engine.is_loaded;
+                            break;
+                        }
+                    }
+                    
+                    json response = {
+                        {"message", "Engine with name '" + engineName + "' and path '" + libraryPath + "' already exists"},
+                        {"status", "success"},
+                        {"engine", {
+                            {"name", existingEngine.name},
+                            {"library_path", existingEngine.library_path},
+                            {"description", existingEngine.description},
+                            {"load_on_startup", existingEngine.load_on_startup},
+                            {"is_loaded", actuallyLoaded} // Use actual loading status
+                        }}
+                    };
+                    send_response(sock, 200, response.dump());
+                    ServerLogger::logInfo("[Thread %u] Engine '%s' already exists in config - actual load status: %s", 
+                                        std::this_thread::get_id(), engineName.c_str(), actuallyLoaded ? "loaded" : "not loaded");
+                    return;
+                }
+                else if (existingEngine.name == engineName)
                 {
                     json jError = {
                         {"error", {
-                            {"message", "Engine with name '" + engineName + "' already exists"}, 
+                            {"message", "Engine with name '" + engineName + "' already exists with different path"}, 
                             {"type", "invalid_request_error"}, 
                             {"param", "name"}, 
                             {"code", nullptr}
