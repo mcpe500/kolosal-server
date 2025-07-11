@@ -102,6 +102,14 @@ public:
     std::vector<InferenceEngineInfo> getAvailableInferenceEngines() const;
 
     /**
+     * @brief Rescans the plugins directory for newly available inference engines.
+     * This should be called after downloading new engine files to make them available.
+     * 
+     * @return True if the rescan was successful and engines were found, false otherwise.
+     */
+    bool rescanInferenceEngines();
+
+    /**
      * @brief Validates if a model file exists without loading it.
      * 
      * @param modelPath Path to the model file (local or URL).
