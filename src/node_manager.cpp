@@ -142,11 +142,33 @@ namespace kolosal
                 ServerLogger::logInfo("Loading %s inference engine plugin...", engineType.c_str());
                 if (!inferenceLoader_->loadEngine(engineType))
                 {
-                    ServerLogger::logError("Failed to load %s inference engine: %s",
-                                           engineType.c_str(), inferenceLoader_->getLastError().c_str());
-                    return false;
+                    // Engine not found, try rescanning for new engines
+                    ServerLogger::logInfo("Engine '%s' not found in cache, rescanning for available engines...", engineType.c_str());
+                    if (inferenceLoader_->scanForEngines())
+                    {
+                        auto availableEngines = inferenceLoader_->getAvailableEngines();
+                        ServerLogger::logInfo("Rescan found %zu available inference engines", availableEngines.size());
+                        
+                        // Try loading again after rescan
+                        if (!inferenceLoader_->loadEngine(engineType))
+                        {
+                            ServerLogger::logError("Failed to load %s inference engine even after rescan: %s",
+                                                   engineType.c_str(), inferenceLoader_->getLastError().c_str());
+                            return false;
+                        }
+                        ServerLogger::logInfo("Successfully loaded %s inference engine plugin after rescan", engineType.c_str());
+                    }
+                    else
+                    {
+                        ServerLogger::logError("Failed to load %s inference engine and rescan found no engines: %s",
+                                               engineType.c_str(), inferenceLoader_->getLastError().c_str());
+                        return false;
+                    }
                 }
-                ServerLogger::logInfo("Successfully loaded %s inference engine plugin", engineType.c_str());
+                else
+                {
+                    ServerLogger::logInfo("Successfully loaded %s inference engine plugin", engineType.c_str());
+                }
             }
 
             // Create engine instance from the loaded plugin
@@ -311,13 +333,36 @@ namespace kolosal
                     ServerLogger::logInfo("Reloading %s inference engine plugin...", engineType.c_str());
                     if (!inferenceLoader_->loadEngine(engineType))
                     {
-                        ServerLogger::logError("Failed to reload %s inference engine: %s",
-                                               engineType.c_str(), inferenceLoader_->getLastError().c_str());
-                        // Re-acquire lock to update state
-                        engineLock.lock();
-                        recordPtr->isLoading.store(false);
-                        recordPtr->loadingCv.notify_all();
-                        return nullptr;
+                        // Engine not found, try rescanning for new engines
+                        ServerLogger::logInfo("Engine '%s' not found in cache during reload, rescanning for available engines...", engineType.c_str());
+                        if (inferenceLoader_->scanForEngines())
+                        {
+                            auto availableEngines = inferenceLoader_->getAvailableEngines();
+                            ServerLogger::logInfo("Rescan found %zu available inference engines", availableEngines.size());
+                            
+                            // Try loading again after rescan
+                            if (!inferenceLoader_->loadEngine(engineType))
+                            {
+                                ServerLogger::logError("Failed to reload %s inference engine even after rescan: %s",
+                                                       engineType.c_str(), inferenceLoader_->getLastError().c_str());
+                                // Re-acquire lock to update state
+                                engineLock.lock();
+                                recordPtr->isLoading.store(false);
+                                recordPtr->loadingCv.notify_all();
+                                return nullptr;
+                            }
+                            ServerLogger::logInfo("Successfully reloaded %s inference engine plugin after rescan", engineType.c_str());
+                        }
+                        else
+                        {
+                            ServerLogger::logError("Failed to reload %s inference engine and rescan found no engines: %s",
+                                                   engineType.c_str(), inferenceLoader_->getLastError().c_str());
+                            // Re-acquire lock to update state
+                            engineLock.lock();
+                            recordPtr->isLoading.store(false);
+                            recordPtr->loadingCv.notify_all();
+                            return nullptr;
+                        }
                     }
                 }
 
@@ -505,46 +550,29 @@ namespace kolosal
 
     bool NodeManager::rescanInferenceEngines()
     {
-        if (inferenceLoader_)
+        if (!inferenceLoader_)
         {
-            ServerLogger::logInfo("Rescanning for inference engines...");
-            bool success = inferenceLoader_->scanForEngines();
-            if (success)
-            {
-                auto availableEngines = inferenceLoader_->getAvailableEngines();
-                ServerLogger::logInfo("Rescan completed. Found %zu available inference engines:", availableEngines.size());
-                for (const auto &engine : availableEngines)
-                {
-                    ServerLogger::logInfo("  - %s: %s", engine.name.c_str(), engine.description.c_str());
-                }
-            }
-            else
-            {
-                ServerLogger::logWarning("Rescan failed: %s", inferenceLoader_->getLastError().c_str());
-            }
-            return success;
+            ServerLogger::logError("Inference loader not initialized");
+            return false;
         }
-        return false;
-    }
 
-    bool NodeManager::loadInferenceEngine(const std::string& engineName)
-    {
-        if (inferenceLoader_)
+        ServerLogger::logInfo("Rescanning inference engines in directory: %s", inferenceLoader_->getPluginsDirectory().c_str());
+        
+        if (inferenceLoader_->scanForEngines())
         {
-            ServerLogger::logInfo("Loading inference engine: %s", engineName.c_str());
-            bool success = inferenceLoader_->loadEngine(engineName);
-            if (success)
+            auto availableEngines = inferenceLoader_->getAvailableEngines();
+            ServerLogger::logInfo("Rescan completed. Found %zu available inference engines:", availableEngines.size());
+            for (const auto &engine : availableEngines)
             {
-                ServerLogger::logInfo("Successfully loaded inference engine: %s", engineName.c_str());
+                ServerLogger::logInfo("  - %s: %s", engine.name.c_str(), engine.description.c_str());
             }
-            else
-            {
-                ServerLogger::logError("Failed to load inference engine '%s': %s", 
-                                      engineName.c_str(), inferenceLoader_->getLastError().c_str());
-            }
-            return success;
+            return true;
         }
-        return false;
+        else
+        {
+            ServerLogger::logWarning("Rescan completed but no inference engines found");
+            return false;
+        }
     }
 
     // Helper function to validate model file existence

@@ -102,21 +102,12 @@ public:
     std::vector<InferenceEngineInfo> getAvailableInferenceEngines() const;
 
     /**
-     * @brief Rescan for available inference engine libraries.
-     * This will scan the plugins directory for new engine libraries that may have been added.
+     * @brief Rescans the plugins directory for newly available inference engines.
+     * This should be called after downloading new engine files to make them available.
      * 
-     * @return True if rescan was successful, false otherwise.
+     * @return True if the rescan was successful and engines were found, false otherwise.
      */
     bool rescanInferenceEngines();
-
-    /**
-     * @brief Load an inference engine library by name.
-     * This will load the specified engine library into memory, making it available for use.
-     * 
-     * @param engineName The name of the engine to load (e.g., "llama-cpu", "llama-cuda")
-     * @return True if the engine was loaded successfully, false otherwise.
-     */
-    bool loadInferenceEngine(const std::string& engineName);
 
     /**
      * @brief Validates if a model file exists without loading it.
