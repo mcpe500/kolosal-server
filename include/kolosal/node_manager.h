@@ -57,7 +57,7 @@ public:
      * @param engineType Type of engine to load ("cpu", "cuda", "vulkan")
      * @return True if the engine was loaded successfully, false otherwise.
      */
-    bool addEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0, const std::string& engineType = "cpu");
+    bool addEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0, const std::string& engineType = "llama-cpu");
 
     /**
      * @brief Loads a new embedding engine with the given model and parameters.
@@ -79,7 +79,7 @@ public:
      * @param engineType Type of engine to load ("cpu", "cuda", "vulkan")
      * @return True if the model was validated and registered successfully, false otherwise.
      */
-    bool registerEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0, const std::string& engineType = "cpu");
+    bool registerEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0, const std::string& engineType = "llama-cpu");
 
     /**
      * @brief Registers an embedding model for lazy loading without immediately loading it.
@@ -176,7 +176,7 @@ private:
         mutable std::mutex engineMutex;
         std::condition_variable loadingCv;
         
-        EngineRecord() : engineType("cpu"), mainGpuId(0), lastActivityTime(std::chrono::steady_clock::now()) {}
+        EngineRecord() : engineType("llama-cpu"), mainGpuId(0), lastActivityTime(std::chrono::steady_clock::now()) {}
         
         EngineRecord(const EngineRecord&) = delete;
         EngineRecord& operator=(const EngineRecord&) = delete;

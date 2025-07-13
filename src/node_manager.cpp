@@ -274,7 +274,7 @@ namespace kolosal
         }
 
         // Use the default CPU engine type for embedding models
-        std::string engineType = "cpu";
+        std::string engineType = "llama-cpu";
         std::shared_ptr<IInferenceEngine> enginePtr;
 
         try
@@ -1057,7 +1057,7 @@ namespace kolosal
         auto recordPtr = std::make_shared<EngineRecord>();
         recordPtr->engine = nullptr;            // No engine instance yet
         recordPtr->modelPath = actualModelPath; // Store the actual local path
-        recordPtr->engineType = "cpu";          // Default to CPU for embedding models
+        recordPtr->engineType = "llama-cpu";    // Default to CPU for embedding models
         recordPtr->loadParams = loadParams;
         recordPtr->mainGpuId = mainGpuId;
         recordPtr->isLoaded.store(false); // Mark as not loaded for lazy loading

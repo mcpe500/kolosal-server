@@ -110,8 +110,9 @@ models:
   - id: "text-embedding-3-small"
     type: "embedding"
     path: "./models/all-MiniLM-L6-v2-Q4_K_M.gguf"
-    load_at_startup: true
+    load_immediately: true
     main_gpu_id: 0
+    inference_engine: "llama-cpu"
     preload_context: false
     embedding_config:
       dimensions: 384
