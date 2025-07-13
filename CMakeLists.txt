@@ -59,32 +59,29 @@ set(SOURCES
     src/download_manager.cpp
     src/qdrant_client.cpp
     src/node_manager.cpp
+    src/inference_loader.cpp
+    src/inference_interface_impl.cpp
 
+    # Route files
     src/routes/chat_completion_route.cpp
     src/routes/completion_route.cpp
-    src/routes/add_engine_route.cpp
-    src/routes/list_engines_route.cpp
-    src/routes/remove_engine_route.cpp
-    src/routes/engine_status_route.cpp
+    src/routes/inference_completion_route.cpp
+    src/routes/inference_chat_completion_route.cpp
+    src/routes/models_route.cpp
+    src/routes/list_inference_engines_route.cpp
     src/routes/health_status_route.cpp    
     src/routes/auth_config_route.cpp    
-    src/routes/download_progress_route.cpp
-    src/routes/downloads_status_route.cpp
-    src/routes/cancel_download_route.cpp
-    src/routes/cancel_all_downloads_route.cpp
+    src/routes/server_logs_route.cpp    
     src/routes/embedding_route.cpp
-    src/routes/inference_chat_completion_route.cpp
-    src/routes/inference_completion_route.cpp
     src/routes/internet_search_route.cpp
-    src/routes/models_route.cpp
     src/routes/parse_docx_route.cpp
     src/routes/parse_pdf_route.cpp
     src/routes/parse_html_route.cpp
-    src/routes/pause_download_route.cpp
-    src/routes/resume_download_route.cpp
     src/routes/retrieve_route.cpp
     src/routes/add_documents_route.cpp
+    src/routes/downloads_route.cpp
     
+    # Retrieval files
     src/retrieval/remove_documents_route.cpp
     src/retrieval/add_document_types.cpp
     src/retrieval/remove_document_types.cpp
@@ -94,9 +91,10 @@ set(SOURCES
     src/retrieval/parse_pdf.cpp
     src/retrieval/parse_html.cpp
     
+    # Model files
     src/models/embedding_request_model.cpp
     src/models/embedding_response_model.cpp
-    
+
     src/auth/rate_limiter.cpp
     src/auth/cors_handler.cpp
     src/auth/auth_middleware.cpp
@@ -143,20 +141,8 @@ if(WIN32)
         COMMENT "Copying kolosal_server.dll to executable directory"
     )
     
-    # Copy the inference engine DLL (llama-cpu by default, or llama-cuda/llama-vulkan based on options)
-    set(INFERENCE_DLL_NAME "llama-cpu")
-    if(USE_CUDA)
-        set(INFERENCE_DLL_NAME "llama-cuda")
-    elseif(USE_VULKAN)
-        set(INFERENCE_DLL_NAME "llama-vulkan")
-    endif()
-    
-    add_custom_command(TARGET kolosal_server_exe POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "$<TARGET_FILE:${INFERENCE_DLL_NAME}>"
-        "$<TARGET_FILE_DIR:kolosal_server_exe>/"
-        COMMENT "Copying ${INFERENCE_DLL_NAME}.dll to executable directory"
-    )
+    # Note: Inference engine DLLs are now loaded at runtime and should be placed
+    # in the plugins directory or same directory as the executable manually
     
     # Copy CURL DLL if it exists
     set(CURL_DLL_PATHS
@@ -189,28 +175,6 @@ if(WIN32)
         # These will be automatically handled by CMake's runtime library settings
         message(STATUS "MSVC detected - runtime libraries will be statically linked")
     endif()
-    
-    # Copy any additional DLLs from the inference build directory using correct paths
-    # Use CMAKE_BINARY_DIR instead of CMAKE_CURRENT_BINARY_DIR since inference puts files there
-    set(INFERENCE_BIN_DIR "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
-    
-    # Check if libcurl.dll exists and copy it
-    add_custom_command(TARGET kolosal_server_exe POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${INFERENCE_BIN_DIR}/libcurl.dll"
-        "$<TARGET_FILE_DIR:kolosal_server_exe>/"
-        COMMENT "Copying libcurl.dll from inference bin directory"
-        VERBATIM
-    )
-    
-    # Also ensure the inference DLL is copied from the correct location
-    add_custom_command(TARGET kolosal_server_exe POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${INFERENCE_BIN_DIR}/${INFERENCE_DLL_NAME}.dll"
-        "$<TARGET_FILE_DIR:kolosal_server_exe>/"
-        COMMENT "Copying ${INFERENCE_DLL_NAME}.dll from inference bin directory"
-        VERBATIM
-    )
 endif()
 
 # Find and setup yaml-cpp
@@ -278,6 +242,7 @@ if(WIN32)
 endif()
 
 # Only add yaml-cpp if it hasn't been added by the inference subdirectory
+# Note: yaml-cpp is still needed for server configuration
 if(NOT TARGET yaml-cpp)
     add_subdirectory(external/yaml-cpp EXCLUDE_FROM_ALL)
     # Ensure yaml-cpp is built with -fPIC if needed
@@ -287,22 +252,8 @@ if(NOT TARGET yaml-cpp)
     endif()
 endif()
 
-# Link the inference engine library to kolosal_server
-# The target name is determined by the inference CMakeLists.txt based on acceleration options
-set(INFERENCE_TARGET_NAME "llama-cpu")
-if(USE_CUDA)
-    set(INFERENCE_TARGET_NAME "llama-cuda")
-elseif(USE_VULKAN)
-    set(INFERENCE_TARGET_NAME "llama-vulkan")
-endif()
-
-message(STATUS "Linking kolosal_server with inference engine: ${INFERENCE_TARGET_NAME}")
-
-# Link the main server library with the inference engine and yaml-cpp
-target_link_libraries(kolosal_server PUBLIC ${INFERENCE_TARGET_NAME} yaml-cpp)
-
-# Ensure the executable depends on the inference target for proper DLL copying
-add_dependencies(kolosal_server_exe ${INFERENCE_TARGET_NAME})
+# Link the main server library with yaml-cpp only
+target_link_libraries(kolosal_server PUBLIC yaml-cpp)
 
 # Configure CURL for main server (download utilities need it)
 set(CURL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/curl")
@@ -401,7 +352,7 @@ if(USE_CPPUPROFILE_GPU)
 endif()
 
 # Link libraries - llama components are handled by inference library
-set(KOLOSAL_LINK_LIBRARIES yaml-cpp)
+set(KOLOSAL_LINK_LIBRARIES yaml-cpp llama-cpu)
 
 # Add cppuprofile if enabled
 if(USE_CPPUPROFILE_GPU)
@@ -492,23 +443,26 @@ if(UNIX AND NOT APPLE)
         _LARGEFILE64_SOURCE
     )
     
-    # Set RPATH for proper library loading when installed
+    # Set RPATH for proper library loading when installed and during development
     set_target_properties(kolosal_server_exe PROPERTIES
-        INSTALL_RPATH "$ORIGIN/../lib:/usr/lib"
+        INSTALL_RPATH "$ORIGIN:$ORIGIN/../lib:/usr/lib"
         BUILD_WITH_INSTALL_RPATH TRUE
         INSTALL_RPATH_USE_LINK_PATH TRUE
     )
     
     set_target_properties(kolosal_server PROPERTIES
-        INSTALL_RPATH "$ORIGIN:/usr/lib"
+        INSTALL_RPATH "$ORIGIN:$ORIGIN/../lib:/usr/lib"
         BUILD_WITH_INSTALL_RPATH TRUE
         INSTALL_RPATH_USE_LINK_PATH TRUE
     )
     
 endif()
 
-# Install header files.
-install(DIRECTORY include/
-    DESTINATION include
-    FILES_MATCHING PATTERN "*.hpp"
-)
+# Install header files only for development packages
+option(INSTALL_HEADERS "Install header files for development" OFF)
+if(INSTALL_HEADERS)
+    install(DIRECTORY include/
+        DESTINATION include
+        FILES_MATCHING PATTERN "*.hpp"
+    )
+endif()

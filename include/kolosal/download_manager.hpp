@@ -12,11 +12,12 @@
 
 namespace kolosal {    // Structure to hold engine creation parameters
     struct EngineCreationParams {
-        std::string engine_id;
-        std::string model_type = "llm";  // "llm" or "embedding"
-        bool load_immediately;
+        std::string model_id;
+        std::string model_type = "llm";  // "llm" or "embedding" - preserve embedding support
+        bool load_immediately;         // Whether to load immediately when download completes (vs register for lazy loading)
         int main_gpu_id;
         LoadingParameters loading_params;
+        std::string inference_engine = "llama-cpu"; // Inference engine to use (llama-cpu, llama-cuda, llama-vulkan, etc.)
         
         EngineCreationParams() : load_immediately(false), main_gpu_id(-1) {}
     };
@@ -94,11 +95,13 @@ namespace kolosal {    // Structure to hold engine creation parameters
          * @param load_params Loading parameters for the model
          * @param main_gpu_id The main GPU ID to use
          * @param load_immediately Whether to load immediately or register for lazy loading
+         * @param inference_engine Inference engine to use (llama-cpu, llama-cuda, llama-vulkan, etc.)
          * @return True if the model was successfully processed, false otherwise
          */
         bool loadModelAtStartup(const std::string& model_id, const std::string& model_path, 
                                const std::string& model_type, const LoadingParameters& load_params, 
-                               int main_gpu_id, bool load_immediately);
+                               int main_gpu_id, bool load_immediately,
+                               const std::string& inference_engine = "llama-cpu");
 
     private:
         DownloadManager() = default;

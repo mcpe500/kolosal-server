@@ -2,7 +2,8 @@
 #define KOLOSAL_NODE_MANAGER_H
 
 #include "export.hpp"
-#include "inference.h"
+#include "inference_interface.h"
+#include "inference_loader.hpp"
 #include <vector>
 #include <memory>
 #include <string>
@@ -53,9 +54,10 @@ public:
      * @param modelPath Path to the model file.
      * @param loadParams Parameters for loading the model.
      * @param mainGpuId The main GPU ID to use for this engine.
+     * @param engineType Type of engine to load ("cpu", "cuda", "vulkan")
      * @return True if the engine was loaded successfully, false otherwise.
      */
-    bool addEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0);
+    bool addEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0, const std::string& engineType = "cpu");
 
     /**
      * @brief Loads a new embedding engine with the given model and parameters.
@@ -74,9 +76,10 @@ public:
      * @param modelPath Path to the model file.
      * @param loadParams Parameters for loading the model.
      * @param mainGpuId The main GPU ID to use for this engine.
+     * @param engineType Type of engine to load ("cpu", "cuda", "vulkan")
      * @return True if the model was validated and registered successfully, false otherwise.
      */
-    bool registerEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0);
+    bool registerEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0, const std::string& engineType = "cpu");
 
     /**
      * @brief Registers an embedding model for lazy loading without immediately loading it.
@@ -96,9 +99,9 @@ public:
      * Accessing an engine resets its idle timer.
      * 
      * @param engineId The ID of the engine to retrieve.
-     * @return A shared_ptr to the InferenceEngine, or nullptr if not found or reload fails.
+     * @return A shared_ptr to the IInferenceEngine, or nullptr if not found or reload fails.
      */
-    std::shared_ptr<InferenceEngine> getEngine(const std::string& engineId);
+    std::shared_ptr<IInferenceEngine> getEngine(const std::string& engineId);
 
     /**
      * @brief Checks if an engine exists and its load status without loading it.
@@ -131,6 +134,13 @@ public:
     std::vector<std::string> getAvailableModels() const;
 
     /**
+     * @brief Get list of all available inference engine libraries.
+     * 
+     * @return A vector of InferenceEngineInfo structures containing details about available engines.
+     */
+    std::vector<InferenceEngineInfo> getAvailableInferenceEngines() const;
+
+    /**
      * @brief Validates if a model file exists without loading it.
      * 
      * @param modelPath Path to the model file (local or URL).
@@ -153,8 +163,9 @@ private:
     };
 
     struct EngineRecord {
-        std::shared_ptr<InferenceEngine> engine;
+        std::shared_ptr<IInferenceEngine> engine;
         std::string modelPath;
+        std::string engineType;  // "cpu", "cuda", "vulkan"
         LoadingParameters loadParams;
         int mainGpuId;
         std::chrono::steady_clock::time_point lastActivityTime;
@@ -165,7 +176,7 @@ private:
         mutable std::mutex engineMutex;
         std::condition_variable loadingCv;
         
-        EngineRecord() : mainGpuId(0), lastActivityTime(std::chrono::steady_clock::now()) {}
+        EngineRecord() : engineType("cpu"), mainGpuId(0), lastActivityTime(std::chrono::steady_clock::now()) {}
         
         EngineRecord(const EngineRecord&) = delete;
         EngineRecord& operator=(const EngineRecord&) = delete;
@@ -173,6 +184,7 @@ private:
         EngineRecord(EngineRecord&& other) noexcept 
             : engine(std::move(other.engine))
             , modelPath(std::move(other.modelPath))
+            , engineType(std::move(other.engineType))
             , loadParams(other.loadParams)
             , mainGpuId(other.mainGpuId)
             , lastActivityTime(other.lastActivityTime)
@@ -186,6 +198,7 @@ private:
             if (this != &other) {
                 engine = std::move(other.engine);
                 modelPath = std::move(other.modelPath);
+                engineType = std::move(other.engineType);
                 loadParams = other.loadParams;
                 mainGpuId = other.mainGpuId;
                 lastActivityTime = other.lastActivityTime;
@@ -203,6 +216,9 @@ private:
     std::unordered_map<std::string, std::shared_ptr<EngineRecord>> engines_;
     mutable std::shared_mutex engineMapMutex_;
 
+    // Dynamic inference loader for plugin management
+    std::unique_ptr<InferenceLoader> inferenceLoader_;
+
     std::thread autoscalingThread_;
     std::atomic<bool> stopAutoscaling_{false};
     std::condition_variable autoscalingCv_;
@@ -218,6 +234,13 @@ private:
      * Periodically checks for idle engines and unloads them.
      */
     void autoscalingLoop();
+
+    /**
+     * @brief Finds the best directory to search for inference engine plugins.
+     * 
+     * @return Path to the plugins directory
+     */
+    std::string findPluginsDirectory();
 
     /**
      * @brief Validates if a model file exists (either local path or URL).

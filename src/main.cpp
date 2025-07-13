@@ -395,7 +395,8 @@ int main(int argc, char *argv[])
                                                               modelConfig.type,
                                                               modelConfig.loadParams,
                                                               modelConfig.mainGpuId,
-                                                              modelConfig.loadImmediately);
+                                                              modelConfig.loadImmediately,
+                                                              modelConfig.inferenceEngine);
 
             if (success)
             {

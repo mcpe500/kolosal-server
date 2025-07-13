@@ -58,12 +58,12 @@ namespace kolosal
     {
         // First check if an engine with this ID already exists
         auto &nodeManager = ServerAPI::instance().getNodeManager();
-        auto [engineExists, engineLoaded] = nodeManager.getEngineStatus(engine_params.engine_id);
-
+        auto [engineExists, engineLoaded] = nodeManager.getEngineStatus(engine_params.model_id);
+        
         if (engineExists)
         {
-            ServerLogger::logInfo("Engine '%s' already exists on the server. Skipping download and engine creation.", engine_params.engine_id.c_str());
-
+            ServerLogger::logInfo("Engine '%s' already exists on the server. Skipping download and engine creation.", engine_params.model_id.c_str());
+            
             // Create a completed download entry for consistency
             std::lock_guard<std::mutex> lock(downloads_mutex_);
             auto progress = std::make_shared<DownloadProgress>(model_id, url, local_path);
@@ -381,9 +381,9 @@ namespace kolosal
                 // Validate percentage value before storing
                 if (percentage < 0.0 || percentage > 100.0 || std::isnan(percentage) || std::isinf(percentage))
                 {
-                    ServerLogger::logWarning("Invalid percentage value %.2f for model %s, clamping to valid range",
-                                             percentage, progress->model_id.c_str());
-                    percentage = std::fmax(0.0, std::fmin(100.0, percentage));
+                    ServerLogger::logWarning("Invalid percentage value %.2f for model %s, clamping to valid range", 
+                                           percentage, progress->model_id.c_str());
+                    percentage = (std::max)(0.0, (std::min)(100.0, percentage));
                     if (std::isnan(percentage) || std::isinf(percentage))
                     {
                         percentage = 0.0;
@@ -470,14 +470,14 @@ namespace kolosal
         {
             // Get the NodeManager and check if engine already exists
             auto &nodeManager = ServerAPI::instance().getNodeManager();
-            auto [engineExists, engineLoaded] = nodeManager.getEngineStatus(progress->engine_params->engine_id);
-
+            auto [engineExists, engineLoaded] = nodeManager.getEngineStatus(progress->engine_params->model_id);
+            
             if (engineExists)
             {
                 std::lock_guard<std::mutex> lock(downloads_mutex_);
                 progress->status = "engine_already_exists";
                 progress->end_time = std::chrono::system_clock::now();
-                ServerLogger::logInfo("Engine '%s' already exists, skipping engine creation after download", progress->engine_params->engine_id.c_str());
+                ServerLogger::logInfo("Engine '%s' already exists, skipping engine creation after download", progress->engine_params->model_id.c_str());
                 return;
             }
 
@@ -496,7 +496,7 @@ namespace kolosal
             {
                 // For embedding engines, always use addEmbeddingEngine
                 success = nodeManager.addEmbeddingEngine(
-                    progress->engine_params->engine_id,
+                    progress->engine_params->model_id,
                     actualModelPath.c_str(),
                     progress->engine_params->loading_params,
                     progress->engine_params->main_gpu_id);
@@ -508,19 +508,21 @@ namespace kolosal
                 {
                     // Load immediately - use addEngine
                     success = nodeManager.addEngine(
-                        progress->engine_params->engine_id,
+                        progress->engine_params->model_id,
                         actualModelPath.c_str(),
                         progress->engine_params->loading_params,
-                        progress->engine_params->main_gpu_id);
+                        progress->engine_params->main_gpu_id,
+                        progress->engine_params->inference_engine);
                 }
                 else
                 {
                     // Lazy loading - use registerEngine
                     success = nodeManager.registerEngine(
-                        progress->engine_params->engine_id,
+                        progress->engine_params->model_id,
                         actualModelPath.c_str(),
                         progress->engine_params->loading_params,
-                        progress->engine_params->main_gpu_id);
+                        progress->engine_params->main_gpu_id,
+                        progress->engine_params->inference_engine);
                 }
             }
 
@@ -548,10 +550,13 @@ namespace kolosal
             progress->end_time = std::chrono::system_clock::now();
             ServerLogger::logError("Exception during engine creation for model %s: %s", progress->model_id.c_str(), ex.what());
         }
-    } // Add a helper method for startup model loading
+    }
+    
+    // Add a helper method for startup model loading
     bool DownloadManager::loadModelAtStartup(const std::string &model_id, const std::string &model_path,
                                              const std::string &model_type, const LoadingParameters &load_params,
-                                             int main_gpu_id, bool load_immediately)
+                                             int main_gpu_id, bool load_immediately,
+                                             const std::string& inference_engine)
     {
         // First check if an engine with this ID already exists
         auto &nodeManager = ServerAPI::instance().getNodeManager();
@@ -576,13 +581,14 @@ namespace kolosal
                 if (can_resume_download(model_path, download_path))
                 {
                     ServerLogger::logInfo("Found incomplete download for startup model '%s', will resume: %s",
-                                          model_id.c_str(), download_path.c_str()); // Create engine creation parameters for resume
+                                          model_id.c_str(), download_path.c_str());                    // Create engine creation parameters for resume
                     EngineCreationParams engine_params;
-                    engine_params.engine_id = model_id;
+                    engine_params.model_id = model_id;
                     engine_params.model_type = model_type;
                     engine_params.load_immediately = load_immediately;
                     engine_params.main_gpu_id = main_gpu_id;
                     engine_params.loading_params = load_params;
+                    engine_params.inference_engine = inference_engine;
 
                     // Start download with engine creation (will resume automatically)
                     return startDownloadWithEngine(model_id, model_path, download_path, engine_params);
@@ -590,7 +596,7 @@ namespace kolosal
                 else
                 {
                     ServerLogger::logInfo("Model file already exists locally for startup model '%s': %s",
-                                          model_id.c_str(), download_path.c_str()); // Load directly using NodeManager
+                                          model_id.c_str(), download_path.c_str());                    // Load directly using NodeManager
                     auto &node_manager = ServerAPI::instance().getNodeManager();
                     if (load_immediately)
                     {
@@ -600,7 +606,7 @@ namespace kolosal
                         }
                         else
                         {
-                            return node_manager.addEngine(model_id, download_path.c_str(), load_params, main_gpu_id);
+                            return node_manager.addEngine(model_id, download_path.c_str(), load_params, main_gpu_id, inference_engine);
                         }
                     }
                     else
@@ -611,27 +617,29 @@ namespace kolosal
                         }
                         else
                         {
-                            return node_manager.registerEngine(model_id, download_path.c_str(), load_params, main_gpu_id);
+                            return node_manager.registerEngine(model_id, download_path.c_str(), load_params, main_gpu_id, inference_engine);
                         }
                     }
                 }
             }
             else
             {
-                ServerLogger::logInfo("Starting startup download for model '%s' from URL: %s", model_id.c_str(), model_path.c_str()); // Create engine creation parameters
+                ServerLogger::logInfo("Starting startup download for model '%s' from URL: %s", model_id.c_str(), model_path.c_str());                // Create engine creation parameters
                 EngineCreationParams engine_params;
-                engine_params.engine_id = model_id;
+                engine_params.model_id = model_id;
                 engine_params.model_type = model_type;
                 engine_params.load_immediately = load_immediately;
                 engine_params.main_gpu_id = main_gpu_id;
                 engine_params.loading_params = load_params;
+                engine_params.inference_engine = inference_engine;
 
                 // Start download with engine creation
                 return startDownloadWithEngine(model_id, model_path, download_path, engine_params);
             }
         }
         else
-        { // Not a URL, use regular NodeManager methods
+        {
+            // Not a URL, use regular NodeManager methods
             auto &node_manager = ServerAPI::instance().getNodeManager();
             if (load_immediately)
             {
@@ -641,7 +649,7 @@ namespace kolosal
                 }
                 else
                 {
-                    return node_manager.addEngine(model_id, model_path.c_str(), load_params, main_gpu_id);
+                    return node_manager.addEngine(model_id, model_path.c_str(), load_params, main_gpu_id, inference_engine);
                 }
             }
             else
@@ -652,7 +660,7 @@ namespace kolosal
                 }
                 else
                 {
-                    return node_manager.registerEngine(model_id, model_path.c_str(), load_params, main_gpu_id);
+                    return node_manager.registerEngine(model_id, model_path.c_str(), load_params, main_gpu_id, inference_engine);
                 }
             }
         }

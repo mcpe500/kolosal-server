@@ -6,19 +6,12 @@
 #include "kolosal/routes/models_route.hpp"
 #include "kolosal/routes/inference_completion_route.hpp"
 #include "kolosal/routes/inference_chat_completion_route.hpp"
-#include "kolosal/routes/add_engine_route.hpp"
-#include "kolosal/routes/list_engines_route.hpp"
-#include "kolosal/routes/remove_engine_route.hpp"
-#include "kolosal/routes/engine_status_route.hpp"
+#include "kolosal/routes/models_route.hpp"
+#include "kolosal/routes/list_inference_engines_route.hpp"
 #include "kolosal/routes/health_status_route.hpp"
 #include "kolosal/routes/auth_config_route.hpp"
+#include "kolosal/routes/server_logs_route.hpp"
 
-#include "kolosal/routes/download_progress_route.hpp"
-#include "kolosal/routes/downloads_status_route.hpp"
-#include "kolosal/routes/cancel_download_route.hpp"
-#include "kolosal/routes/pause_download_route.hpp"
-#include "kolosal/routes/resume_download_route.hpp"
-#include "kolosal/routes/cancel_all_downloads_route.hpp"
 #include "kolosal/routes/parse_pdf_route.hpp"
 #include "kolosal/routes/parse_docx_route.hpp"
 #include "kolosal/routes/parse_html_route.hpp"
@@ -26,6 +19,7 @@
 #include "kolosal/retrieval/remove_documents_route.hpp"
 #include "kolosal/routes/retrieve_route.hpp"
 #include "kolosal/routes/internet_search_route.hpp"
+#include "kolosal/routes/downloads_route.hpp"
 #include "kolosal/download_manager.hpp"
 #include "kolosal/node_manager.h"
 #include "kolosal/logger.hpp"
@@ -88,18 +82,11 @@ namespace kolosal
             pImpl->server->addRoute(std::make_unique<ModelsRoute>());
             pImpl->server->addRoute(std::make_unique<InferenceCompletionRoute>());
             pImpl->server->addRoute(std::make_unique<InferenceChatCompletionRoute>());
-            pImpl->server->addRoute(std::make_unique<AddEngineRoute>());
-            pImpl->server->addRoute(std::make_unique<ListEnginesRoute>());
-            pImpl->server->addRoute(std::make_unique<RemoveEngineRoute>());
-            pImpl->server->addRoute(std::make_unique<EngineStatusRoute>());
+            pImpl->server->addRoute(std::make_unique<ListInferenceEnginesRoute>());
             pImpl->server->addRoute(std::make_unique<HealthStatusRoute>());
             pImpl->server->addRoute(std::make_unique<AuthConfigRoute>());
-            pImpl->server->addRoute(std::make_unique<DownloadProgressRoute>());
-            pImpl->server->addRoute(std::make_unique<DownloadsStatusRoute>());
-            pImpl->server->addRoute(std::make_unique<CancelDownloadRoute>());
-            pImpl->server->addRoute(std::make_unique<PauseDownloadRoute>());
-            pImpl->server->addRoute(std::make_unique<ResumeDownloadRoute>());
-            pImpl->server->addRoute(std::make_unique<CancelAllDownloadsRoute>());
+            pImpl->server->addRoute(std::make_unique<ServerLogsRoute>());
+            pImpl->server->addRoute(std::make_unique<DownloadsRoute>());
             pImpl->server->addRoute(std::make_unique<ParsePDFRoute>());
             pImpl->server->addRoute(std::make_unique<ParseDOCXRoute>());            
             pImpl->server->addRoute(std::make_unique<ParseHtmlRoute>());
