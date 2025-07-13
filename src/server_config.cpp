@@ -247,6 +247,18 @@ namespace kolosal
             }
         }
 
+        // Apply default inference engine to models that don't have one specified
+        if (!defaultInferenceEngine.empty())
+        {
+            for (auto &model : models)
+            {
+                if (model.inferenceEngine.empty() || model.inferenceEngine == "llama-cpu")
+                {
+                    model.inferenceEngine = defaultInferenceEngine;
+                }
+            }
+        }
+
         return validate();
     }
 
@@ -439,6 +451,18 @@ namespace kolosal
                 defaultInferenceEngine = config["default_inference_engine"].as<std::string>();
             }
 
+            // Apply default inference engine to models that don't have one specified
+            if (!defaultInferenceEngine.empty())
+            {
+                for (auto &model : models)
+                {
+                    if (model.inferenceEngine.empty() || model.inferenceEngine == "llama-cpu")
+                    {
+                        model.inferenceEngine = defaultInferenceEngine;
+                    }
+                }
+            }
+
             // Load feature flags
             if (config["features"])
             {
@@ -497,6 +521,7 @@ namespace kolosal
                 modelNode["path"] = model.path;
                 modelNode["load_immediately"] = model.loadImmediately;
                 modelNode["main_gpu_id"] = model.mainGpuId;
+                modelNode["inference_engine"] = model.inferenceEngine;
                 modelNode["load_params"]["n_ctx"] = model.loadParams.n_ctx;
                 modelNode["load_params"]["n_keep"] = model.loadParams.n_keep;
                 modelNode["load_params"]["use_mmap"] = model.loadParams.use_mmap;

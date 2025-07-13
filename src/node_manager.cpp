@@ -39,6 +39,13 @@ namespace kolosal
                     ServerLogger::logInfo("  - %s: %s (%s)", engine.name.c_str(), engine.description.c_str(), 
                                         engine.is_loaded ? "loaded" : "available");
                 }
+                
+                // Set default inference engine if none is configured
+                if (config.defaultInferenceEngine.empty() && !availableEngines.empty())
+                {
+                    config.defaultInferenceEngine = availableEngines[0].name;
+                    ServerLogger::logInfo("Set default inference engine to: %s", config.defaultInferenceEngine.c_str());
+                }
             }
             else
             {
@@ -242,7 +249,7 @@ namespace kolosal
         ServerLogger::logInfo("Successfully added and loaded engine with ID \'%s\'. Model: %s", engineId.c_str(), actualModelPath.c_str());
 
         // Save model to configuration file
-        saveModelToConfig(engineId, actualModelPath, loadParams, mainGpuId, engineType, true);
+        saveModelToConfig(engineId, modelPath, loadParams, mainGpuId, engineType, true);
 
         // Notify autoscaling thread about new engine
         {
@@ -787,7 +794,7 @@ namespace kolosal
         ServerLogger::logInfo("Successfully registered engine with ID \'%s\' for lazy loading. Model: %s", engineId.c_str(), actualModelPath.c_str());
         
         // Save model to configuration file
-        saveModelToConfig(engineId, actualModelPath, loadParams, mainGpuId, engineType, false);
+        saveModelToConfig(engineId, modelPath, loadParams, mainGpuId, engineType, false);
         
         return true;
     }

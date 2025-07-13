@@ -198,7 +198,15 @@ namespace kolosal
 
             std::string modelId = request.model_id;
             std::string modelPath = request.model_path;
-            std::string inferenceEngine = request.inference_engine.empty() ? "llama-cpu" : request.inference_engine;
+            
+            // Use the default inference engine from config if none is specified
+            std::string inferenceEngine = request.inference_engine;
+            if (inferenceEngine.empty())
+            {
+                auto& config = ServerConfig::getInstance();
+                inferenceEngine = config.defaultInferenceEngine.empty() ? "llama-cpu" : config.defaultInferenceEngine;
+            }
+            
             int mainGpuId = request.main_gpu_id;
             bool loadImmediately = request.load_immediately;
 
