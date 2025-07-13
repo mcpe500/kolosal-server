@@ -241,6 +241,9 @@ namespace kolosal
 
         ServerLogger::logInfo("Successfully added and loaded engine with ID \'%s\'. Model: %s", engineId.c_str(), actualModelPath.c_str());
 
+        // Save model to configuration file
+        saveModelToConfig(engineId, actualModelPath, loadParams, mainGpuId, engineType, true);
+
         // Notify autoscaling thread about new engine
         {
             std::lock_guard<std::mutex> lock(autoscalingMutex_);
@@ -478,6 +481,9 @@ namespace kolosal
         }
 
         ServerLogger::logInfo("Engine with ID \'%s\' removed from manager.", engineId.c_str());
+
+        // Remove model from configuration file
+        removeModelFromConfig(engineId);
 
         // Notify autoscaling thread
         {
@@ -779,6 +785,10 @@ namespace kolosal
         }
 
         ServerLogger::logInfo("Successfully registered engine with ID \'%s\' for lazy loading. Model: %s", engineId.c_str(), actualModelPath.c_str());
+        
+        // Save model to configuration file
+        saveModelToConfig(engineId, actualModelPath, loadParams, mainGpuId, engineType, false);
+        
         return true;
     }
 
@@ -878,7 +888,7 @@ namespace kolosal
     {
         if (!inferenceLoader_)
         {
-            ServerLogger::logError("InferenceLoader is not initialized");
+            ServerLogger::logError("InferenceLoader not initialized");
             return false;
         }
 
@@ -886,7 +896,7 @@ namespace kolosal
         
         if (!inferenceLoader_->configureEngines(engines))
         {
-            ServerLogger::logError("Failed to reconfigure inference engines: %s", inferenceLoader_->getLastError().c_str());
+            ServerLogger::logError("Failed to reconfigure inference engines");
             return false;
         }
 
@@ -894,11 +904,121 @@ namespace kolosal
         ServerLogger::logInfo("Successfully reconfigured %zu inference engines:", availableEngines.size());
         for (const auto &engine : availableEngines)
         {
-            ServerLogger::logInfo("  - %s: %s (%s)", engine.name.c_str(), engine.description.c_str(), 
-                                engine.is_loaded ? "loaded" : "available");
+            ServerLogger::logInfo("  - %s: %s", engine.name.c_str(), engine.description.c_str());
         }
 
         return true;
+    }
+
+    bool NodeManager::saveModelToConfig(const std::string& engineId, const std::string& modelPath, 
+                                      const LoadingParameters& loadParams, int mainGpuId, 
+                                      const std::string& inferenceEngine, bool loadImmediately)
+    {
+        try
+        {
+            auto &config = ServerConfig::getInstance();
+            
+            // Check if model already exists in config to avoid duplicates
+            bool modelExistsInConfig = false;
+            for (const auto &existingModel : config.models)
+            {
+                if (existingModel.id == engineId)
+                {
+                    modelExistsInConfig = true;
+                    ServerLogger::logInfo("Model '%s' already exists in configuration, updating it", engineId.c_str());
+                    break;
+                }
+            }
+            
+            if (!modelExistsInConfig)
+            {
+                // Create new model config
+                ModelConfig modelConfig;
+                modelConfig.id = engineId;
+                modelConfig.path = modelPath;
+                modelConfig.loadImmediately = loadImmediately;
+                modelConfig.mainGpuId = mainGpuId;
+                modelConfig.inferenceEngine = inferenceEngine;
+                modelConfig.loadParams = loadParams;
+                
+                config.models.push_back(modelConfig);
+                ServerLogger::logInfo("Added model '%s' to configuration", engineId.c_str());
+            }
+            else
+            {
+                // Update existing model config
+                for (auto &existingModel : config.models)
+                {
+                    if (existingModel.id == engineId)
+                    {
+                        existingModel.path = modelPath;
+                        existingModel.loadImmediately = loadImmediately;
+                        existingModel.mainGpuId = mainGpuId;
+                        existingModel.inferenceEngine = inferenceEngine;
+                        existingModel.loadParams = loadParams;
+                        ServerLogger::logInfo("Updated model '%s' in configuration", engineId.c_str());
+                        break;
+                    }
+                }
+            }
+            
+            // Save the updated configuration
+            std::string configFile = "config.yaml"; // Default config file
+            if (!config.saveToFile(configFile))
+            {
+                ServerLogger::logWarning("Failed to save configuration to file for model '%s'", engineId.c_str());
+                return false;
+            }
+            
+            ServerLogger::logInfo("Successfully saved model '%s' to configuration file", engineId.c_str());
+            return true;
+        }
+        catch (const std::exception &ex)
+        {
+            ServerLogger::logError("Exception while saving model '%s' to config: %s", engineId.c_str(), ex.what());
+            return false;
+        }
+    }
+
+    bool NodeManager::removeModelFromConfig(const std::string& engineId)
+    {
+        try
+        {
+            auto &config = ServerConfig::getInstance();
+            
+            // Find and remove the model from config
+            auto it = std::find_if(config.models.begin(), config.models.end(),
+                                   [&engineId](const ModelConfig &model) {
+                                       return model.id == engineId;
+                                   });
+            
+            if (it != config.models.end())
+            {
+                config.models.erase(it);
+                ServerLogger::logInfo("Removed model '%s' from configuration", engineId.c_str());
+                
+                // Save the updated configuration
+                std::string configFile = "config.yaml"; // Default config file
+                if (!config.saveToFile(configFile))
+                {
+                    ServerLogger::logWarning("Failed to save configuration to file after removing model '%s'", engineId.c_str());
+                    return false;
+                }
+                
+                ServerLogger::logInfo("Successfully updated configuration file after removing model '%s'", engineId.c_str());
+                return true;
+            }
+            else
+            {
+                ServerLogger::logInfo("Model '%s' was not found in configuration", engineId.c_str());
+                return true; // Not an error if model wasn't in config
+            }
+        }
+        catch (const std::exception &ex)
+        {
+            ServerLogger::logError("Exception while removing model '%s' from config: %s", engineId.c_str(), ex.what());
+            return false;
+        }
     }
 
 } // namespace kolosal

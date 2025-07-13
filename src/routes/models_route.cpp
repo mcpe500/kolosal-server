@@ -482,56 +482,6 @@ namespace kolosal
 
                 if (engineFunctional)
                 {
-                    // Update server configuration to include the new model
-                    bool configUpdated = false;
-                    try
-                    {
-                        auto &config = ServerConfig::getInstance();
-                        
-                        // Check if model already exists in config to avoid duplicates
-                        bool modelExistsInConfig = false;
-                        for (const auto &existingModel : config.models)
-                        {
-                            if (existingModel.id == modelId)
-                            {
-                                modelExistsInConfig = true;
-                                break;
-                            }
-                        }
-                        
-                        if (!modelExistsInConfig)
-                        {
-                            // Create new model config
-                            ModelConfig modelConfig;
-                            modelConfig.id = modelId;
-                            modelConfig.path = actualModelPath;
-                            modelConfig.loadParams = loadParams;
-                            modelConfig.mainGpuId = mainGpuId;
-                            modelConfig.loadImmediately = loadImmediately;
-                            modelConfig.inferenceEngine = inferenceEngine;
-                            
-                            // Add to config
-                            config.models.push_back(modelConfig);
-                            configUpdated = true;
-                            
-                            ServerLogger::logInfo("[Thread %u] Added model '%s' to server configuration", 
-                                                 std::this_thread::get_id(), modelId.c_str());
-                        }
-                        else
-                        {
-                            configUpdated = true; // Model already exists in config
-                            ServerLogger::logInfo("[Thread %u] Model '%s' already exists in server configuration", 
-                                                 std::this_thread::get_id(), modelId.c_str());
-                        }
-                    }
-                    catch (const std::exception &ex)
-                    {
-                        ServerLogger::logWarning("[Thread %u] Failed to update server configuration for model '%s': %s", 
-                                               std::this_thread::get_id(), modelId.c_str(), ex.what());
-                        // Don't fail the request just because config update failed
-                        configUpdated = false;
-                    }
-
                     json response = {
                         {"model_id", modelId},
                         {"model_path", modelPath},
@@ -539,8 +489,7 @@ namespace kolosal
                         {"load_immediately", loadImmediately},
                         {"loading_parameters", request.loading_parameters.to_json()},
                         {"main_gpu_id", mainGpuId},
-                        {"message", "Engine added successfully"},
-                        {"config_updated", configUpdated}
+                        {"message", "Engine added successfully"}
                     };
 
                     // Add additional info if model was downloaded from URL
@@ -647,55 +596,6 @@ namespace kolosal
 
                                 if (engineFunctional)
                                 {
-                                    // Update server configuration to include the new model
-                                    bool configUpdated = false;
-                                    try
-                                    {
-                                        auto &config = ServerConfig::getInstance();
-                                        
-                                        // Check if model already exists in config to avoid duplicates
-                                        bool modelExistsInConfig = false;
-                                        for (const auto &existingModel : config.models)
-                                        {
-                                            if (existingModel.id == modelId)
-                                            {
-                                                modelExistsInConfig = true;
-                                                break;
-                                            }
-                                        }
-                                        
-                                        if (!modelExistsInConfig)
-                                        {
-                                            // Create new model config
-                                            ModelConfig modelConfig;
-                                            modelConfig.id = modelId;
-                                            modelConfig.path = actualModelPath;
-                                            modelConfig.loadParams = loadParams;
-                                            modelConfig.mainGpuId = mainGpuId;
-                                            modelConfig.loadImmediately = loadImmediately;
-                                            modelConfig.inferenceEngine = inferenceEngine;
-                                            
-                                            // Add to config
-                                            config.models.push_back(modelConfig);
-                                            configUpdated = true;
-                                            
-                                            ServerLogger::logInfo("[Thread %u] Added model '%s' to server configuration (retry)", 
-                                                                 std::this_thread::get_id(), modelId.c_str());
-                                        }
-                                        else
-                                        {
-                                            configUpdated = true; // Model already exists in config
-                                            ServerLogger::logInfo("[Thread %u] Model '%s' already exists in server configuration (retry)", 
-                                                                 std::this_thread::get_id(), modelId.c_str());
-                                        }
-                                    }
-                                    catch (const std::exception &ex)
-                                    {
-                                        ServerLogger::logWarning("[Thread %u] Failed to update server configuration for model '%s' (retry): %s", 
-                                                               std::this_thread::get_id(), modelId.c_str(), ex.what());
-                                        configUpdated = false;
-                                    }
-                                    
                                     json response = {
                                         {"model_id", modelId},
                                         {"model_path", modelPath},
@@ -703,8 +603,7 @@ namespace kolosal
                                         {"load_immediately", loadImmediately},
                                         {"loading_parameters", request.loading_parameters.to_json()},
                                         {"main_gpu_id", mainGpuId},
-                                        {"message", "Engine re-added successfully after removing previous failed configuration"},
-                                        {"config_updated", configUpdated}
+                                        {"message", "Engine re-added successfully after removing previous failed configuration"}
                                     };
 
                                     // Add additional info if model was downloaded from URL
@@ -836,46 +735,10 @@ namespace kolosal
 
             if (success)
             {
-                // Update server configuration to remove the model
-                bool configUpdated = false;
-                try
-                {
-                    auto &config = ServerConfig::getInstance();
-                    
-                    // Find and remove the model from config
-                    auto it = std::find_if(config.models.begin(), config.models.end(),
-                                         [&modelId](const ModelConfig &model) {
-                                             return model.id == modelId;
-                                         });
-                    
-                    if (it != config.models.end())
-                    {
-                        config.models.erase(it);
-                        configUpdated = true;
-                        ServerLogger::logInfo("[Thread %u] Removed model '%s' from server configuration", 
-                                             std::this_thread::get_id(), modelId.c_str());
-                    }
-                    else
-                    {
-                        // Model was successfully removed from engine but wasn't in config
-                        configUpdated = true; // Not an error, just wasn't in config to begin with
-                        ServerLogger::logInfo("[Thread %u] Model '%s' was not found in server configuration", 
-                                             std::this_thread::get_id(), modelId.c_str());
-                    }
-                }
-                catch (const std::exception &ex)
-                {
-                    ServerLogger::logWarning("[Thread %u] Failed to update server configuration when removing model '%s': %s", 
-                                           std::this_thread::get_id(), modelId.c_str(), ex.what());
-                    // Don't fail the request just because config update failed
-                    configUpdated = false;
-                }
-
                 json response = {
                     {"model_id", modelId},
                     {"status", "removed"},
-                    {"message", "Model removed successfully"},
-                    {"config_updated", configUpdated}
+                    {"message", "Model removed successfully"}
                 };
 
                 send_response(sock, 200, response.dump());
