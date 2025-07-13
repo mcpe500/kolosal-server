@@ -79,10 +79,10 @@ set(SOURCES
     src/routes/parse_html_route.cpp
     src/routes/retrieve_route.cpp
     src/routes/add_documents_route.cpp
+    src/routes/remove_documents_route.cpp
     src/routes/downloads_route.cpp
     
     # Retrieval files
-    src/retrieval/remove_documents_route.cpp
     src/retrieval/add_document_types.cpp
     src/retrieval/remove_document_types.cpp
     src/retrieval/retrieve_types.cpp

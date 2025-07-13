@@ -1,5 +1,6 @@
-#include "kolosal/retrieval/remove_documents_route.hpp"
+#include "kolosal/routes/remove_documents_route.hpp"
 #include "kolosal/retrieval/remove_document_types.hpp"
+#include "kolosal/server_config.hpp"
 #include "kolosal/utils.hpp"
 #include "kolosal/server_api.hpp"
 #include "kolosal/logger.hpp"
@@ -14,8 +15,6 @@
 using json = nlohmann::json;
 
 namespace kolosal
-{
-namespace retrieval
 {
 
 std::atomic<long long> RemoveDocumentsRoute::request_counter_{0};
@@ -61,7 +60,7 @@ void RemoveDocumentsRoute::handle(SocketType sock, const std::string& body)
         }
 
         // Parse the request using the DTO model
-        RemoveDocumentsRequest request;
+        kolosal::retrieval::RemoveDocumentsRequest request;
         try
         {
             request.from_json(j);
@@ -107,7 +106,7 @@ void RemoveDocumentsRoute::handle(SocketType sock, const std::string& body)
                 db_config.qdrant.maxConnections = 10;
                 db_config.qdrant.connectionTimeout = 5;
                 
-                document_service_ = std::make_unique<DocumentService>(db_config);
+                document_service_ = std::make_unique<kolosal::retrieval::DocumentService>(db_config);
                 
                 // Initialize service
                 bool initialized = document_service_->initialize().get();
@@ -135,7 +134,7 @@ void RemoveDocumentsRoute::handle(SocketType sock, const std::string& body)
         auto response_future = document_service_->removeDocuments(request);
         
         // Wait for processing to complete
-        RemoveDocumentsResponse response = response_future.get();
+        kolosal::retrieval::RemoveDocumentsResponse response = response_future.get();
 
         // Complete monitoring
         // monitor_->completeRequest(requestId);
@@ -179,7 +178,7 @@ void RemoveDocumentsRoute::handle(SocketType sock, const std::string& body)
 void RemoveDocumentsRoute::sendErrorResponse(SocketType sock, int status, const std::string& message,
                                            const std::string& error_type, const std::string& param)
 {
-    RemoveDocumentsErrorResponse errorResponse;
+    kolosal::retrieval::RemoveDocumentsErrorResponse errorResponse;
     errorResponse.error = message;
     errorResponse.error_type = error_type;
     errorResponse.param = param;
@@ -193,5 +192,4 @@ void RemoveDocumentsRoute::sendErrorResponse(SocketType sock, int status, const 
     send_response(sock, status, errorResponse.to_json().dump(), headers);
 }
 
-} // namespace retrieval
 } // namespace kolosal

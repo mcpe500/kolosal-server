@@ -16,7 +16,7 @@
 #include "kolosal/routes/parse_docx_route.hpp"
 #include "kolosal/routes/parse_html_route.hpp"
 #include "kolosal/routes/add_documents_route.hpp"
-#include "kolosal/retrieval/remove_documents_route.hpp"
+#include "kolosal/routes/remove_documents_route.hpp"
 #include "kolosal/routes/retrieve_route.hpp"
 #include "kolosal/routes/internet_search_route.hpp"
 #include "kolosal/routes/downloads_route.hpp"
@@ -91,7 +91,7 @@ namespace kolosal
             pImpl->server->addRoute(std::make_unique<ParseDOCXRoute>());            
             pImpl->server->addRoute(std::make_unique<ParseHtmlRoute>());
             pImpl->server->addRoute(std::make_unique<AddDocumentsRoute>());
-            pImpl->server->addRoute(std::make_unique<kolosal::retrieval::RemoveDocumentsRoute>());
+            pImpl->server->addRoute(std::make_unique<RemoveDocumentsRoute>());
             pImpl->server->addRoute(std::make_unique<RetrieveRoute>());
 
             ServerLogger::logInfo("Routes registered successfully");

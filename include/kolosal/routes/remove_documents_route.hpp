@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../routes/route_interface.hpp"
+#include "route_interface.hpp"
 #include "../export.hpp"
-#include "document_service.hpp"
+#include "../retrieval/document_service.hpp"
 // #include "../completion_monitor.hpp"
 #include <string>
 #include <memory>
@@ -10,9 +10,6 @@
 #include <mutex>
 
 namespace kolosal
-{
-
-namespace retrieval
 {
 
 /**
@@ -65,9 +62,8 @@ private:
 
     static std::atomic<long long> request_counter_;
     // std::unique_ptr<CompletionMonitor> monitor_;
-    std::unique_ptr<DocumentService> document_service_;
+    std::unique_ptr<kolosal::retrieval::DocumentService> document_service_;
     std::mutex service_mutex_;
 };
 
-} // namespace retrieval
 } // namespace kolosal
