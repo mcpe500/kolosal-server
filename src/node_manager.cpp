@@ -307,8 +307,8 @@ namespace kolosal
             bool loadSuccess = false;
             try
             {
-                // For embedding models, use the same loadModel method as regular models
-                loadSuccess = engineInstance->loadModel(actualModelPath.c_str(), loadParams, mainGpuId);
+                // For embedding models, use the specialized loadEmbeddingModel method
+                loadSuccess = engineInstance->loadEmbeddingModel(actualModelPath.c_str(), loadParams, mainGpuId);
             }
             catch (const std::exception &e)
             {
@@ -486,8 +486,8 @@ namespace kolosal
                     // Check if this is an embedding model or regular model
                     if (recordPtr->isEmbeddingModel.load())
                     {
-                        // For embedding models, use the same loadModel method as regular models
-                        loadSuccess = newEngineInstance->loadModel(recordPtr->modelPath.c_str(), recordPtr->loadParams, recordPtr->mainGpuId);
+                        // For embedding models, use the specialized loadEmbeddingModel method
+                        loadSuccess = newEngineInstance->loadEmbeddingModel(recordPtr->modelPath.c_str(), recordPtr->loadParams, recordPtr->mainGpuId);
                     }
                     else
                     {

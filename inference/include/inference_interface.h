@@ -225,6 +225,17 @@ public:
                           const int mainGpuId = -1) = 0;
 
     /**
+     * @brief Loads an embedding model from the specified GGUF file path.
+     * @param modelPath Path to the GGUF embedding model file
+     * @param lParams Loading parameters configuration
+     * @param mainGpuId Primary GPU ID (-1 for auto-select)
+     * @return true if embedding model loaded successfully, false otherwise
+     */
+    virtual bool loadEmbeddingModel(const char* modelPath, 
+                                   const LoadingParameters lParams, 
+                                   const int mainGpuId = -1) = 0;
+
+    /**
      * @brief Unloads the currently loaded model.
      * @return true if model unloaded successfully, false otherwise
      */
