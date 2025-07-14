@@ -58,6 +58,7 @@ set(SOURCES
     src/download_manager.cpp
     src/inference_loader.cpp
     src/inference_interface_impl.cpp
+    src/gpu_detection.cpp
 
     src/routes/oai_completions_route.cpp
     src/routes/completion_route.cpp
@@ -225,7 +226,7 @@ target_link_libraries(kolosal_server PRIVATE Threads::Threads)
 
 # Platform-specific link libraries for the main library.
 if(WIN32)
-    target_link_libraries(kolosal_server PRIVATE ws2_32)
+    target_link_libraries(kolosal_server PRIVATE ws2_32 wbemuuid)
 else()
     # For Linux, link with required system libraries
     target_link_libraries(kolosal_server PRIVATE dl rt pthread)

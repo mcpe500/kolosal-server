@@ -2,6 +2,7 @@
 #include "kolosal/server_config.hpp"
 #include "kolosal/logger.hpp" // Assuming a logger is available
 #include "kolosal/download_utils.hpp"
+#include "kolosal/gpu_detection.hpp"
 #include <filesystem>
 #include <algorithm> // For std::max and std::min
 
@@ -43,8 +44,50 @@ namespace kolosal
                 // Set default inference engine if none is configured
                 if (config.defaultInferenceEngine.empty() && !availableEngines.empty())
                 {
-                    config.defaultInferenceEngine = availableEngines[0].name;
+                    // Check if system has a dedicated GPU for Vulkan acceleration
+                    bool hasGPU = hasVulkanCapableGPU();
+                    std::string preferredEngine;
+                    
+                    if (hasGPU)
+                    {
+                        // Look for llama-vulkan engine first
+                        for (const auto &engine : availableEngines)
+                        {
+                            if (engine.name == "llama-vulkan")
+                            {
+                                preferredEngine = engine.name;
+                                ServerLogger::logInfo("Dedicated GPU detected. Setting default inference engine to Vulkan-accelerated engine: %s", preferredEngine.c_str());
+                                break;
+                            }
+                        }
+                        
+                        // If llama-vulkan not found, fall back to first available
+                        if (preferredEngine.empty())
+                        {
+                            preferredEngine = availableEngines[0].name;
+                            ServerLogger::logInfo("Dedicated GPU detected, but llama-vulkan engine not available. Using first available engine: %s", preferredEngine.c_str());
+                        }
+                    }
+                    else
+                    {
+                        // No dedicated GPU, use first available engine (likely CPU-based)
+                        preferredEngine = availableEngines[0].name;
+                        ServerLogger::logInfo("No dedicated GPU detected. Using CPU-based engine: %s", preferredEngine.c_str());
+                    }
+                    
+                    config.defaultInferenceEngine = preferredEngine;
                     ServerLogger::logInfo("Set default inference engine to: %s", config.defaultInferenceEngine.c_str());
+                    
+                    // Save the updated configuration to file to persist the choice
+                    std::string configFile = "config.yaml";
+                    if (config.saveToFile(configFile))
+                    {
+                        ServerLogger::logInfo("Saved default inference engine configuration to: %s", configFile.c_str());
+                    }
+                    else
+                    {
+                        ServerLogger::logWarning("Failed to save default inference engine configuration to file");
+                    }
                 }
             }
             else
