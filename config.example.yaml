@@ -118,7 +118,7 @@ models:
       dimensions: 384
       normalize: true
       pooling_type: "mean"  # mean, cls, or none
-      max_input_length: 8192
+      max_input_length: 512
     load_params:
       n_ctx: 512
       n_keep: 0
@@ -128,46 +128,6 @@ models:
       cont_batching: true
       n_batch: 512
       n_ubatch: 128
-  - id: "mini-lm-l6-v2"
-    type: "embedding"
-    path: "https://huggingface.co/Mungert/all-MiniLM-L6-v2-GGUF/blob/main/all-MiniLM-L6-v2-bf16-q4_k.gguf"
-    load_at_startup: false
-    main_gpu_id: 0
-    preload_context: false
-    embedding_config:
-      dimensions: 768
-      normalize: true
-      pooling_type: "mean"
-      max_input_length: 8192
-    load_params:
-      n_ctx: 512
-      n_keep: 0
-      use_mmap: true
-      use_mlock: false
-      n_parallel: 2
-      cont_batching: true
-      n_batch: 256
-      n_ubatch: 64
-  - id: "qwen3-embedding-0.6b"
-    type: "embedding"
-    path: "https://huggingface.co/kolosal/qwen3-embedding-0.6b/blob/main/Qwen3-Embedding-0.6B-Q8_0.gguf"
-    load_at_startup: false
-    main_gpu_id: 0
-    preload_context: false
-    embedding_config:
-      dimensions: 768
-      normalize: true
-      pooling_type: "mean"
-      max_input_length: 8192
-    load_params:
-      n_ctx: 512
-      n_keep: 0
-      use_mmap: true
-      use_mlock: false
-      n_parallel: 2
-      cont_batching: true
-      n_batch: 256
-      n_ubatch: 64
 
 # Embedding-specific autoscaling configuration
 embedding_autoscaling:
