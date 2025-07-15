@@ -105,6 +105,12 @@ struct KOLOSAL_SERVER_API ServerConfig {    // Basic server settings
     // Internal flags
     bool helpOrVersionShown = false;  // Tracks if help/version was displayed
     
+    // Track the path of the currently loaded config file for saving
+#pragma warning(push)
+#pragma warning(disable: 4251)
+    std::string currentConfigFilePath; // Path to the currently loaded config file
+#pragma warning(pop)
+    
     ServerConfig() = default;
     
     /**
@@ -141,6 +147,18 @@ struct KOLOSAL_SERVER_API ServerConfig {    // Basic server settings
     bool saveToFile(const std::string& configFile) const;
     
     /**
+     * @brief Save current configuration to the currently loaded config file
+     * @return True if configuration was saved successfully
+     */
+    bool saveToCurrentFile() const;
+    
+    /**
+     * @brief Get the path of the currently loaded config file
+     * @return Path to the currently loaded config file, or empty string if none
+     */
+    const std::string& getCurrentConfigFilePath() const;
+    
+    /**
      * @brief Validate the configuration
      * @return True if configuration is valid
      */
@@ -159,6 +177,13 @@ struct KOLOSAL_SERVER_API ServerConfig {    // Basic server settings
      * @brief Print version information
      */
     static void printVersion();
+    
+    /**
+     * @brief Convert a relative path to an absolute path with fallback to executable directory
+     * @param path The path to convert (can be relative or already absolute)
+     * @return Absolute path as string
+     */
+    static std::string makeAbsolutePath(const std::string& path);
 };
 
 } // namespace kolosal

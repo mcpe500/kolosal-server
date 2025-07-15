@@ -79,14 +79,16 @@ namespace kolosal
                     ServerLogger::logInfo("Set default inference engine to: %s", config.defaultInferenceEngine.c_str());
                     
                     // Save the updated configuration to file to persist the choice
-                    std::string configFile = "config.yaml";
-                    if (config.saveToFile(configFile))
+                    ServerLogger::logInfo("About to save default inference engine configuration");
+                    ServerLogger::logInfo("Current config file path during initialization: '%s'", config.getCurrentConfigFilePath().c_str());
+                    
+                    if (config.saveToCurrentFile())
                     {
-                        ServerLogger::logInfo("Saved default inference engine configuration to: %s", configFile.c_str());
+                        ServerLogger::logInfo("Saved default inference engine configuration to current config file");
                     }
                     else
                     {
-                        ServerLogger::logWarning("Failed to save default inference engine configuration to file");
+                        ServerLogger::logWarning("Failed to save default inference engine configuration to current config file");
                     }
                 }
             }
@@ -865,7 +867,7 @@ namespace kolosal
         ServerLogger::logInfo("Model path for engine \'%s\' is a URL. Starting download: %s", engineId.c_str(), modelPath.c_str());
 
         // Generate local path for the downloaded model
-        std::string downloadsDir = "./models";
+        std::string downloadsDir = std::filesystem::absolute("./models").string();
         std::string localPath = generate_download_path(modelPath, downloadsDir);
 
         // Check if the file already exists locally
@@ -985,7 +987,7 @@ namespace kolosal
                 // Create new model config
                 ModelConfig modelConfig;
                 modelConfig.id = engineId;
-                modelConfig.path = modelPath;
+                modelConfig.path = ServerConfig::makeAbsolutePath(modelPath);  // Convert to absolute path
                 modelConfig.loadImmediately = loadImmediately;
                 modelConfig.mainGpuId = mainGpuId;
                 modelConfig.inferenceEngine = inferenceEngine;
@@ -1001,7 +1003,7 @@ namespace kolosal
                 {
                     if (existingModel.id == engineId)
                     {
-                        existingModel.path = modelPath;
+                        existingModel.path = ServerConfig::makeAbsolutePath(modelPath);  // Convert to absolute path
                         existingModel.loadImmediately = loadImmediately;
                         existingModel.mainGpuId = mainGpuId;
                         existingModel.inferenceEngine = inferenceEngine;
@@ -1013,10 +1015,13 @@ namespace kolosal
             }
             
             // Save the updated configuration
-            std::string configFile = "config.yaml"; // Default config file
-            if (!config.saveToFile(configFile))
+            ServerLogger::logInfo("About to save configuration for model '%s'", engineId.c_str());
+            ServerLogger::logInfo("Current config file path in NodeManager: '%s'", config.getCurrentConfigFilePath().c_str());
+            ServerLogger::logInfo("ServerConfig instance address during model save: %lu", reinterpret_cast<uintptr_t>(&config));
+            
+            if (!config.saveToCurrentFile())
             {
-                ServerLogger::logWarning("Failed to save configuration to file for model '%s'", engineId.c_str());
+                ServerLogger::logWarning("Failed to save configuration to file for model '%s'. Configuration changes are in memory only.", engineId.c_str());
                 return false;
             }
             
@@ -1048,10 +1053,13 @@ namespace kolosal
                 ServerLogger::logInfo("Removed model '%s' from configuration", engineId.c_str());
                 
                 // Save the updated configuration
-                std::string configFile = "config.yaml"; // Default config file
-                if (!config.saveToFile(configFile))
+                ServerLogger::logInfo("About to save configuration after removing model '%s'", engineId.c_str());
+                ServerLogger::logInfo("Current config file path in NodeManager: '%s'", config.getCurrentConfigFilePath().c_str());
+                ServerLogger::logInfo("ServerConfig instance address during model removal: %lu", reinterpret_cast<uintptr_t>(&config));
+                
+                if (!config.saveToCurrentFile())
                 {
-                    ServerLogger::logWarning("Failed to save configuration to file after removing model '%s'", engineId.c_str());
+                    ServerLogger::logWarning("Failed to save configuration to file after removing model '%s'. Configuration changes are in memory only.", engineId.c_str());
                     return false;
                 }
                 

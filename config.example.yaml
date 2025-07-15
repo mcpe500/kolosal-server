@@ -62,7 +62,7 @@ models:
       n_batch: 2048
       n_ubatch: 512
   - id: "gpt-3.5-turbo"
-    path: "./models/gpt-3.5-turbo.gguf"
+    path: "./models/gpt-3.5-turbo.gguf"  # Relative paths are automatically converted to absolute paths
     load_immediately: false
     main_gpu_id: 0
     inference_engine: "llama-cuda"  # Use CUDA for GPU acceleration

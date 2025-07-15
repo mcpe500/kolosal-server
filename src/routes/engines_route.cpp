@@ -9,6 +9,13 @@
 #include <thread>
 #include <filesystem>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#include <limits.h>
+#endif
+
 using json = nlohmann::json;
 
 namespace kolosal
@@ -226,15 +233,17 @@ namespace kolosal
             }
 
             // Create new engine configuration
-            InferenceEngineConfig newEngine(engineName, libraryPath, description);
+            InferenceEngineConfig newEngine(engineName, ServerConfig::makeAbsolutePath(libraryPath), description);
             newEngine.load_on_startup = loadOnStartup;
 
             // Add to server config
             config.inferenceEngines.push_back(newEngine);
 
             // Save updated config to file
-            std::string configFile = "config.yaml"; // Default config file
-            if (!config.saveToFile(configFile))
+            ServerLogger::logInfo("About to save configuration after adding engine '%s'", engineName.c_str());
+            ServerLogger::logInfo("Current config file path in EnginesRoute: '%s'", config.getCurrentConfigFilePath().c_str());
+            
+            if (!config.saveToCurrentFile())
             {
                 // Remove the engine from memory if save failed
                 config.inferenceEngines.pop_back();
@@ -366,8 +375,10 @@ namespace kolosal
             config.defaultInferenceEngine = engineName;
 
             // Save updated config to file
-            std::string configFile = "config.yaml"; // Default config file
-            if (!config.saveToFile(configFile))
+            ServerLogger::logInfo("About to save configuration after setting default engine to '%s'", engineName.c_str());
+            ServerLogger::logInfo("Current config file path in EnginesRoute: '%s'", config.getCurrentConfigFilePath().c_str());
+            
+            if (!config.saveToCurrentFile())
             {
                 json jError = {
                     {"error", {
