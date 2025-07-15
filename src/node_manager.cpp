@@ -1,10 +1,13 @@
 #include "kolosal/node_manager.h"
+#include "kolosal/server_config.hpp"
 #include "kolosal/logger.hpp" // Assuming a logger is available
 #include "kolosal/download_utils.hpp"
+#include "kolosal/gpu_detection.hpp"
 #include <filesystem>
 #include <algorithm> // For std::max and std::min
 
 #ifdef _WIN32
+#include <winsock2.h>
 #include <windows.h>
 #define LIBRARY_EXTENSION ".dll"
 #else
@@ -21,24 +24,80 @@ namespace kolosal
     {
         ServerLogger::logInfo("NodeManager initialized with idle timeout: %lld seconds.", idleTimeout_.count());
 
-        // Initialize the dynamic inference loader with smart plugin discovery
-        std::string pluginsDir = findPluginsDirectory();
-        ServerLogger::logInfo("Using plugins directory: %s", pluginsDir.c_str());
-        inferenceLoader_ = std::make_unique<InferenceLoader>(pluginsDir);
+        // Initialize the inference loader
+        inferenceLoader_ = std::make_unique<InferenceLoader>();
 
-        // Scan for available inference engines
-        if (inferenceLoader_->scanForEngines())
+        // Configure inference engines from server config
+        auto& config = ServerConfig::getInstance();
+        if (!config.inferenceEngines.empty())
         {
-            auto availableEngines = inferenceLoader_->getAvailableEngines();
-            ServerLogger::logInfo("Found %zu available inference engines:", availableEngines.size());
-            for (const auto &engine : availableEngines)
+            if (inferenceLoader_->configureEngines(config.inferenceEngines))
             {
-                ServerLogger::logInfo("  - %s: %s", engine.name.c_str(), engine.description.c_str());
+                auto availableEngines = inferenceLoader_->getAvailableEngines();
+                ServerLogger::logInfo("Configured %zu inference engines:", availableEngines.size());
+                for (const auto &engine : availableEngines)
+                {
+                    ServerLogger::logInfo("  - %s: %s (%s)", engine.name.c_str(), engine.description.c_str(), 
+                                        engine.is_loaded ? "loaded" : "available");
+                }
+                
+                // Set default inference engine if none is configured
+                if (config.defaultInferenceEngine.empty() && !availableEngines.empty())
+                {
+                    // Check if system has a dedicated GPU for Vulkan acceleration
+                    bool hasGPU = hasVulkanCapableGPU();
+                    std::string preferredEngine;
+                    
+                    if (hasGPU)
+                    {
+                        // Look for llama-vulkan engine first
+                        for (const auto &engine : availableEngines)
+                        {
+                            if (engine.name == "llama-vulkan")
+                            {
+                                preferredEngine = engine.name;
+                                ServerLogger::logInfo("Dedicated GPU detected. Setting default inference engine to Vulkan-accelerated engine: %s", preferredEngine.c_str());
+                                break;
+                            }
+                        }
+                        
+                        // If llama-vulkan not found, fall back to first available
+                        if (preferredEngine.empty())
+                        {
+                            preferredEngine = availableEngines[0].name;
+                            ServerLogger::logInfo("Dedicated GPU detected, but llama-vulkan engine not available. Using first available engine: %s", preferredEngine.c_str());
+                        }
+                    }
+                    else
+                    {
+                        // No dedicated GPU, use first available engine (likely CPU-based)
+                        preferredEngine = availableEngines[0].name;
+                        ServerLogger::logInfo("No dedicated GPU detected. Using CPU-based engine: %s", preferredEngine.c_str());
+                    }
+                    
+                    config.defaultInferenceEngine = preferredEngine;
+                    ServerLogger::logInfo("Set default inference engine to: %s", config.defaultInferenceEngine.c_str());
+                    
+                    // Save the updated configuration to file to persist the choice
+                    std::string configFile = "config.yaml";
+                    if (config.saveToFile(configFile))
+                    {
+                        ServerLogger::logInfo("Saved default inference engine configuration to: %s", configFile.c_str());
+                    }
+                    else
+                    {
+                        ServerLogger::logWarning("Failed to save default inference engine configuration to file");
+                    }
+                }
+            }
+            else
+            {
+                ServerLogger::logError("Failed to configure inference engines: %s", inferenceLoader_->getLastError().c_str());
             }
         }
         else
         {
-            ServerLogger::logWarning("No inference engines found. Ensure inference plugins are available.");
+            ServerLogger::logWarning("No inference engines configured. Add inference_engines section to config file.");
         }
 
         autoscalingThread_ = std::thread(&NodeManager::autoscalingLoop, this);
@@ -231,6 +290,9 @@ namespace kolosal
         }
 
         ServerLogger::logInfo("Successfully added and loaded engine with ID \'%s\'. Model: %s", engineId.c_str(), actualModelPath.c_str());
+
+        // Save model to configuration file
+        saveModelToConfig(engineId, modelPath, loadParams, mainGpuId, engineType, true);
 
         // Notify autoscaling thread about new engine
         {
@@ -469,6 +531,9 @@ namespace kolosal
         }
 
         ServerLogger::logInfo("Engine with ID \'%s\' removed from manager.", engineId.c_str());
+
+        // Remove model from configuration file
+        removeModelFromConfig(engineId);
 
         // Notify autoscaling thread
         {
@@ -770,6 +835,10 @@ namespace kolosal
         }
 
         ServerLogger::logInfo("Successfully registered engine with ID \'%s\' for lazy loading. Model: %s", engineId.c_str(), actualModelPath.c_str());
+        
+        // Save model to configuration file
+        saveModelToConfig(engineId, modelPath, loadParams, mainGpuId, engineType, false);
+        
         return true;
     }
 
@@ -865,80 +934,141 @@ namespace kolosal
         }
     }
 
-    std::string NodeManager::findPluginsDirectory()
+    bool NodeManager::reconfigureEngines(const std::vector<InferenceEngineConfig>& engines)
     {
-        std::vector<std::string> searchPaths;
-        
-        // First, try to get the executable directory
-#ifdef _WIN32
-        char exePath[MAX_PATH];
-        if (GetModuleFileNameA(NULL, exePath, MAX_PATH) != 0)
+        if (!inferenceLoader_)
         {
-            std::string executablePath = exePath;
-            size_t lastSlash = executablePath.find_last_of("\\/");
-            if (lastSlash != std::string::npos)
-            {
-                searchPaths.push_back(executablePath.substr(0, lastSlash));
-            }
+            ServerLogger::logError("InferenceLoader not initialized");
+            return false;
         }
-#else
-        char exePath[PATH_MAX];
-        ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
-        if (len != -1)
+
+        ServerLogger::logInfo("Reconfiguring inference engines with %zu engine(s)", engines.size());
+        
+        if (!inferenceLoader_->configureEngines(engines))
         {
-            exePath[len] = '\0';
-            std::string executablePath = exePath;
-            size_t lastSlash = executablePath.find_last_of('/');
-            if (lastSlash != std::string::npos)
-            {
-                searchPaths.push_back(executablePath.substr(0, lastSlash));
-            }
+            ServerLogger::logError("Failed to reconfigure inference engines");
+            return false;
         }
-#endif
-        
-        // Add current working directory as fallback
-        searchPaths.push_back(".");
-        
-        // Add common installation paths on Linux
-#ifndef _WIN32
-        searchPaths.push_back("/usr/lib");
-        searchPaths.push_back("/usr/local/lib");
-#endif
-        
-        // Check each path for inference engine libraries
-        for (const std::string& path : searchPaths)
+
+        auto availableEngines = inferenceLoader_->getAvailableEngines();
+        ServerLogger::logInfo("Successfully reconfigured %zu inference engines:", availableEngines.size());
+        for (const auto &engine : availableEngines)
         {
-            if (!std::filesystem::exists(path))
-                continue;
-                
-            try
+            ServerLogger::logInfo("  - %s: %s", engine.name.c_str(), engine.description.c_str());
+        }
+
+        return true;
+    }
+
+    bool NodeManager::saveModelToConfig(const std::string& engineId, const std::string& modelPath, 
+                                      const LoadingParameters& loadParams, int mainGpuId, 
+                                      const std::string& inferenceEngine, bool loadImmediately)
+    {
+        try
+        {
+            auto &config = ServerConfig::getInstance();
+            
+            // Check if model already exists in config to avoid duplicates
+            bool modelExistsInConfig = false;
+            for (const auto &existingModel : config.models)
             {
-                for (const auto& entry : std::filesystem::directory_iterator(path))
+                if (existingModel.id == engineId)
                 {
-                    if (entry.is_regular_file())
+                    modelExistsInConfig = true;
+                    ServerLogger::logInfo("Model '%s' already exists in configuration, updating it", engineId.c_str());
+                    break;
+                }
+            }
+            
+            if (!modelExistsInConfig)
+            {
+                // Create new model config
+                ModelConfig modelConfig;
+                modelConfig.id = engineId;
+                modelConfig.path = modelPath;
+                modelConfig.loadImmediately = loadImmediately;
+                modelConfig.mainGpuId = mainGpuId;
+                modelConfig.inferenceEngine = inferenceEngine;
+                modelConfig.loadParams = loadParams;
+                
+                config.models.push_back(modelConfig);
+                ServerLogger::logInfo("Added model '%s' to configuration", engineId.c_str());
+            }
+            else
+            {
+                // Update existing model config
+                for (auto &existingModel : config.models)
+                {
+                    if (existingModel.id == engineId)
                     {
-                        std::string filename = entry.path().filename().string();
-                        
-                        // Check for inference engine libraries
-                        if ((filename.find("llama-") == 0 && filename.substr(filename.size() - std::string(LIBRARY_EXTENSION).size()) == LIBRARY_EXTENSION) ||
-                            (filename.find("libllama-") == 0 && filename.substr(filename.size() - std::string(LIBRARY_EXTENSION).size()) == LIBRARY_EXTENSION))
-                        {
-                            ServerLogger::logInfo("Found inference engines in: %s", path.c_str());
-                            return path;
-                        }
+                        existingModel.path = modelPath;
+                        existingModel.loadImmediately = loadImmediately;
+                        existingModel.mainGpuId = mainGpuId;
+                        existingModel.inferenceEngine = inferenceEngine;
+                        existingModel.loadParams = loadParams;
+                        ServerLogger::logInfo("Updated model '%s' in configuration", engineId.c_str());
+                        break;
                     }
                 }
             }
-            catch (const std::exception& e)
+            
+            // Save the updated configuration
+            std::string configFile = "config.yaml"; // Default config file
+            if (!config.saveToFile(configFile))
             {
-                ServerLogger::logWarning("Error scanning directory %s: %s", path.c_str(), e.what());
-                continue;
+                ServerLogger::logWarning("Failed to save configuration to file for model '%s'", engineId.c_str());
+                return false;
+            }
+            
+            ServerLogger::logInfo("Successfully saved model '%s' to configuration file", engineId.c_str());
+            return true;
+        }
+        catch (const std::exception &ex)
+        {
+            ServerLogger::logError("Exception while saving model '%s' to config: %s", engineId.c_str(), ex.what());
+            return false;
+        }
+    }
+
+    bool NodeManager::removeModelFromConfig(const std::string& engineId)
+    {
+        try
+        {
+            auto &config = ServerConfig::getInstance();
+            
+            // Find and remove the model from config
+            auto it = std::find_if(config.models.begin(), config.models.end(),
+                                   [&engineId](const ModelConfig &model) {
+                                       return model.id == engineId;
+                                   });
+            
+            if (it != config.models.end())
+            {
+                config.models.erase(it);
+                ServerLogger::logInfo("Removed model '%s' from configuration", engineId.c_str());
+                
+                // Save the updated configuration
+                std::string configFile = "config.yaml"; // Default config file
+                if (!config.saveToFile(configFile))
+                {
+                    ServerLogger::logWarning("Failed to save configuration to file after removing model '%s'", engineId.c_str());
+                    return false;
+                }
+                
+                ServerLogger::logInfo("Successfully updated configuration file after removing model '%s'", engineId.c_str());
+                return true;
+            }
+            else
+            {
+                ServerLogger::logInfo("Model '%s' was not found in configuration", engineId.c_str());
+                return true; // Not an error if model wasn't in config
             }
         }
-        
-        // If no engines found, return current directory as fallback
-        ServerLogger::logWarning("No inference engines found in any search path, using current directory");
-        return ".";
+        catch (const std::exception &ex)
+        {
+            ServerLogger::logError("Exception while removing model '%s' from config: %s", engineId.c_str(), ex.what());
+            return false;
+        }
     }
 
 } // namespace kolosal

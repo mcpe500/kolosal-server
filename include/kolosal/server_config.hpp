@@ -27,6 +27,21 @@ struct ModelConfig {
 };
 
 /**
+ * @brief Configuration for an inference engine
+ */
+struct InferenceEngineConfig {
+    std::string name;                  // Engine name (e.g., "llama-cpu", "llama-cuda")
+    std::string library_path;          // Path to the shared library
+    std::string version = "1.0.0";     // Engine version
+    std::string description;           // Human-readable description
+    bool load_on_startup = true;       // Whether to load the engine at server startup
+    
+    InferenceEngineConfig() = default;
+    InferenceEngineConfig(const std::string& engineName, const std::string& libPath, const std::string& desc = "")
+        : name(engineName), library_path(libPath), description(desc) {}
+};
+
+/**
  * @brief Authentication configuration
  */
 struct AuthConfig {
@@ -73,6 +88,12 @@ struct KOLOSAL_SERVER_API ServerConfig {    // Basic server settings
     
     // Models to load at startup
     std::vector<ModelConfig> models;
+    
+    // Inference engines to make available
+    std::vector<InferenceEngineConfig> inferenceEngines;
+    
+    // Default inference engine
+    std::string defaultInferenceEngine;
 #pragma warning(pop)
     
     // Authentication configuration

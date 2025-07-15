@@ -247,6 +247,18 @@ namespace kolosal
             }
         }
 
+        // Apply default inference engine to models that don't have one specified
+        if (!defaultInferenceEngine.empty())
+        {
+            for (auto &model : models)
+            {
+                if (model.inferenceEngine.empty() || model.inferenceEngine == "llama-cpu")
+                {
+                    model.inferenceEngine = defaultInferenceEngine;
+                }
+            }
+        }
+
         return validate();
     }
 
@@ -407,6 +419,50 @@ namespace kolosal
                 }
             }
 
+            // Load inference engines
+            if (config["inference_engines"])
+            {
+                inferenceEngines.clear();
+                for (const auto &engineConfig : config["inference_engines"])
+                {
+                    InferenceEngineConfig engine;
+                    if (engineConfig["name"])
+                        engine.name = engineConfig["name"].as<std::string>();
+                    if (engineConfig["library_path"])
+                        engine.library_path = engineConfig["library_path"].as<std::string>();
+                    if (engineConfig["version"])
+                        engine.version = engineConfig["version"].as<std::string>();
+                    if (engineConfig["description"])
+                        engine.description = engineConfig["description"].as<std::string>();
+                    if (engineConfig["load_on_startup"])
+                        engine.load_on_startup = engineConfig["load_on_startup"].as<bool>();
+
+                    // Only add engines with valid name and library path
+                    if (!engine.name.empty() && !engine.library_path.empty())
+                    {
+                        inferenceEngines.push_back(engine);
+                    }
+                }
+            }
+
+            // Load default inference engine
+            if (config["default_inference_engine"])
+            {
+                defaultInferenceEngine = config["default_inference_engine"].as<std::string>();
+            }
+
+            // Apply default inference engine to models that don't have one specified
+            if (!defaultInferenceEngine.empty())
+            {
+                for (auto &model : models)
+                {
+                    if (model.inferenceEngine.empty() || model.inferenceEngine == "llama-cpu")
+                    {
+                        model.inferenceEngine = defaultInferenceEngine;
+                    }
+                }
+            }
+
             // Load feature flags
             if (config["features"])
             {
@@ -465,6 +521,7 @@ namespace kolosal
                 modelNode["path"] = model.path;
                 modelNode["load_immediately"] = model.loadImmediately;
                 modelNode["main_gpu_id"] = model.mainGpuId;
+                modelNode["inference_engine"] = model.inferenceEngine;
                 modelNode["load_params"]["n_ctx"] = model.loadParams.n_ctx;
                 modelNode["load_params"]["n_keep"] = model.loadParams.n_keep;
                 modelNode["load_params"]["use_mmap"] = model.loadParams.use_mmap;
@@ -477,6 +534,25 @@ namespace kolosal
                 modelNode["load_params"]["n_ubatch"] = model.loadParams.n_ubatch;
                 config["models"].push_back(modelNode);
             }
+
+            // Inference engines
+            for (const auto &engine : inferenceEngines)
+            {
+                YAML::Node engineNode;
+                engineNode["name"] = engine.name;
+                engineNode["library_path"] = engine.library_path;
+                engineNode["version"] = engine.version;
+                engineNode["description"] = engine.description;
+                engineNode["load_on_startup"] = engine.load_on_startup;
+                config["inference_engines"].push_back(engineNode);
+            }
+
+            // Default inference engine
+            if (!defaultInferenceEngine.empty())
+            {
+                config["default_inference_engine"] = defaultInferenceEngine;
+            }
+
             // Feature flags
             config["features"]["health_check"] = enableHealthCheck;
             config["features"]["metrics"] = enableMetrics;
@@ -617,6 +693,23 @@ namespace kolosal
         if (auth.cors.enabled)
         {
             std::cout << "    Origins: " << auth.cors.allowedOrigins.size() << " configured" << std::endl;
+        }
+
+        std::cout << "\nInference Engines:" << std::endl;
+        if (inferenceEngines.empty())
+        {
+            std::cout << "  No inference engines configured" << std::endl;
+        }
+        else
+        {
+            for (const auto &engine : inferenceEngines)
+            {
+                std::cout << "  " << engine.name << ":" << std::endl;
+                std::cout << "    Library: " << engine.library_path << std::endl;
+                std::cout << "    Version: " << engine.version << std::endl;
+                std::cout << "    Description: " << engine.description << std::endl;
+                std::cout << "    Load on startup: " << (engine.load_on_startup ? "Yes" : "No") << std::endl;
+            }
         }
 
         std::cout << "\nModels:" << std::endl;

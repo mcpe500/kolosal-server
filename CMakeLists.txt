@@ -24,6 +24,11 @@ if (MINGW)
     add_compile_definitions(_WIN32_WINNT=0x602)
 endif()
 
+if (WIN32)
+    add_compile_definitions(WIN32_LEAN_AND_MEAN)
+    add_compile_definitions(NOMINMAX)
+endif()
+
 # Print UCM flags for debugging
 ucm_print_flags()
 
@@ -53,13 +58,12 @@ set(SOURCES
     src/download_manager.cpp
     src/inference_loader.cpp
     src/inference_interface_impl.cpp
+    src/gpu_detection.cpp
 
-    src/routes/chat_completion_route.cpp
+    src/routes/oai_completions_route.cpp
     src/routes/completion_route.cpp
-    src/routes/inference_completion_route.cpp
-    src/routes/inference_chat_completion_route.cpp
     src/routes/models_route.cpp
-    src/routes/list_inference_engines_route.cpp
+    src/routes/engines_route.cpp
     src/routes/health_status_route.cpp    
     src/routes/auth_config_route.cpp    
     src/routes/server_logs_route.cpp    
@@ -222,7 +226,7 @@ target_link_libraries(kolosal_server PRIVATE Threads::Threads)
 
 # Platform-specific link libraries for the main library.
 if(WIN32)
-    target_link_libraries(kolosal_server PRIVATE ws2_32)
+    target_link_libraries(kolosal_server PRIVATE ws2_32 wbemuuid)
 else()
     # For Linux, link with required system libraries
     target_link_libraries(kolosal_server PRIVATE dl rt pthread)

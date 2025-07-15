@@ -2,6 +2,7 @@
 #include "kolosal/download_utils.hpp"
 #include "kolosal/logger.hpp"
 #include "kolosal/server_api.hpp"
+#include "kolosal/server_config.hpp"
 #include "kolosal/node_manager.h"
 #include "inference_interface.h"
 #include <algorithm>
@@ -514,8 +515,46 @@ namespace kolosal
 
             if (success)
             {
-                progress->status = "engine_created";
-                ServerLogger::logInfo("Engine created successfully for model: %s", progress->model_id.c_str());
+                // Verify the engine is actually functional before updating config
+                bool engineFunctional = false;
+                try
+                {
+                    auto [exists, isLoaded] = nodeManager.getEngineStatus(progress->engine_params->model_id);
+                    engineFunctional = exists && (progress->engine_params->load_immediately ? isLoaded : true);
+                }
+                catch (const std::exception &ex)
+                {
+                    ServerLogger::logWarning("Failed to verify engine status for downloaded model '%s': %s", 
+                                           progress->engine_params->model_id.c_str(), ex.what());
+                    engineFunctional = false;
+                }
+
+                if (engineFunctional)
+                {
+                    progress->status = "engine_created";
+                    ServerLogger::logInfo("Engine created successfully for model: %s", progress->model_id.c_str());
+                }
+                else
+                {
+                    // Engine was created but is not functional
+                    progress->status = "engine_creation_failed";
+                    progress->error_message = "Engine was created but failed functionality check";
+                    ServerLogger::logError("Downloaded engine for model '%s' was created but is not functional", 
+                                         progress->engine_params->model_id.c_str());
+                    
+                    // Try to remove the non-functional engine
+                    try
+                    {
+                        nodeManager.removeEngine(progress->engine_params->model_id);
+                        ServerLogger::logInfo("Removed non-functional downloaded engine for model '%s'", 
+                                             progress->engine_params->model_id.c_str());
+                    }
+                    catch (const std::exception &ex)
+                    {
+                        ServerLogger::logWarning("Failed to remove non-functional downloaded engine for model '%s': %s", 
+                                               progress->engine_params->model_id.c_str(), ex.what());
+                    }
+                }
             }
             else
             {

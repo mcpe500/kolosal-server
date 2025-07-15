@@ -117,7 +117,38 @@ public:
      */
     std::string handleUrlDownload(const std::string& engineId, const std::string& modelPath);
 
+    /**
+     * @brief Reconfigure inference engines with updated configuration
+     * 
+     * @param engines Vector of updated engine configurations
+     * @return True if engines were reconfigured successfully
+     */
+    bool reconfigureEngines(const std::vector<InferenceEngineConfig>& engines);
+
 private:
+    /**
+     * @brief Saves a model configuration to the config file
+     * 
+     * @param engineId The engine ID
+     * @param modelPath The model path
+     * @param loadParams Loading parameters
+     * @param mainGpuId Main GPU ID
+     * @param inferenceEngine Inference engine type
+     * @param loadImmediately Whether to load immediately
+     * @return True if config was saved successfully
+     */
+    bool saveModelToConfig(const std::string& engineId, const std::string& modelPath, 
+                          const LoadingParameters& loadParams, int mainGpuId, 
+                          const std::string& inferenceEngine, bool loadImmediately);
+
+    /**
+     * @brief Removes a model configuration from the config file
+     * 
+     * @param engineId The engine ID to remove
+     * @return True if config was updated successfully
+     */
+    bool removeModelFromConfig(const std::string& engineId);
+
     struct EngineRecord {
         std::shared_ptr<IInferenceEngine> engine;
         std::string modelPath;
@@ -187,13 +218,6 @@ private:
      * Periodically checks for idle engines and unloads them.
      */
     void autoscalingLoop();
-
-    /**
-     * @brief Finds the best directory to search for inference engine plugins.
-     * 
-     * @return Path to the plugins directory
-     */
-    std::string findPluginsDirectory();
 
     /**
      * @brief Validates if a model file exists (either local path or URL).
