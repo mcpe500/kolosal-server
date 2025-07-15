@@ -15,5 +15,3 @@ out/
 build/
 models/**
 downloads/**
-.vs
-build*

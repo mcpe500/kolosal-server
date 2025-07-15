@@ -41,7 +41,8 @@ namespace kolosal
                                       model_id.c_str(), existing_progress->status.c_str());
                 download_futures_.erase(model_id);
                 downloads_.erase(existing_it);
-            }        } // Create new download progress entry
+            }
+        } // Create new download progress entry
         auto progress = std::make_shared<DownloadProgress>(model_id, url, local_path);
         downloads_[model_id] = progress;
 
@@ -72,7 +73,7 @@ namespace kolosal
             progress->percentage = 100.0;
             progress->end_time = std::chrono::system_clock::now();
             downloads_[model_id] = progress;
-            
+
             return true;
         }
 
@@ -96,8 +97,9 @@ namespace kolosal
                                       model_id.c_str(), existing_progress->status.c_str());
                 download_futures_.erase(model_id);
                 downloads_.erase(existing_it);
-            }        } 
-        
+            }
+        }
+
         // Create new download progress entry with engine parameters
         auto progress = std::make_shared<DownloadProgress>(model_id, url, local_path);
         progress->engine_params = std::make_unique<EngineCreationParams>(engine_params);
@@ -334,12 +336,13 @@ namespace kolosal
                             std::lock_guard<std::mutex> lock(downloads_mutex_);
                             progress->status = "already_complete";
                             progress->total_bytes = local_size;
-                            progress->downloaded_bytes = local_size;                            progress->percentage = 100.0;
+                            progress->downloaded_bytes = local_size;
+                            progress->percentage = 100.0;
                             progress->end_time = std::chrono::system_clock::now();
 
                             // File already downloaded - only log at debug level to reduce verbosity
                             ServerLogger::logDebug("File already fully downloaded for model %s: %zu bytes (skipping download)",
-                                                  progress->model_id.c_str(), local_size);
+                                                   progress->model_id.c_str(), local_size);
 
                             // If engine parameters are provided, create the engine
                             if (progress->engine_params)
@@ -361,21 +364,21 @@ namespace kolosal
             auto progressCallback = [progress, &progress_was_reported](size_t downloaded, size_t total, double percentage)
             {
                 std::lock_guard<std::mutex> lock(const_cast<DownloadManager &>(getInstance()).downloads_mutex_);
-                
+
                 // Handle pause by checking the pause flag and waiting
                 while (progress->paused && progress->status == "paused" && !progress->cancelled)
                 {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
-                
+
                 // If cancelled while paused, return early
                 if (progress->cancelled)
                 {
                     return;
                 }
-                
+
                 progress_was_reported = true;
-                
+
                 // Validate percentage value before storing
                 if (percentage < 0.0 || percentage > 100.0 || std::isnan(percentage) || std::isinf(percentage))
                 {
@@ -387,7 +390,7 @@ namespace kolosal
                         percentage = 0.0;
                     }
                 }
-                  progress->downloaded_bytes = downloaded;
+                progress->downloaded_bytes = downloaded;
                 progress->total_bytes = total;
                 progress->percentage = percentage;
 
@@ -397,14 +400,14 @@ namespace kolosal
                 if (last_logged_milestone[progress->model_id] != current_milestone && current_milestone > 0)
                 {
                     last_logged_milestone[progress->model_id] = current_milestone;
-                    ServerLogger::logInfo("Download progress for %s: %d%% (%zu/%zu bytes)",                                          progress->model_id.c_str(), current_milestone, downloaded, total);
+                    ServerLogger::logInfo("Download progress for %s: %d%% (%zu/%zu bytes)", progress->model_id.c_str(), current_milestone, downloaded, total);
                 }
             };
-            
+
             // Perform the actual download with cancellation support
             ServerLogger::logInfo("Starting download for model: %s", progress->model_id.c_str());
             DownloadResult result = download_file_with_cancellation_and_resume(progress->url, progress->local_path, progressCallback, &(progress->cancelled), true);
-            
+
             {
                 std::lock_guard<std::mutex> lock(downloads_mutex_);
 
@@ -423,7 +426,7 @@ namespace kolosal
                     progress->status = "completed";
                     progress->total_bytes = result.total_bytes;
                     progress->downloaded_bytes = result.total_bytes;
-                    progress->percentage = 100.0;                    // Check if this was a file that was already complete (no progress reported)
+                    progress->percentage = 100.0; // Check if this was a file that was already complete (no progress reported)
                     if (!progress_was_reported && result.total_bytes > 0)
                     {
                         ServerLogger::logInfo("File was already complete for model: %s (no download needed)", progress->model_id.c_str());
@@ -488,27 +491,40 @@ namespace kolosal
 
             // Use the downloaded file path as the model path
             std::string actualModelPath = progress->local_path;
-            
-            bool success;
-            if (progress->engine_params->load_immediately)
+            bool success = false;
+
+            if (progress->engine_params->model_type == "embedding")
             {
-                // Load immediately - use addEngine
-                success = nodeManager.addEngine(
+                // For embedding engines, always use addEmbeddingEngine
+                success = nodeManager.addEmbeddingEngine(
                     progress->engine_params->model_id,
                     actualModelPath.c_str(),
                     progress->engine_params->loading_params,
-                    progress->engine_params->main_gpu_id,
-                    progress->engine_params->inference_engine);
+                    progress->engine_params->main_gpu_id);
             }
             else
             {
-                // Lazy loading - use registerEngine
-                success = nodeManager.registerEngine(
-                    progress->engine_params->model_id,
-                    actualModelPath.c_str(),
-                    progress->engine_params->loading_params,
-                    progress->engine_params->main_gpu_id,
-                    progress->engine_params->inference_engine);
+                // For LLM engines, check loading preference
+                if (progress->engine_params->load_immediately)
+                {
+                    // Load immediately - use addEngine
+                    success = nodeManager.addEngine(
+                        progress->engine_params->model_id,
+                        actualModelPath.c_str(),
+                        progress->engine_params->loading_params,
+                        progress->engine_params->main_gpu_id,
+                        progress->engine_params->inference_engine);
+                }
+                else
+                {
+                    // Lazy loading - use registerEngine
+                    success = nodeManager.registerEngine(
+                        progress->engine_params->model_id,
+                        actualModelPath.c_str(),
+                        progress->engine_params->loading_params,
+                        progress->engine_params->main_gpu_id,
+                        progress->engine_params->inference_engine);
+                }
             }
 
             std::lock_guard<std::mutex> lock(downloads_mutex_);
@@ -574,16 +590,17 @@ namespace kolosal
             ServerLogger::logError("Exception during engine creation for model %s: %s", progress->model_id.c_str(), ex.what());
         }
     }
-
+    
     // Add a helper method for startup model loading
     bool DownloadManager::loadModelAtStartup(const std::string &model_id, const std::string &model_path,
-                                             const LoadingParameters &load_params, int main_gpu_id, bool load_immediately,
+                                             const std::string &model_type, const LoadingParameters &load_params,
+                                             int main_gpu_id, bool load_immediately,
                                              const std::string& inference_engine)
     {
         // First check if an engine with this ID already exists
         auto &nodeManager = ServerAPI::instance().getNodeManager();
         auto [engineExists, engineLoaded] = nodeManager.getEngineStatus(model_id);
-        
+
         if (engineExists)
         {
             ServerLogger::logInfo("Engine '%s' already exists during startup, skipping load", model_id.c_str());
@@ -603,11 +620,10 @@ namespace kolosal
                 if (can_resume_download(model_path, download_path))
                 {
                     ServerLogger::logInfo("Found incomplete download for startup model '%s', will resume: %s",
-                                          model_id.c_str(), download_path.c_str());
-
-                    // Create engine creation parameters for resume
+                                          model_id.c_str(), download_path.c_str());                    // Create engine creation parameters for resume
                     EngineCreationParams engine_params;
                     engine_params.model_id = model_id;
+                    engine_params.model_type = model_type;
                     engine_params.load_immediately = load_immediately;
                     engine_params.main_gpu_id = main_gpu_id;
                     engine_params.loading_params = load_params;
@@ -619,27 +635,38 @@ namespace kolosal
                 else
                 {
                     ServerLogger::logInfo("Model file already exists locally for startup model '%s': %s",
-                                          model_id.c_str(), download_path.c_str());
-
-                    // Load directly using NodeManager
+                                          model_id.c_str(), download_path.c_str());                    // Load directly using NodeManager
                     auto &node_manager = ServerAPI::instance().getNodeManager();
                     if (load_immediately)
                     {
-                        return node_manager.addEngine(model_id, download_path.c_str(), load_params, main_gpu_id, inference_engine);
+                        if (model_type == "embedding")
+                        {
+                            return node_manager.addEmbeddingEngine(model_id, download_path.c_str(), load_params, main_gpu_id);
+                        }
+                        else
+                        {
+                            return node_manager.addEngine(model_id, download_path.c_str(), load_params, main_gpu_id, inference_engine);
+                        }
                     }
                     else
                     {
-                        return node_manager.registerEngine(model_id, download_path.c_str(), load_params, main_gpu_id, inference_engine);
+                        if (model_type == "embedding")
+                        {
+                            return node_manager.registerEmbeddingEngine(model_id, download_path.c_str(), load_params, main_gpu_id);
+                        }
+                        else
+                        {
+                            return node_manager.registerEngine(model_id, download_path.c_str(), load_params, main_gpu_id, inference_engine);
+                        }
                     }
                 }
             }
             else
             {
-                ServerLogger::logInfo("Starting startup download for model '%s' from URL: %s", model_id.c_str(), model_path.c_str());
-
-                // Create engine creation parameters
+                ServerLogger::logInfo("Starting startup download for model '%s' from URL: %s", model_id.c_str(), model_path.c_str());                // Create engine creation parameters
                 EngineCreationParams engine_params;
                 engine_params.model_id = model_id;
+                engine_params.model_type = model_type;
                 engine_params.load_immediately = load_immediately;
                 engine_params.main_gpu_id = main_gpu_id;
                 engine_params.loading_params = load_params;
@@ -655,11 +682,25 @@ namespace kolosal
             auto &node_manager = ServerAPI::instance().getNodeManager();
             if (load_immediately)
             {
-                return node_manager.addEngine(model_id, model_path.c_str(), load_params, main_gpu_id, inference_engine);
+                if (model_type == "embedding")
+                {
+                    return node_manager.addEmbeddingEngine(model_id, model_path.c_str(), load_params, main_gpu_id);
+                }
+                else
+                {
+                    return node_manager.addEngine(model_id, model_path.c_str(), load_params, main_gpu_id, inference_engine);
+                }
             }
             else
             {
-                return node_manager.registerEngine(model_id, model_path.c_str(), load_params, main_gpu_id, inference_engine);
+                if (model_type == "embedding")
+                {
+                    return node_manager.registerEmbeddingEngine(model_id, model_path.c_str(), load_params, main_gpu_id);
+                }
+                else
+                {
+                    return node_manager.registerEngine(model_id, model_path.c_str(), load_params, main_gpu_id, inference_engine);
+                }
             }
         }
     }

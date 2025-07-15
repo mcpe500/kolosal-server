@@ -2,18 +2,27 @@
 #include "kolosal/server.hpp"
 #include "kolosal/routes/oai_completions_route.hpp"
 #include "kolosal/routes/completion_route.hpp"
+#include "kolosal/routes/embedding_route.hpp"
 #include "kolosal/routes/models_route.hpp"
 #include "kolosal/routes/engines_route.hpp"
 #include "kolosal/routes/health_status_route.hpp"
 #include "kolosal/routes/auth_config_route.hpp"
 #include "kolosal/routes/server_logs_route.hpp"
 
+#include "kolosal/routes/parse_pdf_route.hpp"
+#include "kolosal/routes/parse_docx_route.hpp"
+#include "kolosal/routes/parse_html_route.hpp"
+#include "kolosal/routes/add_documents_route.hpp"
+#include "kolosal/routes/remove_documents_route.hpp"
+#include "kolosal/routes/retrieve_route.hpp"
+#include "kolosal/routes/internet_search_route.hpp"
 #include "kolosal/routes/downloads_route.hpp"
 #include "kolosal/download_manager.hpp"
 #include "kolosal/node_manager.h"
 #include "kolosal/logger.hpp"
 #include <memory>
 #include <stdexcept>
+#include <thread>
 
 namespace kolosal
 {
@@ -60,18 +69,25 @@ namespace kolosal
             {
                 ServerLogger::logError("Failed to initialize server");
                 return false;
-            }            
+            }
             
             // Register routes
             ServerLogger::logInfo("Registering routes");
             pImpl->server->addRoute(std::make_unique<OaiCompletionsRoute>());
             pImpl->server->addRoute(std::make_unique<CompletionRoute>());
+            pImpl->server->addRoute(std::make_unique<EmbeddingRoute>());
             pImpl->server->addRoute(std::make_unique<ModelsRoute>());
             pImpl->server->addRoute(std::make_unique<EnginesRoute>());
             pImpl->server->addRoute(std::make_unique<HealthStatusRoute>());
             pImpl->server->addRoute(std::make_unique<AuthConfigRoute>());
             pImpl->server->addRoute(std::make_unique<ServerLogsRoute>());
             pImpl->server->addRoute(std::make_unique<DownloadsRoute>());
+            pImpl->server->addRoute(std::make_unique<ParsePDFRoute>());
+            pImpl->server->addRoute(std::make_unique<ParseDOCXRoute>());            
+            pImpl->server->addRoute(std::make_unique<ParseHtmlRoute>());
+            pImpl->server->addRoute(std::make_unique<AddDocumentsRoute>());
+            pImpl->server->addRoute(std::make_unique<RemoveDocumentsRoute>());
+            pImpl->server->addRoute(std::make_unique<RetrieveRoute>());
 
             ServerLogger::logInfo("Routes registered successfully");
 
@@ -112,6 +128,30 @@ namespace kolosal
             pImpl->server.reset();
             ServerLogger::logInfo("Server shutdown complete");
         }
+    }
+
+    void ServerAPI::enableMetrics()
+    {
+        if (!pImpl->server)
+        {
+            throw std::runtime_error("Server not initialized - call init() first");
+        }
+
+        ServerLogger::logInfo("Metrics functionality not yet implemented");
+        // TODO: Add metrics routes when they are implemented
+        // pImpl->server->addRoute(std::make_unique<SystemMetricsRoute>());
+        // pImpl->server->addRoute(std::make_unique<CompletionMetricsRoute>());
+    }
+
+    void ServerAPI::enableSearch(const SearchConfig &config)
+    {
+        if (!pImpl->server)
+        {
+            throw std::runtime_error("Server not initialized - call init() first");
+        }
+
+        ServerLogger::logInfo("Enabling internet search endpoint");
+        pImpl->server->addRoute(std::make_unique<InternetSearchRoute>(config));
     }
 
     NodeManager &ServerAPI::getNodeManager()

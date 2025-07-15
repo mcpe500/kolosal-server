@@ -5,6 +5,7 @@
 #include <chrono>
 
 #include "export.hpp"
+#include "server_config.hpp"
 
 namespace kolosal
 {
@@ -29,6 +30,10 @@ namespace kolosal
         ServerAPI &operator=(ServerAPI &&) = delete;        // Initialize and start server
         bool init(const std::string &port, const std::string &host = "0.0.0.0", std::chrono::seconds idleTimeout = std::chrono::seconds(300));
         void shutdown();
+        
+        // Feature management
+        void enableMetrics();
+        void enableSearch(const SearchConfig& config);
 
         // NodeManager access
         NodeManager &getNodeManager();
