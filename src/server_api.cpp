@@ -17,6 +17,7 @@
 #include "kolosal/routes/retrieve_route.hpp"
 #include "kolosal/routes/internet_search_route.hpp"
 #include "kolosal/routes/downloads_route.hpp"
+#include "kolosal/routes/chunking_route.hpp"
 #include "kolosal/download_manager.hpp"
 #include "kolosal/node_manager.h"
 #include "kolosal/logger.hpp"
@@ -88,6 +89,7 @@ namespace kolosal
             pImpl->server->addRoute(std::make_unique<AddDocumentsRoute>());
             pImpl->server->addRoute(std::make_unique<RemoveDocumentsRoute>());
             pImpl->server->addRoute(std::make_unique<RetrieveRoute>());
+            pImpl->server->addRoute(std::make_unique<ChunkingRoute>());
 
             ServerLogger::logInfo("Routes registered successfully");
 
