@@ -81,6 +81,14 @@ set(SOURCES
 add_library(kolosal_server SHARED ${SOURCES})
 target_compile_definitions(kolosal_server PRIVATE KOLOSAL_SERVER_BUILD)
 
+# Set macOS-specific properties for the shared library
+if(APPLE)
+    set_target_properties(kolosal_server PROPERTIES
+        MACOSX_RPATH TRUE
+        INSTALL_NAME_DIR "@rpath"
+    )
+endif()
+
 # Create executable
 add_executable(kolosal_server_exe src/main.cpp)
 target_link_libraries(kolosal_server_exe PRIVATE kolosal_server)
@@ -116,6 +124,12 @@ elseif(APPLE)
         "$<TARGET_FILE:kolosal_server>"
         "$<TARGET_FILE_DIR:kolosal_server_exe>/"
         COMMENT "Copying libkolosal_server.dylib to executable directory"
+    )
+    
+    # Fix the install name of the dylib to use @rpath
+    add_custom_command(TARGET kolosal_server POST_BUILD
+        COMMAND install_name_tool -id "@rpath/libkolosal_server.dylib" "$<TARGET_FILE:kolosal_server>"
+        COMMENT "Setting install name for libkolosal_server.dylib"
     )
 endif()
 
@@ -342,16 +356,28 @@ elseif(APPLE)
     
     # Set RPATH for proper library loading
     set_target_properties(kolosal_server_exe PROPERTIES
-        INSTALL_RPATH "@executable_path;@executable_path/../lib;/usr/local/lib;/opt/homebrew/lib"
+        INSTALL_RPATH "@executable_path"
         BUILD_WITH_INSTALL_RPATH TRUE
         INSTALL_RPATH_USE_LINK_PATH TRUE
+        MACOSX_RPATH TRUE
     )
     
+    # Also add the other paths separately if needed
+    set_property(TARGET kolosal_server_exe APPEND PROPERTY INSTALL_RPATH "@executable_path/../lib")
+    set_property(TARGET kolosal_server_exe APPEND PROPERTY INSTALL_RPATH "/usr/local/lib")
+    set_property(TARGET kolosal_server_exe APPEND PROPERTY INSTALL_RPATH "/opt/homebrew/lib")
+    
     set_target_properties(kolosal_server PROPERTIES
-        INSTALL_RPATH "@loader_path;@loader_path/../lib;/usr/local/lib;/opt/homebrew/lib"
+        INSTALL_RPATH "@loader_path"
         BUILD_WITH_INSTALL_RPATH TRUE
         INSTALL_RPATH_USE_LINK_PATH TRUE
+        MACOSX_RPATH TRUE
     )
+    
+    # Also add the other paths separately for the library
+    set_property(TARGET kolosal_server APPEND PROPERTY INSTALL_RPATH "@loader_path/../lib")
+    set_property(TARGET kolosal_server APPEND PROPERTY INSTALL_RPATH "/usr/local/lib")
+    set_property(TARGET kolosal_server APPEND PROPERTY INSTALL_RPATH "/opt/homebrew/lib")
     
 endif()
 
