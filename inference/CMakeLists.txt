@@ -216,7 +216,7 @@ elseif(USE_METAL)
         
         # Add Metal-specific compiler flags
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-            set(METAL_ARCH_FLAGS "-mcpu=apple-m1 -O3")
+            set(METAL_ARCH_FLAGS "-O3")
             message(STATUS "Using ARM64 optimizations for Metal")
         else()
             set(METAL_ARCH_FLAGS "-march=native -O3")
