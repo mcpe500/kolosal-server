@@ -100,7 +100,7 @@ function(copy_dll_to_output target_name dll_path)
     endif()
 endfunction()
 
-# Copy necessary DLLs to the executable directory on Windows
+# Copy necessary libraries to the executable directory
 if(WIN32)
     # Copy the main server DLL
     add_custom_command(TARGET kolosal_server_exe POST_BUILD
@@ -109,7 +109,18 @@ if(WIN32)
         "$<TARGET_FILE_DIR:kolosal_server_exe>/"
         COMMENT "Copying kolosal_server.dll to executable directory"
     )
-    
+elseif(APPLE)
+    # Copy the main server dylib for macOS
+    add_custom_command(TARGET kolosal_server_exe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:kolosal_server>"
+        "$<TARGET_FILE_DIR:kolosal_server_exe>/"
+        COMMENT "Copying libkolosal_server.dylib to executable directory"
+    )
+endif()
+
+# Copy additional libraries for Windows
+if(WIN32)
     # Note: Inference engine DLLs are now loaded at runtime and should be placed
     # in the plugins directory or same directory as the executable manually
     
