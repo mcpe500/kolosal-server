@@ -331,13 +331,13 @@ elseif(APPLE)
     
     # Set RPATH for proper library loading
     set_target_properties(kolosal_server_exe PROPERTIES
-        INSTALL_RPATH "@executable_path:@executable_path/../lib:/usr/local/lib"
+        INSTALL_RPATH "@executable_path;@executable_path/../lib;/usr/local/lib;/opt/homebrew/lib"
         BUILD_WITH_INSTALL_RPATH TRUE
         INSTALL_RPATH_USE_LINK_PATH TRUE
     )
     
     set_target_properties(kolosal_server PROPERTIES
-        INSTALL_RPATH "@loader_path:@loader_path/../lib:/usr/local/lib"
+        INSTALL_RPATH "@loader_path;@loader_path/../lib;/usr/local/lib;/opt/homebrew/lib"
         BUILD_WITH_INSTALL_RPATH TRUE
         INSTALL_RPATH_USE_LINK_PATH TRUE
     )
