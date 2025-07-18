@@ -10,6 +10,10 @@
 #include <winsock2.h>
 #include <windows.h>
 #define LIBRARY_EXTENSION ".dll"
+#elif defined(__APPLE__)
+#include <unistd.h>
+#include <limits.h>
+#define LIBRARY_EXTENSION ".dylib"
 #else
 #include <unistd.h>
 #include <limits.h>
@@ -44,9 +48,44 @@ namespace kolosal
                 // Set default inference engine if none is configured
                 if (config.defaultInferenceEngine.empty() && !availableEngines.empty())
                 {
-                    // Check if system has a dedicated GPU for Vulkan acceleration
-                    bool hasGPU = hasVulkanCapableGPU();
                     std::string preferredEngine;
+                    
+#ifdef __APPLE__
+                    // On Apple systems, prioritize Metal acceleration
+                    ServerLogger::logInfo("Apple system detected. Looking for Metal-accelerated engine...");
+                    for (const auto &engine : availableEngines)
+                    {
+                        if (engine.name == "llama-metal")
+                        {
+                            preferredEngine = engine.name;
+                            ServerLogger::logInfo("Metal acceleration available. Setting default inference engine to: %s", preferredEngine.c_str());
+                            break;
+                        }
+                    }
+                    
+                    // If llama-metal not found, fall back to CPU
+                    if (preferredEngine.empty())
+                    {
+                        for (const auto &engine : availableEngines)
+                        {
+                            if (engine.name == "llama-cpu")
+                            {
+                                preferredEngine = engine.name;
+                                ServerLogger::logInfo("Metal acceleration not available. Using CPU-based engine: %s", preferredEngine.c_str());
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // If still empty, use first available
+                    if (preferredEngine.empty())
+                    {
+                        preferredEngine = availableEngines[0].name;
+                        ServerLogger::logInfo("Using first available engine: %s", preferredEngine.c_str());
+                    }
+#else
+                    // On non-Apple systems, check if system has a dedicated GPU for Vulkan acceleration
+                    bool hasGPU = hasVulkanCapableGPU();
                     
                     if (hasGPU)
                     {
@@ -74,6 +113,7 @@ namespace kolosal
                         preferredEngine = availableEngines[0].name;
                         ServerLogger::logInfo("No dedicated GPU detected. Using CPU-based engine: %s", preferredEngine.c_str());
                     }
+#endif
                     
                     config.defaultInferenceEngine = preferredEngine;
                     ServerLogger::logInfo("Set default inference engine to: %s", config.defaultInferenceEngine.c_str());
@@ -99,7 +139,149 @@ namespace kolosal
         }
         else
         {
-            ServerLogger::logWarning("No inference engines configured. Add inference_engines section to config file.");
+            ServerLogger::logWarning("No inference engines configured. Setting up default engines...");
+            
+            // Set up default inference engines based on platform
+            std::vector<InferenceEngineConfig> defaultEngines;
+            
+#ifdef __APPLE__
+            // On Apple systems, prioritize Metal acceleration
+            ServerLogger::logInfo("Apple system detected. Adding Metal and CPU inference engines...");
+            
+            // Try to find libraries in the build directory
+            std::filesystem::path buildDir = std::filesystem::current_path();
+            auto metalPath = buildDir / "lib" / ("libllama-metal" + std::string(LIBRARY_EXTENSION));
+            auto cpuPath = buildDir / "lib" / ("libllama-cpu" + std::string(LIBRARY_EXTENSION));
+            
+            if (std::filesystem::exists(metalPath))
+            {
+                defaultEngines.emplace_back("llama-metal", metalPath.string(), "Apple Metal GPU acceleration");
+                ServerLogger::logInfo("Added Metal inference engine: %s", metalPath.string().c_str());
+            }
+            
+            if (std::filesystem::exists(cpuPath))
+            {
+                defaultEngines.emplace_back("llama-cpu", cpuPath.string(), "CPU inference engine");
+                ServerLogger::logInfo("Added CPU inference engine: %s", cpuPath.string().c_str());
+            }
+            
+            // If no libraries found in build dir, try system paths
+            if (defaultEngines.empty())
+            {
+                std::vector<std::string> searchPaths = {
+                    "/usr/local/lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    "/usr/local/lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
+                    "./libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    "./libllama-cpu" + std::string(LIBRARY_EXTENSION)
+                };
+                
+                for (const auto& path : searchPaths)
+                {
+                    if (std::filesystem::exists(path))
+                    {
+                        if (path.find("metal") != std::string::npos)
+                        {
+                            defaultEngines.emplace_back("llama-metal", path, "Apple Metal GPU acceleration");
+                            ServerLogger::logInfo("Found Metal inference engine: %s", path.c_str());
+                        }
+                        else if (path.find("cpu") != std::string::npos)
+                        {
+                            defaultEngines.emplace_back("llama-cpu", path, "CPU inference engine");
+                            ServerLogger::logInfo("Found CPU inference engine: %s", path.c_str());
+                        }
+                    }
+                }
+            }
+#else
+            // On non-Apple systems, use existing GPU detection logic
+            ServerLogger::logInfo("Non-Apple system detected. Adding CPU and GPU inference engines...");
+            
+            std::filesystem::path buildDir = std::filesystem::current_path();
+            auto cpuPath = buildDir / "lib" / ("libllama-cpu" + std::string(LIBRARY_EXTENSION));
+            auto vulkanPath = buildDir / "lib" / ("libllama-vulkan" + std::string(LIBRARY_EXTENSION));
+            
+            if (std::filesystem::exists(cpuPath))
+            {
+                defaultEngines.emplace_back("llama-cpu", cpuPath.string(), "CPU inference engine");
+                ServerLogger::logInfo("Added CPU inference engine: %s", cpuPath.string().c_str());
+            }
+            
+            if (std::filesystem::exists(vulkanPath))
+            {
+                defaultEngines.emplace_back("llama-vulkan", vulkanPath.string(), "Vulkan GPU acceleration");
+                ServerLogger::logInfo("Added Vulkan inference engine: %s", vulkanPath.string().c_str());
+            }
+#endif
+            
+            if (!defaultEngines.empty())
+            {
+                // Update the server config with default engines
+                config.inferenceEngines = defaultEngines;
+                
+                // Try to configure the engines
+                if (inferenceLoader_->configureEngines(config.inferenceEngines))
+                {
+                    auto availableEngines = inferenceLoader_->getAvailableEngines();
+                    ServerLogger::logInfo("Configured %zu default inference engines:", availableEngines.size());
+                    
+                    // Set default engine based on platform
+                    if (config.defaultInferenceEngine.empty() && !availableEngines.empty())
+                    {
+                        std::string preferredEngine;
+                        
+#ifdef __APPLE__
+                        // Prefer Metal on Apple systems
+                        for (const auto &engine : availableEngines)
+                        {
+                            if (engine.name == "llama-metal")
+                            {
+                                preferredEngine = engine.name;
+                                break;
+                            }
+                        }
+                        if (preferredEngine.empty())
+                        {
+                            preferredEngine = availableEngines[0].name;
+                        }
+#else
+                        // Prefer GPU acceleration on other systems if available
+                        bool hasGPU = hasVulkanCapableGPU();
+                        if (hasGPU)
+                        {
+                            for (const auto &engine : availableEngines)
+                            {
+                                if (engine.name == "llama-vulkan")
+                                {
+                                    preferredEngine = engine.name;
+                                    break;
+                                }
+                            }
+                        }
+                        if (preferredEngine.empty())
+                        {
+                            preferredEngine = availableEngines[0].name;
+                        }
+#endif
+                        
+                        config.defaultInferenceEngine = preferredEngine;
+                        ServerLogger::logInfo("Set default inference engine to: %s", config.defaultInferenceEngine.c_str());
+                        
+                        // Save configuration if possible
+                        if (config.saveToCurrentFile())
+                        {
+                            ServerLogger::logInfo("Saved default configuration to file");
+                        }
+                    }
+                }
+                else
+                {
+                    ServerLogger::logError("Failed to configure default inference engines: %s", inferenceLoader_->getLastError().c_str());
+                }
+            }
+            else
+            {
+                ServerLogger::logError("No inference engine libraries found. Please build inference engines or check installation.");
+            }
         }
 
         autoscalingThread_ = std::thread(&NodeManager::autoscalingLoop, this);

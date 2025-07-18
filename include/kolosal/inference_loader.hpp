@@ -32,6 +32,13 @@ namespace kolosal { struct InferenceEngineConfig; }
     #define GET_FUNCTION(handle, name) GetProcAddress(handle, name)
     #define CLOSE_LIBRARY(handle) FreeLibrary(handle)
     #define LIBRARY_EXTENSION ".dll"
+#elif defined(__APPLE__)
+    #include <dlfcn.h>
+    #define LIBRARY_HANDLE void*
+    #define LOAD_LIBRARY(path) dlopen(path, RTLD_LAZY)
+    #define GET_FUNCTION(handle, name) dlsym(handle, name)
+    #define CLOSE_LIBRARY(handle) dlclose(handle)
+    #define LIBRARY_EXTENSION ".dylib"
 #else
     #include <dlfcn.h>
     #define LIBRARY_HANDLE void*

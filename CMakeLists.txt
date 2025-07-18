@@ -35,6 +35,7 @@ ucm_print_flags()
 # Options for inference engine
 option(USE_CUDA   "Compile with CUDA support" OFF)
 option(USE_VULKAN "Compile with VULKAN support" OFF)
+option(USE_METAL  "Compile with Metal support (macOS only)" OFF)
 option(USE_MPI    "Compile with MPI support" OFF)
 option(DEBUG      "Compile with debugging information" OFF)
 
@@ -227,6 +228,15 @@ target_link_libraries(kolosal_server PRIVATE Threads::Threads)
 # Platform-specific link libraries for the main library.
 if(WIN32)
     target_link_libraries(kolosal_server PRIVATE ws2_32 wbemuuid)
+elseif(APPLE)
+    # For macOS, link with required system libraries
+    target_link_libraries(kolosal_server PRIVATE dl pthread)
+    
+    # Add required macOS frameworks for system operations
+    find_library(COREFOUNDATION_FRAMEWORK CoreFoundation)
+    if(COREFOUNDATION_FRAMEWORK)
+        target_link_libraries(kolosal_server PRIVATE ${COREFOUNDATION_FRAMEWORK})
+    endif()
 else()
     # For Linux, link with required system libraries
     target_link_libraries(kolosal_server PRIVATE dl rt pthread)
@@ -302,7 +312,48 @@ if(UNIX AND NOT APPLE)
         INSTALL_RPATH_USE_LINK_PATH TRUE
     )
     
+elseif(APPLE)
+    # macOS-specific configurations
+    message(STATUS "Configuring for macOS")
+    
+    # Add macOS-specific compile definitions
+    target_compile_definitions(kolosal_server PRIVATE 
+        _DARWIN_C_SOURCE
+        __APPLE__
+    )
+    
+    # Enable large file support
+    target_compile_definitions(kolosal_server PRIVATE
+        _FILE_OFFSET_BITS=64
+        _LARGEFILE_SOURCE
+        _LARGEFILE64_SOURCE
+    )
+    
+    # Set RPATH for proper library loading
+    set_target_properties(kolosal_server_exe PROPERTIES
+        INSTALL_RPATH "@executable_path:@executable_path/../lib:/usr/local/lib"
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH_USE_LINK_PATH TRUE
+    )
+    
+    set_target_properties(kolosal_server PROPERTIES
+        INSTALL_RPATH "@loader_path:@loader_path/../lib:/usr/local/lib"
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH_USE_LINK_PATH TRUE
+    )
+    
 endif()
+
+# Build inference engines
+message(STATUS "Building inference engines...")
+
+# On Apple systems, enable Metal by default
+if(APPLE AND NOT DEFINED USE_METAL)
+    message(STATUS "Apple system detected - enabling Metal acceleration by default")
+    set(USE_METAL ON CACHE BOOL "Enable Metal acceleration on Apple systems" FORCE)
+endif()
+
+add_subdirectory(inference)
 
 # Install header files only for development packages
 option(INSTALL_HEADERS "Install header files for development" OFF)

@@ -9,6 +9,10 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <stdlib.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <unistd.h>
+#include <limits.h>
 #else
 #include <unistd.h>
 #include <limits.h>
@@ -50,7 +54,21 @@ namespace kolosal
                 if (GetModuleFileNameA(NULL, execPath, MAX_PATH) != 0) {
                     executablePath = std::filesystem::path(execPath).parent_path();
                 }
+#elif defined(__APPLE__)
+                // On macOS, use _NSGetExecutablePath
+                uint32_t size = PATH_MAX;
+                char execPath[PATH_MAX];
+                if (_NSGetExecutablePath(execPath, &size) == 0) {
+                    // Resolve any symlinks
+                    char resolvedPath[PATH_MAX];
+                    if (realpath(execPath, resolvedPath) != nullptr) {
+                        executablePath = std::filesystem::path(resolvedPath).parent_path();
+                    } else {
+                        executablePath = std::filesystem::path(execPath).parent_path();
+                    }
+                }
 #else
+                // On Linux, use /proc/self/exe
                 char execPath[PATH_MAX];
                 ssize_t len = readlink("/proc/self/exe", execPath, sizeof(execPath) - 1);
                 if (len != -1) {
@@ -91,6 +109,29 @@ namespace kolosal
         bool configLoaded = false;
         
         // First try system-wide config (installed version)
+#ifdef __APPLE__
+        // On macOS, check /usr/local/etc for Homebrew installations and /etc for system-wide
+        std::vector<std::string> systemPaths = {
+            "/usr/local/etc/kolosal/config.yaml",  // Homebrew/user installed
+            "/etc/kolosal/config.yaml"             // System-wide
+        };
+        
+        for (const auto& systemPath : systemPaths) {
+            std::ifstream systemFile(systemPath);
+            if (systemFile.good()) {
+                systemFile.close();
+                if (loadFromFile(systemPath)) {
+                    ServerLogger::instance().info("Loaded configuration from " + systemPath);
+                    currentConfigFilePath = systemPath;
+                    ServerLogger::instance().info("Stored config file path: " + currentConfigFilePath);
+                    ServerLogger::instance().info("ServerConfig instance address during load: " + std::to_string(reinterpret_cast<uintptr_t>(this)));
+                    configLoaded = true;
+                    break;
+                }
+            }
+        }
+#else
+        // On Linux, use standard system path
         std::ifstream systemFile("/etc/kolosal/config.yaml");
         if (systemFile.good()) {
             systemFile.close();
@@ -102,6 +143,7 @@ namespace kolosal
                 configLoaded = true;
             }
         }
+#endif
         
         // If no system config found, try config.yaml in working directory (development)
         if (!configLoaded) {
@@ -147,6 +189,23 @@ namespace kolosal
                 userConfigPath = std::string(userProfile) + "\\AppData\\Roaming\\Kolosal\\config.yaml";
                 free(userProfile);
                 
+                std::ifstream userFile(userConfigPath);
+                if (userFile.good()) {
+                    userFile.close();
+                    if (loadFromFile(userConfigPath)) {
+                        ServerLogger::instance().info("Loaded configuration from " + userConfigPath);
+                        currentConfigFilePath = userConfigPath; // Store exact path used
+                        ServerLogger::instance().info("Stored config file path: " + currentConfigFilePath);
+                        ServerLogger::instance().info("ServerConfig instance address during load: " + std::to_string(reinterpret_cast<uintptr_t>(this)));
+                        configLoaded = true;
+                    }
+                }
+            }
+#elif defined(__APPLE__)
+            // On macOS, use standard Application Support directory
+            const char* homeDir = getenv("HOME");
+            if (homeDir) {
+                userConfigPath = std::string(homeDir) + "/Library/Application Support/Kolosal/config.yaml";
                 std::ifstream userFile(userConfigPath);
                 if (userFile.good()) {
                     userFile.close();

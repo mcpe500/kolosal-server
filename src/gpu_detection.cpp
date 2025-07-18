@@ -355,6 +355,11 @@ bool checkVulkanSupport() {
 }
 
 bool hasVulkanCapableGPU() {
+#ifdef __APPLE__
+    // On Apple systems, we don't need Vulkan GPU detection since Metal is preferred
+    // Always return false to ensure Metal is used as the primary acceleration method
+    return false;
+#else
     // Method 1: Check kernel modules (most reliable)
     if (checkKernelModules()) {
         return true;
@@ -377,6 +382,7 @@ bool hasVulkanCapableGPU() {
     
     // If all methods fail, assume no dedicated GPU
     return false;
+#endif
 }
 
 #endif
