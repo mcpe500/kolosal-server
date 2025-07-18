@@ -216,10 +216,10 @@ elseif(USE_METAL)
         
         # Add Metal-specific compiler flags
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-            set(METAL_ARCH_FLAGS "-march=armv8.4-a -fvectorize -ffp-model=fast -fno-finite-math-only")
+            set(METAL_ARCH_FLAGS "-mcpu=apple-m1 -O3")
             message(STATUS "Using ARM64 optimizations for Metal")
         else()
-            set(METAL_ARCH_FLAGS "-march=native -fvectorize -ffp-model=fast")
+            set(METAL_ARCH_FLAGS "-march=native -O3")
             message(STATUS "Using x86_64 optimizations for Metal")
         endif()
         
