@@ -13,6 +13,7 @@
 #elif defined(__APPLE__)
 #include <unistd.h>
 #include <limits.h>
+#include <mach-o/dyld.h>
 #define LIBRARY_EXTENSION ".dylib"
 #else
 #include <unistd.h>
@@ -22,6 +23,36 @@
 
 namespace kolosal
 {
+    // Helper function to get the directory containing the current executable
+    static std::string getExecutableDirectory()
+    {
+#ifdef _WIN32
+        char path[MAX_PATH];
+        GetModuleFileNameA(NULL, path, MAX_PATH);
+        std::string execPath(path);
+        return std::filesystem::path(execPath).parent_path().string();
+#elif defined(__APPLE__)
+        char path[PATH_MAX];
+        uint32_t size = sizeof(path);
+        if (_NSGetExecutablePath(path, &size) == 0) {
+            char realPath[PATH_MAX];
+            if (realpath(path, realPath) != NULL) {
+                return std::filesystem::path(realPath).parent_path().string();
+            }
+        }
+        // Fallback to current directory
+        return std::filesystem::current_path().string();
+#else
+        char path[PATH_MAX];
+        ssize_t count = readlink("/proc/self/exe", path, PATH_MAX);
+        if (count != -1) {
+            path[count] = '\0';
+            return std::filesystem::path(path).parent_path().string();
+        }
+        // Fallback to current directory
+        return std::filesystem::current_path().string();
+#endif
+    }
 
     NodeManager::NodeManager(std::chrono::seconds idleTimeout)
         : idleTimeout_(idleTimeout), stopAutoscaling_(false)
@@ -168,15 +199,37 @@ namespace kolosal
             // If no libraries found in build dir, try system paths
             if (defaultEngines.empty())
             {
+                // Get executable directory for relative path searches
+                std::string execDir = getExecutableDirectory();
+                ServerLogger::logInfo("Searching for inference engines. Executable directory: %s", execDir.c_str());
+                
                 std::vector<std::string> searchPaths = {
+                    // Standard macOS Homebrew paths
+                    "/opt/homebrew/lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    "/opt/homebrew/lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
                     "/usr/local/lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
                     "/usr/local/lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
+                    // macOS App bundle paths (if installed as app)
+                    "/Applications/Kolosal CLI.app/Contents/MacOS/lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    "/Applications/Kolosal CLI.app/Contents/MacOS/lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
+                    // Paths relative to executable directory
+                    execDir + "/lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    execDir + "/lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
+                    execDir + "/../lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    execDir + "/../lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
+                    // Relative paths
+                    "./lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    "./lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
                     "./libllama-metal" + std::string(LIBRARY_EXTENSION),
-                    "./libllama-cpu" + std::string(LIBRARY_EXTENSION)
+                    "./libllama-cpu" + std::string(LIBRARY_EXTENSION),
+                    // Library paths relative to executable
+                    "../lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    "../lib/libllama-cpu" + std::string(LIBRARY_EXTENSION)
                 };
                 
                 for (const auto& path : searchPaths)
                 {
+                    ServerLogger::logInfo("Checking for inference engine at: %s", path.c_str());
                     if (std::filesystem::exists(path))
                     {
                         if (path.find("metal") != std::string::npos)
@@ -190,6 +243,17 @@ namespace kolosal
                             ServerLogger::logInfo("Found CPU inference engine: %s", path.c_str());
                         }
                     }
+                }
+                
+                // If still no engines found, provide detailed logging
+                if (defaultEngines.empty())
+                {
+                    ServerLogger::logError("No inference engine libraries found in any of the searched paths:");
+                    for (const auto& path : searchPaths)
+                    {
+                        ServerLogger::logError("  - %s", path.c_str());
+                    }
+                    ServerLogger::logError("Please ensure inference engine libraries are properly installed.");
                 }
             }
 #else
@@ -281,6 +345,14 @@ namespace kolosal
             else
             {
                 ServerLogger::logError("No inference engine libraries found. Please build inference engines or check installation.");
+                ServerLogger::logError("To resolve this issue:");
+                ServerLogger::logError("1. Ensure that inference engines are built and installed properly");
+                ServerLogger::logError("2. Check that libraries are in one of the expected locations:");
+                ServerLogger::logError("   - /opt/homebrew/lib/ (Homebrew installation)");
+                ServerLogger::logError("   - /usr/local/lib/ (standard installation)");
+                ServerLogger::logError("   - Relative to executable: bin/../lib/");
+                ServerLogger::logError("3. Verify that the Metal/CPU inference libraries exist (.dylib files)");
+                ServerLogger::logError("4. Consider configuring engines manually in the configuration file");
             }
         }
 
