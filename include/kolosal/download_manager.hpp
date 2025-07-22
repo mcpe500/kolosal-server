@@ -12,11 +12,12 @@
 
 namespace kolosal {    // Structure to hold engine creation parameters
     struct EngineCreationParams {
-        std::string engine_id;
-        std::string model_type = "llm";  // "llm" or "embedding"
-        bool load_immediately;
+        std::string model_id;
+        std::string model_type = "llm";  // "llm" or "embedding" - preserve embedding support
+        bool load_immediately;         // Whether to load immediately when download completes (vs register for lazy loading)
         int main_gpu_id;
         LoadingParameters loading_params;
+        std::string inference_engine = "llama-cpu"; // Inference engine to use (llama-cpu, llama-cuda, llama-vulkan, etc.)
         
         EngineCreationParams() : load_immediately(false), main_gpu_id(-1) {}
     };
@@ -28,8 +29,7 @@ namespace kolosal {    // Structure to hold engine creation parameters
         std::string local_path;
         size_t total_bytes;
         size_t downloaded_bytes;
-        double percentage;
-        std::string status; // "downloading", "completed", "failed", "cancelled", "creating_engine"
+        double percentage;        std::string status; // "downloading", "completed", "failed", "cancelled", "creating_engine", "paused"
         std::string error_message;
         std::chrono::system_clock::time_point start_time;
         std::chrono::system_clock::time_point end_time;
@@ -39,13 +39,14 @@ namespace kolosal {    // Structure to hold engine creation parameters
         
         // Cancellation flag for download control
         volatile bool cancelled;
-
-        DownloadProgress() : total_bytes(0), downloaded_bytes(0), percentage(0.0), status("downloading"), cancelled(false) {}
+        
+        // Pause flag for download control
+        volatile bool paused;        DownloadProgress() : total_bytes(0), downloaded_bytes(0), percentage(0.0), status("downloading"), cancelled(false), paused(false) {}
         
         DownloadProgress(const std::string& id, const std::string& download_url, const std::string& path)
             : model_id(id), url(download_url), local_path(path), total_bytes(0), 
               downloaded_bytes(0), percentage(0.0), status("downloading"),
-              start_time(std::chrono::system_clock::now()), cancelled(false) {}
+              start_time(std::chrono::system_clock::now()), cancelled(false), paused(false) {}
     };    // Download manager class to handle concurrent downloads and track progress
     class KOLOSAL_SERVER_API DownloadManager {
     public:
@@ -62,10 +63,14 @@ namespace kolosal {    // Structure to hold engine creation parameters
         std::shared_ptr<DownloadProgress> getDownloadProgress(const std::string& model_id);
 
         // Check if a download is in progress
-        bool isDownloadInProgress(const std::string& model_id);
-
-        // Cancel a download
+        bool isDownloadInProgress(const std::string& model_id);        // Cancel a download
         bool cancelDownload(const std::string& model_id);
+
+        // Pause a download
+        bool pauseDownload(const std::string& model_id);
+
+        // Resume a paused download
+        bool resumeDownload(const std::string& model_id);
 
         // Cancel all active downloads
         int cancelAllDownloads();
@@ -90,11 +95,13 @@ namespace kolosal {    // Structure to hold engine creation parameters
          * @param load_params Loading parameters for the model
          * @param main_gpu_id The main GPU ID to use
          * @param load_immediately Whether to load immediately or register for lazy loading
+         * @param inference_engine Inference engine to use (llama-cpu, llama-cuda, llama-vulkan, etc.)
          * @return True if the model was successfully processed, false otherwise
          */
         bool loadModelAtStartup(const std::string& model_id, const std::string& model_path, 
                                const std::string& model_type, const LoadingParameters& load_params, 
-                               int main_gpu_id, bool load_immediately);
+                               int main_gpu_id, bool load_immediately,
+                               const std::string& inference_engine = "llama-cpu");
 
     private:
         DownloadManager() = default;
@@ -104,8 +111,11 @@ namespace kolosal {    // Structure to hold engine creation parameters
         DownloadManager(const DownloadManager&) = delete;
         DownloadManager& operator=(const DownloadManager&) = delete;
 
+#pragma warning(push)
+#pragma warning(disable: 4251)
         std::map<std::string, std::shared_ptr<DownloadProgress>> downloads_;
         std::map<std::string, std::future<void>> download_futures_;
+#pragma warning(pop)
         mutable std::mutex downloads_mutex_;        // Internal method to perform the actual download
         void performDownload(std::shared_ptr<DownloadProgress> progress);
         

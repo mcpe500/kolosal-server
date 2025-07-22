@@ -2,16 +2,18 @@
 #define KOLOSAL_NODE_MANAGER_H
 
 #include "export.hpp"
-#include "inference.h" // Assuming InferenceEngine is defined here
+#include "inference_interface.h"
+#include "inference_loader.hpp"
 #include <vector>
 #include <memory>
 #include <string>
 #include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
-#include <chrono> // Added for time tracking
-#include <thread> // Added for autoscaling thread
-#include <atomic> // Added for thread control
-#include <condition_variable> // Added for autoscaling thread synchronization
+#include <chrono>
+#include <thread>
+#include <atomic>
+#include <condition_variable>
 
 namespace kolosal {
 
@@ -24,7 +26,7 @@ namespace kolosal {
  */
 class KOLOSAL_SERVER_API NodeManager {
 public:
-    NodeManager(std::chrono::seconds idleTimeout = std::chrono::seconds(300)); // Added idleTimeout parameter
+    NodeManager(std::chrono::seconds idleTimeout = std::chrono::seconds(300));
     ~NodeManager();
 
     NodeManager(const NodeManager&) = delete;
@@ -52,9 +54,10 @@ public:
      * @param modelPath Path to the model file.
      * @param loadParams Parameters for loading the model.
      * @param mainGpuId The main GPU ID to use for this engine.
+     * @param engineType Type of engine to load ("cpu", "cuda", "vulkan")
      * @return True if the engine was loaded successfully, false otherwise.
      */
-    bool addEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0);
+    bool addEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0, const std::string& engineType = "llama-cpu");
 
     /**
      * @brief Loads a new embedding engine with the given model and parameters.
@@ -73,9 +76,10 @@ public:
      * @param modelPath Path to the model file.
      * @param loadParams Parameters for loading the model.
      * @param mainGpuId The main GPU ID to use for this engine.
+     * @param engineType Type of engine to load ("cpu", "cuda", "vulkan")
      * @return True if the model was validated and registered successfully, false otherwise.
      */
-    bool registerEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0);
+    bool registerEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0, const std::string& engineType = "llama-cpu");
 
     /**
      * @brief Registers an embedding model for lazy loading without immediately loading it.
@@ -95,9 +99,19 @@ public:
      * Accessing an engine resets its idle timer.
      * 
      * @param engineId The ID of the engine to retrieve.
-     * @return A shared_ptr to the InferenceEngine, or nullptr if not found or reload fails.
+     * @return A shared_ptr to the IInferenceEngine, or nullptr if not found or reload fails.
      */
-    std::shared_ptr<InferenceEngine> getEngine(const std::string& engineId);
+    std::shared_ptr<IInferenceEngine> getEngine(const std::string& engineId);
+
+    /**
+     * @brief Checks if an engine exists and its load status without loading it.
+     * This method does not trigger loading of lazy models and does not update activity time.
+     * 
+     * @param engineId The ID of the engine to check.
+     * @return A pair of (exists, isLoaded) where exists indicates if the engine is registered
+     *         and isLoaded indicates if it's currently loaded in memory.
+     */
+    std::pair<bool, bool> getEngineStatus(const std::string& engineId) const;
 
     /**
      * @brief Removes and unloads an inference engine by its ID.
@@ -120,6 +134,13 @@ public:
     std::vector<std::string> getAvailableModels() const;
 
     /**
+     * @brief Get list of all available inference engine libraries.
+     * 
+     * @return A vector of InferenceEngineInfo structures containing details about available engines.
+     */
+    std::vector<InferenceEngineInfo> getAvailableInferenceEngines() const;
+
+    /**
      * @brief Validates if a model file exists without loading it.
      * 
      * @param modelPath Path to the model file (local or URL).
@@ -127,36 +148,117 @@ public:
      */
     bool validateModelPath(const std::string& modelPath);
 
+    /**
+     * @brief Handles URL download for models
+     * @param engineId Engine identifier for logging
+     * @param modelPath URL to download
+     * @return Local path to downloaded file, or empty string on failure
+     */
+    std::string handleUrlDownload(const std::string& engineId, const std::string& modelPath);
+
+    /**
+     * @brief Reconfigure inference engines with updated configuration
+     * 
+     * @param engines Vector of updated engine configurations
+     * @return True if engines were reconfigured successfully
+     */
+    bool reconfigureEngines(const std::vector<InferenceEngineConfig>& engines);
+
 private:
+    /**
+     * @brief Saves a model configuration to the config file
+     * 
+     * @param engineId The engine ID
+     * @param modelPath The model path
+     * @param loadParams Loading parameters
+     * @param mainGpuId Main GPU ID
+     * @param inferenceEngine Inference engine type
+     * @param loadImmediately Whether to load immediately
+     * @return True if config was saved successfully
+     */
+    bool saveModelToConfig(const std::string& engineId, const std::string& modelPath, 
+                          const LoadingParameters& loadParams, int mainGpuId, 
+                          const std::string& inferenceEngine, bool loadImmediately);
+
+    /**
+     * @brief Removes a model configuration from the config file
+     * 
+     * @param engineId The engine ID to remove
+     * @return True if config was updated successfully
+     */
+    bool removeModelFromConfig(const std::string& engineId);
+
     enum class ModelType {
         LLM,
         EMBEDDING
     };
 
     struct EngineRecord {
-        std::shared_ptr<InferenceEngine> engine;
-        std::string modelPath;                 // Metadata: Path to the model file
-        LoadingParameters loadParams;          // Metadata: Parameters used to load the model
-        int mainGpuId;                         // Metadata: Main GPU ID for the engine
-        ModelType modelType;                   // Metadata: Type of model (LLM or Embedding)
-        std::chrono::steady_clock::time_point lastActivityTime; // For autoscaling
-        bool isLoaded;                         // Tracks if the model is currently loaded
-
-        EngineRecord() : mainGpuId(0), modelType(ModelType::LLM), lastActivityTime(std::chrono::steady_clock::now()), isLoaded(false) {}
+        std::shared_ptr<IInferenceEngine> engine;
+        std::string modelPath;
+        std::string engineType;  // "cpu", "cuda", "vulkan"
+        LoadingParameters loadParams;
+        int mainGpuId;
+        std::chrono::steady_clock::time_point lastActivityTime;
+        std::atomic<bool> isLoaded{false};
+        std::atomic<bool> isLoading{false};
+        std::atomic<bool> markedForRemoval{false};
+        std::atomic<bool> isEmbeddingModel{false}; // Track if this is an embedding model
+        mutable std::mutex engineMutex;
+        std::condition_variable loadingCv;
+        
+        EngineRecord() : engineType("llama-cpu"), mainGpuId(0), lastActivityTime(std::chrono::steady_clock::now()) {}
+        
+        EngineRecord(const EngineRecord&) = delete;
+        EngineRecord& operator=(const EngineRecord&) = delete;
+        
+        EngineRecord(EngineRecord&& other) noexcept 
+            : engine(std::move(other.engine))
+            , modelPath(std::move(other.modelPath))
+            , engineType(std::move(other.engineType))
+            , loadParams(other.loadParams)
+            , mainGpuId(other.mainGpuId)
+            , lastActivityTime(other.lastActivityTime)
+            , isLoaded(other.isLoaded.load())
+            , isLoading(other.isLoading.load())
+            , markedForRemoval(other.markedForRemoval.load())
+            , isEmbeddingModel(other.isEmbeddingModel.load())
+        {}
+        
+        EngineRecord& operator=(EngineRecord&& other) noexcept {
+            if (this != &other) {
+                engine = std::move(other.engine);
+                modelPath = std::move(other.modelPath);
+                engineType = std::move(other.engineType);
+                loadParams = other.loadParams;
+                mainGpuId = other.mainGpuId;
+                lastActivityTime = other.lastActivityTime;
+                isLoaded.store(other.isLoaded.load());
+                isLoading.store(other.isLoading.load());
+                markedForRemoval.store(other.markedForRemoval.load());
+                isEmbeddingModel.store(other.isEmbeddingModel.load());
+            }
+            return *this;
+        }
     };
 
-    std::unordered_map<std::string, EngineRecord> engines_;
-    mutable std::mutex mutex_; // Protects access to the engines_ map
+#pragma warning(push)
+#pragma warning(disable: 4251)
+    std::unordered_map<std::string, std::shared_ptr<EngineRecord>> engines_;
+    mutable std::shared_mutex engineMapMutex_;
 
-    // Singleton instance
-    static std::unique_ptr<NodeManager> instance_;
-    static std::mutex instanceMutex_;
+    // Dynamic inference loader for plugin management
+    std::unique_ptr<InferenceLoader> inferenceLoader_;
 
-    // Autoscaling members
     std::thread autoscalingThread_;
     std::atomic<bool> stopAutoscaling_{false};
     std::condition_variable autoscalingCv_;
+#pragma warning(pop)
+    mutable std::mutex autoscalingMutex_;
+#pragma warning(push)
+#pragma warning(disable: 4251)
     std::chrono::seconds idleTimeout_;
+#pragma warning(pop)
 
     /**
      * @brief The main loop for the autoscaling thread.
