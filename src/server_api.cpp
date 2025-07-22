@@ -10,8 +10,7 @@
 #include "kolosal/routes/server_logs_route.hpp"
 
 #include "kolosal/routes/parse_document_route.hpp"
-#include "kolosal/routes/add_documents_route.hpp"
-#include "kolosal/routes/remove_documents_route.hpp"
+#include "kolosal/routes/documents_route.hpp"
 #include "kolosal/routes/retrieve_route.hpp"
 #include "kolosal/routes/internet_search_route.hpp"
 #include "kolosal/routes/downloads_route.hpp"
@@ -81,8 +80,7 @@ namespace kolosal
             pImpl->server->addRoute(std::make_unique<ServerLogsRoute>());
             pImpl->server->addRoute(std::make_unique<DownloadsRoute>());
             pImpl->server->addRoute(std::make_unique<ParseDocumentRoute>());
-            pImpl->server->addRoute(std::make_unique<AddDocumentsRoute>());
-            pImpl->server->addRoute(std::make_unique<RemoveDocumentsRoute>());
+            pImpl->server->addRoute(std::make_unique<DocumentsRoute>());
             pImpl->server->addRoute(std::make_unique<RetrieveRoute>());
 
             ServerLogger::logInfo("Routes registered successfully");

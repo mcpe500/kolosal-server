@@ -10,6 +10,8 @@
 #include <iomanip>
 #include <random>
 #include <set>
+#include <algorithm>
+#include <algorithm>
 
 namespace kolosal
 {
@@ -638,6 +640,197 @@ std::future<RemoveDocumentsResponse> DocumentService::removeDocuments(const Remo
             }
             
             return response;
+        }
+    });
+}
+
+std::future<std::vector<std::string>> DocumentService::listDocuments(const std::string& collection_name)
+{
+    return std::async(std::launch::async, [this, collection_name]() -> std::vector<std::string> {
+        try
+        {
+            std::string effective_collection_name = collection_name.empty() ? 
+                pImpl->config_.qdrant.collectionName : collection_name;
+            
+            std::vector<std::string> all_ids;
+            std::string offset = "";
+            const int batch_size = 1000;
+            
+            ServerLogger::logDebug("Starting to list documents from collection '%s'", 
+                                   effective_collection_name.c_str());
+            
+            // Use scroll API to get all points
+            do {
+                auto result_future = pImpl->qdrant_client_->scrollPoints(effective_collection_name, batch_size, offset);
+                QdrantResult result = result_future.get();
+                
+                if (!result.success)
+                {
+                    throw std::runtime_error("Failed to scroll points: " + result.error_message);
+                }
+                
+                // Parse response to extract point IDs
+                if (!result.response_data.contains("result") || 
+                    !result.response_data["result"].contains("points") ||
+                    !result.response_data["result"]["points"].is_array())
+                {
+                    break; // No more points
+                }
+                
+                auto points = result.response_data["result"]["points"];
+                if (points.empty())
+                {
+                    break;
+                }
+                
+                // Extract IDs from points
+                for (const auto& point : points)
+                {
+                    if (point.contains("id"))
+                    {
+                        std::string id = point["id"].is_string() ? 
+                            point["id"].get<std::string>() : 
+                            std::to_string(point["id"].get<int64_t>());
+                        all_ids.push_back(id);
+                    }
+                }
+                
+                // Update offset for next batch
+                if (result.response_data["result"].contains("next_page_offset") &&
+                    !result.response_data["result"]["next_page_offset"].is_null())
+                {
+                    if (result.response_data["result"]["next_page_offset"].is_string())
+                    {
+                        offset = result.response_data["result"]["next_page_offset"].get<std::string>();
+                    }
+                    else if (result.response_data["result"]["next_page_offset"].is_number())
+                    {
+                        offset = std::to_string(result.response_data["result"]["next_page_offset"].get<int64_t>());
+                    }
+                    else
+                    {
+                        break; // No more pages
+                    }
+                }
+                else
+                {
+                    break; // No next page
+                }
+                
+            } while (!offset.empty() && offset != "null");
+            
+            ServerLogger::logInfo("Listed %zu documents from collection '%s'", 
+                                  all_ids.size(), effective_collection_name.c_str());
+            
+            return all_ids;
+        }
+        catch (const std::exception& ex)
+        {
+            ServerLogger::logError("Error listing documents: %s", ex.what());
+            throw;
+        }
+    });
+}
+
+std::future<std::vector<std::pair<std::string, std::optional<std::pair<std::string, std::unordered_map<std::string, nlohmann::json>>>>>> 
+DocumentService::getDocumentsInfo(const std::vector<std::string>& ids, const std::string& collection_name)
+{
+    return std::async(std::launch::async, [this, ids, collection_name]() {
+        try
+        {
+            std::string effective_collection_name = collection_name.empty() ? 
+                pImpl->config_.qdrant.collectionName : collection_name;
+            
+            ServerLogger::logDebug("Getting info for %zu documents from collection '%s'", 
+                                   ids.size(), effective_collection_name.c_str());
+            
+            std::vector<std::pair<std::string, std::optional<std::pair<std::string, std::unordered_map<std::string, nlohmann::json>>>>> results;
+            
+            // Process in batches to avoid overwhelming the server
+            const size_t batch_size = 100;
+            for (size_t i = 0; i < ids.size(); i += batch_size)
+            {
+                std::vector<std::string> batch_ids;
+                for (size_t j = i; j < std::min(i + batch_size, ids.size()); ++j)
+                {
+                    batch_ids.push_back(ids[j]);
+                }
+                
+                auto result_future = pImpl->qdrant_client_->getPoints(effective_collection_name, batch_ids);
+                QdrantResult result = result_future.get();
+                
+                if (!result.success)
+                {
+                    ServerLogger::logWarning("Failed to get batch of points: %s", result.error_message.c_str());
+                    
+                    // Mark all points in this batch as not found
+                    for (const auto& id : batch_ids)
+                    {
+                        results.emplace_back(id, std::nullopt);
+                    }
+                    continue;
+                }
+                
+                // Parse response to extract point data
+                std::set<std::string> found_ids;
+                
+                if (result.response_data.contains("result") &&
+                    result.response_data["result"].is_array())
+                {
+                    for (const auto& point : result.response_data["result"])
+                    {
+                        if (point.contains("id") && point.contains("payload"))
+                        {
+                            std::string id = point["id"].is_string() ? 
+                                point["id"].get<std::string>() : 
+                                std::to_string(point["id"].get<int64_t>());
+                            
+                            found_ids.insert(id);
+                            
+                            // Extract text and metadata from payload
+                            std::string text = "";
+                            std::unordered_map<std::string, nlohmann::json> metadata;
+                            
+                            if (point["payload"].contains("text") && point["payload"]["text"].is_string())
+                            {
+                                text = point["payload"]["text"].get<std::string>();
+                            }
+                            
+                            // Extract metadata (everything except text)
+                            for (auto it = point["payload"].begin(); it != point["payload"].end(); ++it)
+                            {
+                                if (it.key() != "text")
+                                {
+                                    metadata[it.key()] = it.value();
+                                }
+                            }
+                            
+                            results.emplace_back(id, std::make_pair(text, metadata));
+                        }
+                    }
+                }
+                
+                // Mark any IDs that weren't found
+                for (const auto& id : batch_ids)
+                {
+                    if (found_ids.find(id) == found_ids.end())
+                    {
+                        results.emplace_back(id, std::nullopt);
+                    }
+                }
+            }
+            
+            ServerLogger::logInfo("Retrieved info for %zu/%zu documents from collection '%s'", 
+                                  std::count_if(results.begin(), results.end(), 
+                                               [](const auto& pair) { return pair.second.has_value(); }),
+                                  ids.size(), effective_collection_name.c_str());
+            
+            return results;
+        }
+        catch (const std::exception& ex)
+        {
+            ServerLogger::logError("Error getting documents info: %s", ex.what());
+            throw;
         }
     });
 }

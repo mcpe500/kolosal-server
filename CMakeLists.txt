@@ -80,13 +80,13 @@ set(SOURCES
     src/routes/internet_search_route.cpp
     src/routes/parse_document_route.cpp
     src/routes/retrieve_route.cpp
-    src/routes/add_documents_route.cpp
-    src/routes/remove_documents_route.cpp
+    src/routes/documents_route.cpp
     src/routes/downloads_route.cpp
     
     # Retrieval files
     src/retrieval/add_document_types.cpp
     src/retrieval/remove_document_types.cpp
+    src/retrieval/document_list_types.cpp
     src/retrieval/retrieve_types.cpp
     src/retrieval/document_service.cpp
     src/retrieval/parse_docx.cpp
