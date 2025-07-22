@@ -78,9 +78,7 @@ set(SOURCES
     src/routes/server_logs_route.cpp    
     src/routes/embedding_route.cpp
     src/routes/internet_search_route.cpp
-    src/routes/parse_docx_route.cpp
-    src/routes/parse_pdf_route.cpp
-    src/routes/parse_html_route.cpp
+    src/routes/parse_document_route.cpp
     src/routes/retrieve_route.cpp
     src/routes/add_documents_route.cpp
     src/routes/remove_documents_route.cpp
