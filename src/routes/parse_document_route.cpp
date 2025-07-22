@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <memory>
 #include <iomanip>
+#include <mutex>
 
 // Use the existing base64 utility from llama.cpp
 #include "../../external/llama.cpp/common/base64.hpp"
@@ -20,6 +21,9 @@ using json = nlohmann::json;
 
 namespace kolosal
 {
+    // Thread-local storage for current path
+    thread_local std::string ParseDocumentRoute::current_path_;
+
     namespace
     {
         // Helper function to convert method string to enum
@@ -46,6 +50,7 @@ namespace kolosal
             }
         }
     }
+
     bool ParseDocumentRoute::match(const std::string &method, const std::string &path)
     {
         bool matches = method == "POST" && 
@@ -53,8 +58,8 @@ namespace kolosal
         
         if (matches)
         {
-            // Store the path for use in handle method (const_cast is safe here since we control the lifecycle)
-            const_cast<ParseDocumentRoute*>(this)->current_path_ = path;
+            // Store the path in thread-local storage (thread-safe)
+            current_path_ = path;
         }
         
         return matches;
@@ -72,9 +77,9 @@ namespace kolosal
     {
         switch (type)
         {
-            case DocumentType::PDF: return "pdf_data";
-            case DocumentType::DOCX: return "docx_data";
-            case DocumentType::HTML: return "html";
+            case DocumentType::PDF: return "data";      // Match original PDF route
+            case DocumentType::DOCX: return "data";     // Match original DOCX route  
+            case DocumentType::HTML: return "html";     // Match original HTML route
         }
         return "";
     }
@@ -93,8 +98,23 @@ namespace kolosal
     void ParseDocumentRoute::sendJsonResponse(SocketType sock, const nlohmann::json &response, int status_code)
     {
         std::string response_str = response.dump();
-        std::map<std::string, std::string> headers = {{"Content-Type", "application/json"}};
+        std::map<std::string, std::string> headers = {
+            {"Content-Type", "application/json"},
+            {"Access-Control-Allow-Origin", "*"},
+            {"Access-Control-Allow-Methods", "POST, OPTIONS"},
+            {"Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key"}
+        };
         send_response(sock, status_code, response_str, headers);
+    }
+
+    void ParseDocumentRoute::sendOptionsResponse(SocketType sock, const std::string &endpoint_name, const std::string &description)
+    {
+        json response = {
+            {"message", endpoint_name + " endpoint ready"},
+            {"methods", {"POST"}},
+            {"description", description}
+        };
+        sendJsonResponse(sock, response, 200);
     }
 
     bool ParseDocumentRoute::parseRequest(const std::string &body, nlohmann::json &request, SocketType sock)
@@ -118,7 +138,8 @@ namespace kolosal
             ServerLogger::logError("[Thread %u] JSON parsing error: %s", std::this_thread::get_id(), ex.what());
             json errorResponse;
             errorResponse["success"] = false;
-            errorResponse["error"] = "Invalid JSON: " + std::string(ex.what());
+            errorResponse["error"] = "Invalid JSON format";
+            errorResponse["details"] = ex.what();
             sendJsonResponse(sock, errorResponse, 400);
             return false;
         }
@@ -126,20 +147,21 @@ namespace kolosal
 
     bool ParseDocumentRoute::validateDocumentData(const nlohmann::json &request, const std::string &data_key, SocketType sock)
     {
-        if (!request.contains(data_key))
+        if (!request.contains(data_key) || !request[data_key].is_string())
         {
             json error_response;
             error_response["success"] = false;
-            error_response["error"] = "Missing '" + data_key + "' field in request";
-            sendJsonResponse(sock, error_response, 400);
-            return false;
-        }
-
-        if (!request[data_key].is_string())
-        {
-            json error_response;
-            error_response["success"] = false;
-            error_response["error"] = "'" + data_key + "' field must be a string";
+            error_response["error"] = "Missing or invalid '" + data_key + "' field";
+            
+            if (data_key == "data")
+            {
+                error_response["details"] = "Expected base64-encoded document data as string";
+            }
+            else if (data_key == "html")
+            {
+                error_response["details"] = "Expected HTML content as string";
+            }
+            
             sendJsonResponse(sock, error_response, 400);
             return false;
         }
@@ -148,7 +170,17 @@ namespace kolosal
         {
             json error_response;
             error_response["success"] = false;
-            error_response["error"] = "'" + data_key + "' field cannot be empty";
+            
+            if (data_key == "data")
+            {
+                error_response["error"] = "Empty document data";
+                error_response["details"] = "Document data cannot be empty";
+            }
+            else if (data_key == "html")
+            {
+                error_response["error"] = "Missing or invalid 'html' field in request";
+            }
+            
             sendJsonResponse(sock, error_response, 400);
             return false;
         }
@@ -162,13 +194,26 @@ namespace kolosal
         {
             // Use the existing base64 utility
             std::string decoded_str = base64::decode(base64_data);
-            return std::vector<unsigned char>(decoded_str.begin(), decoded_str.end());
+            std::vector<unsigned char> decoded_data(decoded_str.begin(), decoded_str.end());
+            
+            if (decoded_data.empty())
+            {
+                json error_response;
+                error_response["success"] = false;
+                error_response["error"] = "Empty decoded document data";
+                error_response["details"] = "Decoded document data is empty";
+                sendJsonResponse(sock, error_response, 400);
+                return {};
+            }
+            
+            return decoded_data;
         }
         catch (const std::exception &ex)
         {
             json error_response;
             error_response["success"] = false;
-            error_response["error"] = "Base64 decoding failed: " + std::string(ex.what());
+            error_response["error"] = "Failed to decode base64 data";
+            error_response["details"] = ex.what();
             sendJsonResponse(sock, error_response, 400);
             return {};
         }
@@ -178,18 +223,38 @@ namespace kolosal
     {
         try
         {
-            json request;
-            if (!parseRequest(body, request, sock))
-            {
-                return;
-            }
-
-            // Determine document type from the stored path
+            // Get document type from thread-local storage
             DocumentType docType = getDocumentType(current_path_);
             std::string data_key = getDataKey(docType);
             std::string log_prefix = getLogPrefix(docType);
 
             ServerLogger::logInfo("[Thread %u] Received %s parse request", std::this_thread::get_id(), log_prefix.c_str());
+
+            // Handle OPTIONS request for CORS (empty body indicates OPTIONS)
+            if (body.empty())
+            {
+                std::string description;
+                switch (docType)
+                {
+                    case DocumentType::PDF:
+                        description = "Send base64-encoded PDF data to parse text";
+                        break;
+                    case DocumentType::DOCX:
+                        description = "Send base64-encoded DOCX data to parse text";
+                        break;
+                    case DocumentType::HTML:
+                        description = "Send HTML content to convert to Markdown";
+                        break;
+                }
+                sendOptionsResponse(sock, log_prefix, description);
+                return;
+            }
+
+            json request;
+            if (!parseRequest(body, request, sock))
+            {
+                return;
+            }
 
             // Validate document data
             if (!validateDocumentData(request, data_key, sock))
@@ -226,6 +291,7 @@ namespace kolosal
                     else
                     {
                         response["error"] = result.error_message.empty() ? "Failed to parse HTML content" : result.error_message;
+                        response["elements_processed"] = result.elements_processed;
                         ServerLogger::logError("[Thread %u] Error converting HTML to Markdown: %s",
                                              std::this_thread::get_id(), response["error"].get<std::string>().c_str());
                     }
@@ -295,6 +361,10 @@ namespace kolosal
                         else
                         {
                             response["error"] = result.error_message;
+                            response["pages_processed"] = result.pages_processed;
+                            response["method"] = method_str;
+                            response["language"] = language;
+                            response["data_size_bytes"] = document_data.size();
                             ServerLogger::logError("PDF parsing failed: %s", result.error_message.c_str());
                         }
                     }
@@ -317,6 +387,8 @@ namespace kolosal
                         catch (const std::exception &e)
                         {
                             response["error"] = e.what();
+                            response["pages_processed"] = 1;
+                            response["data_size_bytes"] = document_data.size();
                             ServerLogger::logError("DOCX parsing failed: %s", e.what());
                         }
                     }
@@ -331,7 +403,8 @@ namespace kolosal
             ServerLogger::logError("[Thread %u] Exception in document parsing: %s", std::this_thread::get_id(), ex.what());
             json error_response;
             error_response["success"] = false;
-            error_response["error"] = "Internal server error: " + std::string(ex.what());
+            error_response["error"] = "Internal server error";
+            error_response["details"] = ex.what();
             sendJsonResponse(sock, error_response, 500);
         }
     }

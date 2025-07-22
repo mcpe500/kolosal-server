@@ -4,6 +4,8 @@
 #include "route_interface.hpp"
 #include <json.hpp>
 #include <string>
+#include <mutex>
+#include <thread>
 
 namespace kolosal
 {
@@ -13,9 +15,6 @@ namespace kolosal
         bool match(const std::string &method, const std::string &path) override;
         void handle(SocketType sock, const std::string &body) override;
 
-        // Store the last matched path for use in handle method
-        void setCurrentPath(const std::string &path) { current_path_ = path; }
-
     private:
         enum class DocumentType {
             PDF,
@@ -23,7 +22,9 @@ namespace kolosal
             HTML
         };
 
-        std::string current_path_;
+        // Thread-local storage for current path
+        static thread_local std::string current_path_;
+        mutable std::mutex path_mutex_;
 
         DocumentType getDocumentType(const std::string &path);
         std::string getDataKey(DocumentType type);
@@ -32,6 +33,7 @@ namespace kolosal
         bool parseRequest(const std::string &body, nlohmann::json &request, SocketType sock);
         bool validateDocumentData(const nlohmann::json &request, const std::string &data_key, SocketType sock);
         std::vector<unsigned char> decodeBase64Data(const std::string &base64_data, SocketType sock);
+        void sendOptionsResponse(SocketType sock, const std::string &endpoint_name, const std::string &description);
     };
 
 } // namespace kolosal
