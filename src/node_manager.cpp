@@ -1224,6 +1224,17 @@ namespace kolosal
         {
             auto &config = ServerConfig::getInstance();
             
+            // Apply default inference engine logic: if the passed engine is empty or "llama-cpu",
+            // and we have a configured default, use that instead
+            std::string actualInferenceEngine = inferenceEngine;
+            if (!config.defaultInferenceEngine.empty() && 
+                (actualInferenceEngine.empty() || actualInferenceEngine == "llama-cpu"))
+            {
+                actualInferenceEngine = config.defaultInferenceEngine;
+                ServerLogger::logInfo("Using default inference engine '%s' for model '%s' instead of '%s'", 
+                                    actualInferenceEngine.c_str(), engineId.c_str(), inferenceEngine.c_str());
+            }
+            
             // Check if model already exists in config to avoid duplicates
             bool modelExistsInConfig = false;
             for (const auto &existingModel : config.models)
@@ -1244,7 +1255,7 @@ namespace kolosal
                 modelConfig.path = ServerConfig::makeAbsolutePath(modelPath);  // Convert to absolute path
                 modelConfig.loadImmediately = loadImmediately;
                 modelConfig.mainGpuId = mainGpuId;
-                modelConfig.inferenceEngine = inferenceEngine;
+                modelConfig.inferenceEngine = actualInferenceEngine;
                 modelConfig.loadParams = loadParams;
                 
                 config.models.push_back(modelConfig);
@@ -1260,7 +1271,7 @@ namespace kolosal
                         existingModel.path = ServerConfig::makeAbsolutePath(modelPath);  // Convert to absolute path
                         existingModel.loadImmediately = loadImmediately;
                         existingModel.mainGpuId = mainGpuId;
-                        existingModel.inferenceEngine = inferenceEngine;
+                        existingModel.inferenceEngine = actualInferenceEngine;
                         existingModel.loadParams = loadParams;
                         ServerLogger::logInfo("Updated model '%s' in configuration", engineId.c_str());
                         break;

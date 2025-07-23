@@ -18,7 +18,7 @@ namespace kolosal {
         bool load_immediately;         // Whether to load immediately when download completes (vs register for lazy loading)
         int main_gpu_id;
         LoadingParameters loading_params;
-        std::string inference_engine = "llama-cpu"; // Inference engine to use (llama-cpu, llama-cuda, llama-vulkan, etc.)
+        std::string inference_engine; // Inference engine to use (will be set by caller or use default from config)
         
         EngineCreationParams() : load_immediately(false), main_gpu_id(-1) {}
     };

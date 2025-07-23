@@ -24,7 +24,7 @@ public:
     // Optional fields
     bool load_immediately = true;      // Whether to load immediately after adding (vs register for lazy loading)
     int main_gpu_id = 0;
-    std::string inference_engine = "llama-cpu"; // Inference engine to use (llama-cpu, llama-cuda, llama-vulkan, etc.)
+    std::string inference_engine; // Inference engine to use (will use configured default if empty)
     
     // Loading parameters (nested object)
     struct LoadingParametersModel {
