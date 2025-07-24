@@ -256,15 +256,38 @@ if(WIN32)
     endforeach()
     
     if(MUPDF_MISSING)
-        # Add custom target to build MuPDF using devenv (Visual Studio)
-        # devenv can automatically retarget projects to the current VS version
-        add_custom_target(mupdf_build
-            COMMAND devenv mupdf.sln /upgrade
-            COMMAND devenv mupdf.sln /build "Release|x64" /project libmupdf
-            COMMAND devenv mupdf.sln /build "Release|x64" /project libthirdparty
-            WORKING_DIRECTORY ${MUPDF_PATH}/platform/win32
-            COMMENT "Building MuPDF libraries using devenv with auto-upgrade"
+        # Add custom target to build MuPDF using MSBuild (more reliable than devenv)
+        # First try to find MSBuild
+        find_program(MSBUILD_EXECUTABLE
+            NAMES MSBuild.exe
+            PATHS
+            "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/MSBuild/Current/Bin"
+            "C:/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin"
+            "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin"
+            "C:/Program Files (x86)/Microsoft Visual Studio/2019/Enterprise/MSBuild/Current/Bin"
+            "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/MSBuild/Current/Bin"
+            "C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/MSBuild/Current/Bin"
+            "C:/Program Files (x86)/MSBuild/14.0/Bin"
         )
+        
+        if(MSBUILD_EXECUTABLE)
+            message(STATUS "Found MSBuild: ${MSBUILD_EXECUTABLE}")
+            add_custom_target(mupdf_build
+                COMMAND ${MSBUILD_EXECUTABLE} mupdf.sln /p:Configuration=Release /p:Platform=x64 /t:libmupdf
+                COMMAND ${MSBUILD_EXECUTABLE} mupdf.sln /p:Configuration=Release /p:Platform=x64 /t:libthirdparty
+                WORKING_DIRECTORY ${MUPDF_PATH}/platform/win32
+                COMMENT "Building MuPDF libraries using MSBuild"
+            )
+        else()
+            message(WARNING "MSBuild not found. Trying with cmake --build")
+            add_custom_target(mupdf_build
+                COMMAND ${CMAKE_COMMAND} -S . -B build -A x64
+                COMMAND ${CMAKE_COMMAND} --build build --config Release --target libmupdf
+                COMMAND ${CMAKE_COMMAND} --build build --config Release --target libthirdparty
+                WORKING_DIRECTORY ${MUPDF_PATH}/platform/win32
+                COMMENT "Building MuPDF libraries using cmake"
+            )
+        endif()
         add_dependencies(kolosal_server mupdf_build)
     endif()
 endif()
