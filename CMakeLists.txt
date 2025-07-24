@@ -49,9 +49,9 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp/common)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp/ggml/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/pugixml/src)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/mupdf/include)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/mupdf/thirdparty/zlib/contrib/minizip)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/mupdf/thirdparty/zlib)
+# include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/mupdf/include)
+# include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/mupdf/thirdparty/zlib/contrib/minizip)
+# include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/mupdf/thirdparty/zlib)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/minizip)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/maddy/include)
 
@@ -79,7 +79,7 @@ set(SOURCES
     src/routes/server_logs_route.cpp    
     src/routes/embedding_route.cpp
     src/routes/internet_search_route.cpp
-    src/routes/parse_document_route.cpp
+    # src/routes/parse_document_route.cpp
     src/routes/retrieve_route.cpp
     src/routes/documents_route.cpp
     src/routes/downloads_route.cpp
@@ -91,9 +91,9 @@ set(SOURCES
     src/retrieval/document_list_types.cpp
     src/retrieval/retrieve_types.cpp
     src/retrieval/document_service.cpp
-    src/retrieval/parse_docx.cpp
-    src/retrieval/parse_pdf.cpp
-    src/retrieval/parse_html.cpp
+    # src/retrieval/parse_docx.cpp
+    # src/retrieval/parse_pdf.cpp
+    # src/retrieval/parse_html.cpp
     src/retrieval/chunking_types.cpp
     
     # Model files
@@ -110,9 +110,9 @@ set(SOURCES
     
     external/pugixml/src/pugixml.cpp
     # Minizip sources for DOCX parsing
-    external/mupdf/thirdparty/zlib/contrib/minizip/unzip.c
-    external/mupdf/thirdparty/zlib/contrib/minizip/ioapi.c
-    external/mupdf/thirdparty/zlib/contrib/minizip/iowin32.c
+    # external/mupdf/thirdparty/zlib/contrib/minizip/unzip.c
+    # external/mupdf/thirdparty/zlib/contrib/minizip/ioapi.c
+    # external/mupdf/thirdparty/zlib/contrib/minizip/iowin32.c
 )
 
 # Create shared library instead of static library.
@@ -230,71 +230,71 @@ add_subdirectory(${YAML_CPP_PATH})
 add_subdirectory(inference)
 
 # Configure MuPDF for the main server
-set(MUPDF_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/mupdf")
-target_include_directories(kolosal_server PRIVATE 
-    ${MUPDF_PATH}/include
-    ${MUPDF_PATH}/thirdparty/zlib/contrib/minizip
-    ${MUPDF_PATH}/thirdparty/zlib
-)
+# set(MUPDF_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/mupdf")
+# target_include_directories(kolosal_server PRIVATE 
+#     ${MUPDF_PATH}/include
+#     ${MUPDF_PATH}/thirdparty/zlib/contrib/minizip
+#     ${MUPDF_PATH}/thirdparty/zlib
+# )
 
 # Force Release build to match MuPDF (prebuilt Release library)
-if(WIN32 AND MSVC)
-    # MuPDF is only available as Release build, so force Release mode
-    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
-    set(CMAKE_CONFIGURATION_TYPES "Release" CACHE STRING "" FORCE)
-    message(STATUS "Forcing Release build to match MuPDF prebuilt library")
-endif()
+# if(WIN32 AND MSVC)
+#     # MuPDF is only available as Release build, so force Release mode
+#     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
+#     set(CMAKE_CONFIGURATION_TYPES "Release" CACHE STRING "" FORCE)
+#     message(STATUS "Forcing Release build to match MuPDF prebuilt library")
+# endif()
 
 # Build MuPDF if it doesn't exist
-if(WIN32)
-    set(MUPDF_LIB_DIR "${MUPDF_PATH}/platform/win32/x64/Release")
-    set(MUPDF_LIBS "${MUPDF_LIB_DIR}/libmupdf.lib" "${MUPDF_LIB_DIR}/libthirdparty.lib")
-    
-    # Check if MuPDF libraries exist, if not build them
-    set(MUPDF_MISSING FALSE)
-    foreach(lib ${MUPDF_LIBS})
-        if(NOT EXISTS "${lib}")
-            set(MUPDF_MISSING TRUE)
-            break()
-        endif()
-    endforeach()
-    
-    if(MUPDF_MISSING)
-        # Add custom target to build MuPDF using MSBuild (more reliable than devenv)
-        # First try to find MSBuild
-        find_program(MSBUILD_EXECUTABLE
-            NAMES MSBuild.exe
-            PATHS
-            "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/MSBuild/Current/Bin"
-            "C:/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin"
-            "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin"
-            "C:/Program Files (x86)/Microsoft Visual Studio/2019/Enterprise/MSBuild/Current/Bin"
-            "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/MSBuild/Current/Bin"
-            "C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/MSBuild/Current/Bin"
-            "C:/Program Files (x86)/MSBuild/14.0/Bin"
-        )
-        
-        if(MSBUILD_EXECUTABLE)
-            message(STATUS "Found MSBuild: ${MSBUILD_EXECUTABLE}")
-            add_custom_target(mupdf_build
-                COMMAND ${MSBUILD_EXECUTABLE} mupdf.sln /p:Configuration=Release /p:Platform=x64 /t:libmupdf
-                COMMAND ${MSBUILD_EXECUTABLE} mupdf.sln /p:Configuration=Release /p:Platform=x64 /t:libthirdparty
-                WORKING_DIRECTORY ${MUPDF_PATH}/platform/win32
-                COMMENT "Building MuPDF libraries using MSBuild"
-            )
-        else()
-            message(WARNING "MSBuild not found. Trying with cmake --build")
-            add_custom_target(mupdf_build
-                COMMAND ${CMAKE_COMMAND} -S . -B build -A x64
-                COMMAND ${CMAKE_COMMAND} --build build --config Release --target libmupdf
-                COMMAND ${CMAKE_COMMAND} --build build --config Release --target libthirdparty
-                WORKING_DIRECTORY ${MUPDF_PATH}/platform/win32
-                COMMENT "Building MuPDF libraries using cmake"
-            )
-        endif()
-        add_dependencies(kolosal_server mupdf_build)
-    endif()
-endif()
+# if(WIN32)
+#     set(MUPDF_LIB_DIR "${MUPDF_PATH}/platform/win32/x64/Release")
+#     set(MUPDF_LIBS "${MUPDF_LIB_DIR}/libmupdf.lib" "${MUPDF_LIB_DIR}/libthirdparty.lib")
+#     
+#     # Check if MuPDF libraries exist, if not build them
+#     set(MUPDF_MISSING FALSE)
+#     foreach(lib ${MUPDF_LIBS})
+#         if(NOT EXISTS "${lib}")
+#             set(MUPDF_MISSING TRUE)
+#             break()
+#         endif()
+#     endforeach()
+#     
+#     if(MUPDF_MISSING)
+#         # Add custom target to build MuPDF using MSBuild (more reliable than devenv)
+#         # First try to find MSBuild
+#         find_program(MSBUILD_EXECUTABLE
+#             NAMES MSBuild.exe
+#             PATHS
+#             "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/MSBuild/Current/Bin"
+#             "C:/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin"
+#             "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin"
+#             "C:/Program Files (x86)/Microsoft Visual Studio/2019/Enterprise/MSBuild/Current/Bin"
+#             "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/MSBuild/Current/Bin"
+#             "C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/MSBuild/Current/Bin"
+#             "C:/Program Files (x86)/MSBuild/14.0/Bin"
+#         )
+#         
+#         if(MSBUILD_EXECUTABLE)
+#             message(STATUS "Found MSBuild: ${MSBUILD_EXECUTABLE}")
+#             add_custom_target(mupdf_build
+#                 COMMAND ${MSBUILD_EXECUTABLE} mupdf.sln /p:Configuration=Release /p:Platform=x64 /t:libmupdf
+#                 COMMAND ${MSBUILD_EXECUTABLE} mupdf.sln /p:Configuration=Release /p:Platform=x64 /t:libthirdparty
+#                 WORKING_DIRECTORY ${MUPDF_PATH}/platform/win32
+#                 COMMENT "Building MuPDF libraries using MSBuild"
+#             )
+#         else()
+#             message(WARNING "MSBuild not found. Trying with cmake --build")
+#             add_custom_target(mupdf_build
+#                 COMMAND ${CMAKE_COMMAND} -S . -B build -A x64
+#                 COMMAND ${CMAKE_COMMAND} --build build --config Release --target libmupdf
+#                 COMMAND ${CMAKE_COMMAND} --build build --config Release --target libthirdparty
+#                 WORKING_DIRECTORY ${MUPDF_PATH}/platform/win32
+#                 COMMENT "Building MuPDF libraries using cmake"
+#             )
+#         endif()
+#         add_dependencies(kolosal_server mupdf_build)
+#     endif()
+# endif()
 
 # Only add yaml-cpp if it hasn't been added by the inference subdirectory
 # Note: yaml-cpp is still needed for server configuration
@@ -363,21 +363,21 @@ target_include_directories(kolosal_server PRIVATE
 )
 
 # Link MuPDF libraries to main server
-if(WIN32)
-    # For Windows, we'll need to build MuPDF or use prebuilt libraries
-    # Point to the correct x64/Release directory where the libraries are built
-    target_link_directories(kolosal_server PRIVATE 
-        ${MUPDF_PATH}/platform/win32/x64/Release
-    )
-    target_link_libraries(kolosal_server PRIVATE 
-        libmupdf libthirdparty
-    )
-else()
-    # For Unix systems, link standard MuPDF libraries
-    target_link_libraries(kolosal_server PRIVATE 
-        mupdf mupdf-third
-    )
-endif()
+# if(WIN32)
+#     # For Windows, we'll need to build MuPDF or use prebuilt libraries
+#     # Point to the correct x64/Release directory where the libraries are built
+#     target_link_directories(kolosal_server PRIVATE 
+#         ${MUPDF_PATH}/platform/win32/x64/Release
+#     )
+#     target_link_libraries(kolosal_server PRIVATE 
+#         libmupdf libthirdparty
+#     )
+# else()
+#     # For Unix systems, link standard MuPDF libraries
+#     target_link_libraries(kolosal_server PRIVATE 
+#         mupdf mupdf-third
+#     )
+# endif()
 
 # Define inference-related compile definitions
 target_compile_definitions(kolosal_server PUBLIC
