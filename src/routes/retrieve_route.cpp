@@ -28,7 +28,12 @@ RetrieveRoute::~RetrieveRoute() = default;
 
 bool RetrieveRoute::match(const std::string& method, const std::string& path)
 {
-    return method == "POST" && path == "/retrieve";
+    if ((method == "POST" || method == "OPTIONS") && path == "/retrieve")
+    {
+        current_method_ = method;
+        return true;
+    }
+    return false;
 }
 
 void RetrieveRoute::handle(SocketType sock, const std::string& body)
@@ -37,7 +42,17 @@ void RetrieveRoute::handle(SocketType sock, const std::string& body)
 
     try
     {
-        ServerLogger::logInfo("[Thread %u] Received retrieve request", std::this_thread::get_id());
+        ServerLogger::logInfo("[Thread %u] Received %s request for /retrieve", 
+                              std::this_thread::get_id(), current_method_.c_str());
+
+        // Handle OPTIONS request for CORS preflight
+        if (current_method_ == "OPTIONS")
+        {
+            handleOptions(sock);
+            return;
+        }
+
+        ServerLogger::logInfo("[Thread %u] Processing retrieve request", std::this_thread::get_id());
 
         // Check for empty body
         if (body.empty())
@@ -170,6 +185,34 @@ void RetrieveRoute::handle(SocketType sock, const std::string& body)
         }
 
         ServerLogger::logError("[Thread %u] Error handling retrieve request: %s", std::this_thread::get_id(), ex.what());
+        sendErrorResponse(sock, 500, "Internal server error: " + std::string(ex.what()), "server_error");
+    }
+}
+
+void RetrieveRoute::handleOptions(SocketType sock)
+{
+    try
+    {
+        ServerLogger::logDebug("[Thread %u] Handling OPTIONS request for /retrieve endpoint", 
+                               std::this_thread::get_id());
+
+        std::map<std::string, std::string> headers = {
+            {"Content-Type", "text/plain"},
+            {"Access-Control-Allow-Origin", "*"},
+            {"Access-Control-Allow-Methods", "POST, OPTIONS"},
+            {"Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key"},
+            {"Access-Control-Max-Age", "86400"} // Cache preflight for 24 hours
+        };
+        
+        send_response(sock, 200, "", headers);
+        
+        ServerLogger::logDebug("[Thread %u] Successfully handled OPTIONS request", 
+                               std::this_thread::get_id());
+    }
+    catch (const std::exception& ex)
+    {
+        ServerLogger::logError("[Thread %u] Error handling OPTIONS request: %s", 
+                               std::this_thread::get_id(), ex.what());
         sendErrorResponse(sock, 500, "Internal server error: " + std::string(ex.what()), "server_error");
     }
 }
