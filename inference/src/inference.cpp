@@ -888,6 +888,10 @@ namespace
 		{
 			// Enable embedding mode
 			llama_set_embeddings(context, true);
+			
+			// For embedding models, we typically want to use non-causal attention
+			// This allows the model to attend to all tokens in both directions
+			llama_set_causal_attn(context, false);
 
 			try
 			{
@@ -907,6 +911,17 @@ namespace
 					tokens.resize(max_tokens);
 #ifdef DEBUG
 					std::cout << "[INFERENCE] [EMBEDDING] Truncated input to " << max_tokens << " tokens" << std::endl;
+#endif
+				}
+
+				// For non-causal attention, ensure batch size doesn't exceed n_ubatch
+				// This prevents the assertion error in llama-context.cpp
+				const uint32_t context_n_ubatch = llama_n_ubatch(context);
+				if (tokens.size() > context_n_ubatch)
+				{
+					tokens.resize(context_n_ubatch);
+#ifdef DEBUG
+					std::cout << "[INFERENCE] [EMBEDDING] Truncated input to n_ubatch limit: " << context_n_ubatch << " tokens" << std::endl;
 #endif
 				}
 
@@ -1010,15 +1025,17 @@ namespace
 				// Clean up
 				llama_batch_free(local_batch);
 
-				// Disable embedding mode
+				// Disable embedding mode and restore causal attention
 				llama_set_embeddings(context, false);
+				llama_set_causal_attn(context, true);
 
 				return embedding;
 			}
 			catch (...)
 			{
-				// Disable embedding mode on error
+				// Disable embedding mode and restore causal attention on error
 				llama_set_embeddings(context, false);
+				llama_set_causal_attn(context, true);
 				throw;
 			}
 		}
@@ -1537,10 +1554,13 @@ namespace
 		{
 #ifdef DEBUG
 			std::cout << "[INFERENCE] [EMBEDDING] Initializing EmbeddingInferenceService with batch size: " << g_params.n_batch << std::endl;
+			std::cout << "[INFERENCE] [EMBEDDING] Context n_ubatch: " << llama_n_ubatch(context) << std::endl;
 #endif
 
 			// Always enable embeddings for this service
 			llama_set_embeddings(context, true);
+			// Set non-causal attention for embedding models
+			llama_set_causal_attn(context, false);
 
 			batch = llama_batch_init(params.n_ctx, 0, params.n_parallel);
 
@@ -1718,6 +1738,10 @@ namespace
 			common_batch_clear(batch);
 			llama_kv_cache_clear(context);
 
+			// Set up context for embedding generation
+			llama_set_embeddings(context, true);
+			llama_set_causal_attn(context, false); // Embedding models use non-causal attention
+
 			std::vector<std::vector<llama_token>> all_tokens;
 			std::vector<int> job_indices;
 
@@ -1750,11 +1774,20 @@ namespace
 						continue;
 					}
 
-					// Check token limit
-					const int max_tokens = std::min(n_ctx / static_cast<int>(embedding_jobs.size()) - 4, 512);
-					if (static_cast<int>(tokens.size()) > max_tokens)
+					// Check token limit - ensure we don't exceed context or n_ubatch limits
+					const uint32_t context_n_ubatch = llama_n_ubatch(context);
+					const int max_tokens_per_sequence = std::min({
+						n_ctx / static_cast<int>(embedding_jobs.size()) - 4, // Share context among sequences
+						static_cast<int>(context_n_ubatch / embedding_jobs.size()) - 4, // Share n_ubatch among sequences
+						512 // Reasonable upper limit for embeddings
+					});
+					
+					if (static_cast<int>(tokens.size()) > max_tokens_per_sequence)
 					{
-						tokens.resize(max_tokens);
+						tokens.resize(max_tokens_per_sequence);
+#ifdef DEBUG
+						std::cout << "[INFERENCE] [EMBEDDING] Truncated input to " << max_tokens_per_sequence << " tokens" << std::endl;
+#endif
 					}
 
 					all_tokens.push_back(tokens);
@@ -1776,6 +1809,7 @@ namespace
 			}
 
 			// Add tokens to batch with different sequence IDs
+			const uint32_t context_n_ubatch = llama_n_ubatch(context);
 			for (size_t seq = 0; seq < all_tokens.size(); ++seq)
 			{
 				const auto &tokens = all_tokens[seq];
@@ -1786,6 +1820,15 @@ namespace
 						break; // Batch is full
 					}
 
+					// For non-causal attention, ensure we don't exceed n_ubatch
+					if (batch.n_tokens >= static_cast<int>(context_n_ubatch))
+					{
+#ifdef DEBUG
+						std::cout << "[INFERENCE] [EMBEDDING] Batch size reached n_ubatch limit: " << context_n_ubatch << std::endl;
+#endif
+						break; // Prevent assertion error
+					}
+
 					batch.token[batch.n_tokens] = tokens[i];
 					batch.pos[batch.n_tokens] = static_cast<llama_pos>(i);
 					batch.n_seq_id[batch.n_tokens] = 1;
@@ -1794,6 +1837,22 @@ namespace
 					batch.logits[batch.n_tokens] = (i == tokens.size() - 1) ? true : false;
 					batch.n_tokens++;
 				}
+			}
+
+			// Ensure we have tokens to process and validate batch size
+			if (batch.n_tokens == 0)
+			{
+				return; // No tokens to process
+			}
+
+			// Final check: ensure batch size doesn't exceed n_ubatch for non-causal attention
+			if (batch.n_tokens > static_cast<int>(context_n_ubatch))
+			{
+#ifdef DEBUG
+				std::cout << "[INFERENCE] [EMBEDDING] WARNING: Batch size " << batch.n_tokens 
+						  << " exceeds n_ubatch " << context_n_ubatch << ", truncating batch" << std::endl;
+#endif
+				batch.n_tokens = static_cast<int>(context_n_ubatch);
 			}
 
 			// Decode the batch
@@ -1894,6 +1953,10 @@ namespace
 					job->cv.notify_all();
 				}
 			}
+			
+			// Restore context settings after processing embeddings
+			llama_set_embeddings(context, true); // Keep embeddings enabled for this service
+			// Note: We don't restore causal attention here since this is an embedding-only service
 		}
 	};
 } // namespace
@@ -1975,6 +2038,16 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 	if (isEmbeddingModel)
 	{
 		params.embedding = true;
+		// For embedding models, ensure n_ubatch is at least as large as n_batch
+		// This is required for non-causal attention models (assertion in llama-context.cpp)
+		if (params.n_ubatch < params.n_batch)
+		{
+#ifdef DEBUG
+			std::cout << "[INFERENCE] [EMBEDDING] Adjusting n_ubatch from " << params.n_ubatch 
+					  << " to " << params.n_batch << " for embedding model" << std::endl;
+#endif
+			params.n_ubatch = params.n_batch;
+		}
 	}
 	
 #if defined(USE_CUDA) || defined(USE_VULKAN)

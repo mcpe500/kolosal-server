@@ -83,6 +83,7 @@ set(SOURCES
     src/routes/retrieve_route.cpp
     src/routes/documents_route.cpp
     src/routes/downloads_route.cpp
+    src/routes/chunking_route.cpp
     
     # Retrieval files
     src/retrieval/add_document_types.cpp
@@ -93,10 +94,13 @@ set(SOURCES
     src/retrieval/parse_docx.cpp
     src/retrieval/parse_pdf.cpp
     src/retrieval/parse_html.cpp
+    src/retrieval/chunking_types.cpp
     
     # Model files
     src/models/embedding_request_model.cpp
     src/models/embedding_response_model.cpp
+    src/models/chunking_request_model.cpp
+    src/models/chunking_response_model.cpp
 
     src/auth/rate_limiter.cpp
     src/auth/cors_handler.cpp
