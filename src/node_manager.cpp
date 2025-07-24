@@ -11,6 +11,11 @@
 #include <winsock2.h>
 #include <windows.h>
 #define LIBRARY_EXTENSION ".dll"
+#elif defined(__APPLE__)
+#include <unistd.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
+#define LIBRARY_EXTENSION ".dylib"
 #else
 #include <unistd.h>
 #include <limits.h>
@@ -19,6 +24,36 @@
 
 namespace kolosal
 {
+    // Helper function to get the directory containing the current executable
+    static std::string getExecutableDirectory()
+    {
+#ifdef _WIN32
+        char path[MAX_PATH];
+        GetModuleFileNameA(NULL, path, MAX_PATH);
+        std::string execPath(path);
+        return std::filesystem::path(execPath).parent_path().string();
+#elif defined(__APPLE__)
+        char path[PATH_MAX];
+        uint32_t size = sizeof(path);
+        if (_NSGetExecutablePath(path, &size) == 0) {
+            char realPath[PATH_MAX];
+            if (realpath(path, realPath) != NULL) {
+                return std::filesystem::path(realPath).parent_path().string();
+            }
+        }
+        // Fallback to current directory
+        return std::filesystem::current_path().string();
+#else
+        char path[PATH_MAX];
+        ssize_t count = readlink("/proc/self/exe", path, PATH_MAX);
+        if (count != -1) {
+            path[count] = '\0';
+            return std::filesystem::path(path).parent_path().string();
+        }
+        // Fallback to current directory
+        return std::filesystem::current_path().string();
+#endif
+    }
 
     NodeManager::NodeManager(std::chrono::seconds idleTimeout)
         : idleTimeout_(idleTimeout), stopAutoscaling_(false)
@@ -45,9 +80,44 @@ namespace kolosal
                 // Set default inference engine if none is configured
                 if (config.defaultInferenceEngine.empty() && !availableEngines.empty())
                 {
-                    // Check if system has a dedicated GPU for Vulkan acceleration
-                    bool hasGPU = hasVulkanCapableGPU();
                     std::string preferredEngine;
+                    
+#ifdef __APPLE__
+                    // On Apple systems, prioritize Metal acceleration
+                    ServerLogger::logInfo("Apple system detected. Looking for Metal-accelerated engine...");
+                    for (const auto &engine : availableEngines)
+                    {
+                        if (engine.name == "llama-metal")
+                        {
+                            preferredEngine = engine.name;
+                            ServerLogger::logInfo("Metal acceleration available. Setting default inference engine to: %s", preferredEngine.c_str());
+                            break;
+                        }
+                    }
+                    
+                    // If llama-metal not found, fall back to CPU
+                    if (preferredEngine.empty())
+                    {
+                        for (const auto &engine : availableEngines)
+                        {
+                            if (engine.name == "llama-cpu")
+                            {
+                                preferredEngine = engine.name;
+                                ServerLogger::logInfo("Metal acceleration not available. Using CPU-based engine: %s", preferredEngine.c_str());
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // If still empty, use first available
+                    if (preferredEngine.empty())
+                    {
+                        preferredEngine = availableEngines[0].name;
+                        ServerLogger::logInfo("Using first available engine: %s", preferredEngine.c_str());
+                    }
+#else
+                    // On non-Apple systems, check if system has a dedicated GPU for Vulkan acceleration
+                    bool hasGPU = hasVulkanCapableGPU();
                     
                     if (hasGPU)
                     {
@@ -75,19 +145,22 @@ namespace kolosal
                         preferredEngine = availableEngines[0].name;
                         ServerLogger::logInfo("No dedicated GPU detected. Using CPU-based engine: %s", preferredEngine.c_str());
                     }
+#endif
                     
                     config.defaultInferenceEngine = preferredEngine;
                     ServerLogger::logInfo("Set default inference engine to: %s", config.defaultInferenceEngine.c_str());
                     
                     // Save the updated configuration to file to persist the choice
-                    std::string configFile = "config.yaml";
-                    if (config.saveToFile(configFile))
+                    ServerLogger::logInfo("About to save default inference engine configuration");
+                    ServerLogger::logInfo("Current config file path during initialization: '%s'", config.getCurrentConfigFilePath().c_str());
+                    
+                    if (config.saveToCurrentFile())
                     {
-                        ServerLogger::logInfo("Saved default inference engine configuration to: %s", configFile.c_str());
+                        ServerLogger::logInfo("Saved default inference engine configuration to current config file");
                     }
                     else
                     {
-                        ServerLogger::logWarning("Failed to save default inference engine configuration to file");
+                        ServerLogger::logWarning("Failed to save default inference engine configuration to current config file");
                     }
                 }
             }
@@ -98,7 +171,190 @@ namespace kolosal
         }
         else
         {
-            ServerLogger::logWarning("No inference engines configured. Add inference_engines section to config file.");
+            ServerLogger::logWarning("No inference engines configured. Setting up default engines...");
+            
+            // Set up default inference engines based on platform
+            std::vector<InferenceEngineConfig> defaultEngines;
+            
+#ifdef __APPLE__
+            // On Apple systems, prioritize Metal acceleration
+            ServerLogger::logInfo("Apple system detected. Adding Metal and CPU inference engines...");
+            
+            // Try to find libraries in the build directory
+            std::filesystem::path buildDir = std::filesystem::current_path();
+            auto metalPath = buildDir / "lib" / ("libllama-metal" + std::string(LIBRARY_EXTENSION));
+            auto cpuPath = buildDir / "lib" / ("libllama-cpu" + std::string(LIBRARY_EXTENSION));
+            
+            if (std::filesystem::exists(metalPath))
+            {
+                defaultEngines.emplace_back("llama-metal", metalPath.string(), "Apple Metal GPU acceleration");
+                ServerLogger::logInfo("Added Metal inference engine: %s", metalPath.string().c_str());
+            }
+            
+            if (std::filesystem::exists(cpuPath))
+            {
+                defaultEngines.emplace_back("llama-cpu", cpuPath.string(), "CPU inference engine");
+                ServerLogger::logInfo("Added CPU inference engine: %s", cpuPath.string().c_str());
+            }
+            
+            // If no libraries found in build dir, try system paths
+            if (defaultEngines.empty())
+            {
+                // Get executable directory for relative path searches
+                std::string execDir = getExecutableDirectory();
+                ServerLogger::logInfo("Searching for inference engines. Executable directory: %s", execDir.c_str());
+                
+                std::vector<std::string> searchPaths = {
+                    // Standard macOS Homebrew paths
+                    "/opt/homebrew/lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    "/opt/homebrew/lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
+                    "/usr/local/lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    "/usr/local/lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
+                    // macOS App bundle paths (if installed as app)
+                    "/Applications/Kolosal CLI.app/Contents/MacOS/lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    "/Applications/Kolosal CLI.app/Contents/MacOS/lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
+                    // Paths relative to executable directory
+                    execDir + "/lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    execDir + "/lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
+                    execDir + "/../lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    execDir + "/../lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
+                    // Relative paths
+                    "./lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    "./lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
+                    "./libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    "./libllama-cpu" + std::string(LIBRARY_EXTENSION),
+                    // Library paths relative to executable
+                    "../lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
+                    "../lib/libllama-cpu" + std::string(LIBRARY_EXTENSION)
+                };
+                
+                for (const auto& path : searchPaths)
+                {
+                    ServerLogger::logInfo("Checking for inference engine at: %s", path.c_str());
+                    if (std::filesystem::exists(path))
+                    {
+                        if (path.find("metal") != std::string::npos)
+                        {
+                            defaultEngines.emplace_back("llama-metal", path, "Apple Metal GPU acceleration");
+                            ServerLogger::logInfo("Found Metal inference engine: %s", path.c_str());
+                        }
+                        else if (path.find("cpu") != std::string::npos)
+                        {
+                            defaultEngines.emplace_back("llama-cpu", path, "CPU inference engine");
+                            ServerLogger::logInfo("Found CPU inference engine: %s", path.c_str());
+                        }
+                    }
+                }
+                
+                // If still no engines found, provide detailed logging
+                if (defaultEngines.empty())
+                {
+                    ServerLogger::logError("No inference engine libraries found in any of the searched paths:");
+                    for (const auto& path : searchPaths)
+                    {
+                        ServerLogger::logError("  - %s", path.c_str());
+                    }
+                    ServerLogger::logError("Please ensure inference engine libraries are properly installed.");
+                }
+            }
+#else
+            // On non-Apple systems, use existing GPU detection logic
+            ServerLogger::logInfo("Non-Apple system detected. Adding CPU and GPU inference engines...");
+            
+            std::filesystem::path buildDir = std::filesystem::current_path();
+            auto cpuPath = buildDir / "lib" / ("libllama-cpu" + std::string(LIBRARY_EXTENSION));
+            auto vulkanPath = buildDir / "lib" / ("libllama-vulkan" + std::string(LIBRARY_EXTENSION));
+            
+            if (std::filesystem::exists(cpuPath))
+            {
+                defaultEngines.emplace_back("llama-cpu", cpuPath.string(), "CPU inference engine");
+                ServerLogger::logInfo("Added CPU inference engine: %s", cpuPath.string().c_str());
+            }
+            
+            if (std::filesystem::exists(vulkanPath))
+            {
+                defaultEngines.emplace_back("llama-vulkan", vulkanPath.string(), "Vulkan GPU acceleration");
+                ServerLogger::logInfo("Added Vulkan inference engine: %s", vulkanPath.string().c_str());
+            }
+#endif
+            
+            if (!defaultEngines.empty())
+            {
+                // Update the server config with default engines
+                config.inferenceEngines = defaultEngines;
+                
+                // Try to configure the engines
+                if (inferenceLoader_->configureEngines(config.inferenceEngines))
+                {
+                    auto availableEngines = inferenceLoader_->getAvailableEngines();
+                    ServerLogger::logInfo("Configured %zu default inference engines:", availableEngines.size());
+                    
+                    // Set default engine based on platform
+                    if (config.defaultInferenceEngine.empty() && !availableEngines.empty())
+                    {
+                        std::string preferredEngine;
+                        
+#ifdef __APPLE__
+                        // Prefer Metal on Apple systems
+                        for (const auto &engine : availableEngines)
+                        {
+                            if (engine.name == "llama-metal")
+                            {
+                                preferredEngine = engine.name;
+                                break;
+                            }
+                        }
+                        if (preferredEngine.empty())
+                        {
+                            preferredEngine = availableEngines[0].name;
+                        }
+#else
+                        // Prefer GPU acceleration on other systems if available
+                        bool hasGPU = hasVulkanCapableGPU();
+                        if (hasGPU)
+                        {
+                            for (const auto &engine : availableEngines)
+                            {
+                                if (engine.name == "llama-vulkan")
+                                {
+                                    preferredEngine = engine.name;
+                                    break;
+                                }
+                            }
+                        }
+                        if (preferredEngine.empty())
+                        {
+                            preferredEngine = availableEngines[0].name;
+                        }
+#endif
+                        
+                        config.defaultInferenceEngine = preferredEngine;
+                        ServerLogger::logInfo("Set default inference engine to: %s", config.defaultInferenceEngine.c_str());
+                        
+                        // Save configuration if possible
+                        if (config.saveToCurrentFile())
+                        {
+                            ServerLogger::logInfo("Saved default configuration to file");
+                        }
+                    }
+                }
+                else
+                {
+                    ServerLogger::logError("Failed to configure default inference engines: %s", inferenceLoader_->getLastError().c_str());
+                }
+            }
+            else
+            {
+                ServerLogger::logError("No inference engine libraries found. Please build inference engines or check installation.");
+                ServerLogger::logError("To resolve this issue:");
+                ServerLogger::logError("1. Ensure that inference engines are built and installed properly");
+                ServerLogger::logError("2. Check that libraries are in one of the expected locations:");
+                ServerLogger::logError("   - /opt/homebrew/lib/ (Homebrew installation)");
+                ServerLogger::logError("   - /usr/local/lib/ (standard installation)");
+                ServerLogger::logError("   - Relative to executable: bin/../lib/");
+                ServerLogger::logError("3. Verify that the Metal/CPU inference libraries exist (.dylib files)");
+                ServerLogger::logError("4. Consider configuring engines manually in the configuration file");
+            }
         }
 
         autoscalingThread_ = std::thread(&NodeManager::autoscalingLoop, this);
@@ -1022,7 +1278,7 @@ namespace kolosal
         ServerLogger::logInfo("Model path for engine \'%s\' is a URL. Starting download: %s", engineId.c_str(), modelPath.c_str());
 
         // Generate local path for the downloaded model
-        std::string downloadsDir = "./models";
+        std::string downloadsDir = std::filesystem::absolute("./models").string();
         std::string localPath = generate_download_path(modelPath, downloadsDir);
 
         // Check if the file already exists locally
@@ -1214,6 +1470,17 @@ namespace kolosal
         {
             auto &config = ServerConfig::getInstance();
             
+            // Apply default inference engine logic: if the passed engine is empty or "llama-cpu",
+            // and we have a configured default, use that instead
+            std::string actualInferenceEngine = inferenceEngine;
+            if (!config.defaultInferenceEngine.empty() && 
+                (actualInferenceEngine.empty() || actualInferenceEngine == "llama-cpu"))
+            {
+                actualInferenceEngine = config.defaultInferenceEngine;
+                ServerLogger::logInfo("Using default inference engine '%s' for model '%s' instead of '%s'", 
+                                    actualInferenceEngine.c_str(), engineId.c_str(), inferenceEngine.c_str());
+            }
+            
             // Check if model already exists in config to avoid duplicates
             bool modelExistsInConfig = false;
             for (const auto &existingModel : config.models)
@@ -1231,10 +1498,10 @@ namespace kolosal
                 // Create new model config
                 ModelConfig modelConfig;
                 modelConfig.id = engineId;
-                modelConfig.path = modelPath;
+                modelConfig.path = ServerConfig::makeAbsolutePath(modelPath);  // Convert to absolute path
                 modelConfig.loadImmediately = loadImmediately;
                 modelConfig.mainGpuId = mainGpuId;
-                modelConfig.inferenceEngine = inferenceEngine;
+                modelConfig.inferenceEngine = actualInferenceEngine;
                 modelConfig.loadParams = loadParams;
                 
                 config.models.push_back(modelConfig);
@@ -1247,10 +1514,10 @@ namespace kolosal
                 {
                     if (existingModel.id == engineId)
                     {
-                        existingModel.path = modelPath;
+                        existingModel.path = ServerConfig::makeAbsolutePath(modelPath);  // Convert to absolute path
                         existingModel.loadImmediately = loadImmediately;
                         existingModel.mainGpuId = mainGpuId;
-                        existingModel.inferenceEngine = inferenceEngine;
+                        existingModel.inferenceEngine = actualInferenceEngine;
                         existingModel.loadParams = loadParams;
                         ServerLogger::logInfo("Updated model '%s' in configuration", engineId.c_str());
                         break;
@@ -1259,10 +1526,13 @@ namespace kolosal
             }
             
             // Save the updated configuration
-            std::string configFile = "config.yaml"; // Default config file
-            if (!config.saveToFile(configFile))
+            ServerLogger::logInfo("About to save configuration for model '%s'", engineId.c_str());
+            ServerLogger::logInfo("Current config file path in NodeManager: '%s'", config.getCurrentConfigFilePath().c_str());
+            ServerLogger::logInfo("ServerConfig instance address during model save: %lu", reinterpret_cast<uintptr_t>(&config));
+            
+            if (!config.saveToCurrentFile())
             {
-                ServerLogger::logWarning("Failed to save configuration to file for model '%s'", engineId.c_str());
+                ServerLogger::logWarning("Failed to save configuration to file for model '%s'. Configuration changes are in memory only.", engineId.c_str());
                 return false;
             }
             
@@ -1294,10 +1564,13 @@ namespace kolosal
                 ServerLogger::logInfo("Removed model '%s' from configuration", engineId.c_str());
                 
                 // Save the updated configuration
-                std::string configFile = "config.yaml"; // Default config file
-                if (!config.saveToFile(configFile))
+                ServerLogger::logInfo("About to save configuration after removing model '%s'", engineId.c_str());
+                ServerLogger::logInfo("Current config file path in NodeManager: '%s'", config.getCurrentConfigFilePath().c_str());
+                ServerLogger::logInfo("ServerConfig instance address during model removal: %lu", reinterpret_cast<uintptr_t>(&config));
+                
+                if (!config.saveToCurrentFile())
                 {
-                    ServerLogger::logWarning("Failed to save configuration to file after removing model '%s'", engineId.c_str());
+                    ServerLogger::logWarning("Failed to save configuration to file after removing model '%s'. Configuration changes are in memory only.", engineId.c_str());
                     return false;
                 }
                 

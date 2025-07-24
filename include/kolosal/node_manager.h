@@ -57,7 +57,7 @@ public:
      * @param engineType Type of engine to load ("cpu", "cuda", "vulkan")
      * @return True if the engine was loaded successfully, false otherwise.
      */
-    bool addEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0, const std::string& engineType = "llama-cpu");
+    bool addEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId, const std::string& engineType);
 
     /**
      * @brief Loads a new embedding engine with the given model and parameters.
@@ -79,8 +79,8 @@ public:
      * @param engineType Type of engine to load ("cpu", "cuda", "vulkan")
      * @return True if the model was validated and registered successfully, false otherwise.
      */
-    bool registerEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0, const std::string& engineType = "llama-cpu");
-
+    bool registerEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId, const std::string& engineType);
+  
     /**
      * @brief Registers an embedding model for lazy loading without immediately loading it.
      * The model will be validated but not loaded until first access.

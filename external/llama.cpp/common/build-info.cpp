@@ -1,4 +1,4 @@
-int LLAMA_BUILD_NUMBER = 177;
-char const *LLAMA_COMMIT = "840972b8";
-char const *LLAMA_COMPILER = "MSVC 19.42.34435.0";
-char const *LLAMA_BUILD_TARGET = "x64";
+int LLAMA_BUILD_NUMBER = 124;
+char const *LLAMA_COMMIT = "16dbfa6b";
+char const *LLAMA_COMPILER = "cc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0";
+char const *LLAMA_BUILD_TARGET = "x86_64-linux-gnu";

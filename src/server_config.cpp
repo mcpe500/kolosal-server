@@ -4,9 +4,102 @@
 #include <iostream>
 #include <fstream>
 #include <thread>
+#include <filesystem>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <stdlib.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <unistd.h>
+#include <limits.h>
+#else
+#include <unistd.h>
+#include <limits.h>
+#endif
 
 namespace kolosal
-{    bool ServerConfig::loadFromArgs(int argc, char *argv[])
+{
+    /**
+     * @brief Convert a relative path to an absolute path with fallback to executable directory
+     * @param path The path to convert (can be relative or already absolute)
+     * @return Absolute path as string
+     */
+    /*static*/ std::string ServerConfig::makeAbsolutePath(const std::string& path) {
+        if (path.empty()) {
+            return path;
+        }
+        
+        try {
+            std::filesystem::path fsPath(path);
+            
+            // If already absolute, return as-is
+            if (fsPath.is_absolute()) {
+                return fsPath.string();
+            }
+            
+            // First try: Convert to absolute path relative to current working directory
+            std::filesystem::path absolutePath = std::filesystem::absolute(fsPath);
+            if (std::filesystem::exists(absolutePath)) {
+                return absolutePath.string();
+            }
+            
+            // Second try: Check relative to the executable directory
+            try {
+                // Get the executable path
+                std::filesystem::path executablePath;
+                
+#ifdef _WIN32
+                char execPath[MAX_PATH];
+                if (GetModuleFileNameA(NULL, execPath, MAX_PATH) != 0) {
+                    executablePath = std::filesystem::path(execPath).parent_path();
+                }
+#elif defined(__APPLE__)
+                // On macOS, use _NSGetExecutablePath
+                uint32_t size = PATH_MAX;
+                char execPath[PATH_MAX];
+                if (_NSGetExecutablePath(execPath, &size) == 0) {
+                    // Resolve any symlinks
+                    char resolvedPath[PATH_MAX];
+                    if (realpath(execPath, resolvedPath) != nullptr) {
+                        executablePath = std::filesystem::path(resolvedPath).parent_path();
+                    } else {
+                        executablePath = std::filesystem::path(execPath).parent_path();
+                    }
+                }
+#else
+                // On Linux, use /proc/self/exe
+                char execPath[PATH_MAX];
+                ssize_t len = readlink("/proc/self/exe", execPath, sizeof(execPath) - 1);
+                if (len != -1) {
+                    execPath[len] = '\0';
+                    executablePath = std::filesystem::path(execPath).parent_path();
+                }
+#endif
+                
+                if (!executablePath.empty()) {
+                    std::filesystem::path execRelativePath = executablePath / fsPath;
+                    if (std::filesystem::exists(execRelativePath)) {
+                        ServerLogger::instance().info("Found path relative to executable: " + execRelativePath.string());
+                        return execRelativePath.string();
+                    }
+                }
+            } catch (const std::exception& e) {
+                ServerLogger::instance().info("Failed to get executable path: " + std::string(e.what()));
+            }
+            
+            // If file doesn't exist in either location, return the absolute path anyway
+            // (it might be created later or be a URL)
+            return absolutePath.string();
+            
+        } catch (const std::filesystem::filesystem_error& e) {
+            // If filesystem operations fail, return the original path
+            ServerLogger::instance().info("Warning: Failed to convert path to absolute: " + path + " - " + e.what());
+            return path;
+        }
+    }
+
+    bool ServerConfig::loadFromArgs(int argc, char *argv[])
     {
         // Automatically detect and load configuration files
         // Check for config files in this order: 
@@ -16,14 +109,41 @@ namespace kolosal
         bool configLoaded = false;
         
         // First try system-wide config (installed version)
+#ifdef __APPLE__
+        // On macOS, check /usr/local/etc for Homebrew installations and /etc for system-wide
+        std::vector<std::string> systemPaths = {
+            "/usr/local/etc/kolosal/config.yaml",  // Homebrew/user installed
+            "/etc/kolosal/config.yaml"             // System-wide
+        };
+        
+        for (const auto& systemPath : systemPaths) {
+            std::ifstream systemFile(systemPath);
+            if (systemFile.good()) {
+                systemFile.close();
+                if (loadFromFile(systemPath)) {
+                    ServerLogger::instance().info("Loaded configuration from " + systemPath);
+                    currentConfigFilePath = systemPath;
+                    ServerLogger::instance().info("Stored config file path: " + currentConfigFilePath);
+                    ServerLogger::instance().info("ServerConfig instance address during load: " + std::to_string(reinterpret_cast<uintptr_t>(this)));
+                    configLoaded = true;
+                    break;
+                }
+            }
+        }
+#else
+        // On Linux, use standard system path
         std::ifstream systemFile("/etc/kolosal/config.yaml");
         if (systemFile.good()) {
             systemFile.close();
             if (loadFromFile("/etc/kolosal/config.yaml")) {
-                std::cout << "Loaded configuration from /etc/kolosal/config.yaml" << std::endl;
+                ServerLogger::instance().info("Loaded configuration from /etc/kolosal/config.yaml");
+                currentConfigFilePath = "/etc/kolosal/config.yaml"; // Store exact path used
+                ServerLogger::instance().info("Stored config file path: " + currentConfigFilePath);
+                ServerLogger::instance().info("ServerConfig instance address during load: " + std::to_string(reinterpret_cast<uintptr_t>(this)));
                 configLoaded = true;
             }
         }
+#endif
         
         // If no system config found, try config.yaml in working directory (development)
         if (!configLoaded) {
@@ -31,7 +151,11 @@ namespace kolosal
             if (yamlFile.good()) {
                 yamlFile.close();
                 if (loadFromFile("config.yaml")) {
-                    std::cout << "Loaded configuration from config.yaml" << std::endl;
+                    ServerLogger::instance().info("Loaded configuration from config.yaml");
+                    // For relative paths, store the absolute path to ensure we can always find it later
+                    currentConfigFilePath = std::filesystem::absolute("config.yaml").string();
+                    ServerLogger::instance().info("Stored config file path: " + currentConfigFilePath);
+                    ServerLogger::instance().info("ServerConfig instance address during load: " + std::to_string(reinterpret_cast<uintptr_t>(this)));
                     configLoaded = true;
                 }
             }
@@ -43,7 +167,11 @@ namespace kolosal
             if (jsonFile.good()) {
                 jsonFile.close();
                 if (loadFromFile("config.json")) {
-                    std::cout << "Loaded configuration from config.json" << std::endl;
+                    ServerLogger::instance().info("Loaded configuration from config.json");
+                    // For relative paths, store the absolute path to ensure we can always find it later
+                    currentConfigFilePath = std::filesystem::absolute("config.json").string();
+                    ServerLogger::instance().info("Stored config file path: " + currentConfigFilePath);
+                    ServerLogger::instance().info("ServerConfig instance address during load: " + std::to_string(reinterpret_cast<uintptr_t>(this)));
                     configLoaded = true;
                 }
             }
@@ -51,22 +179,67 @@ namespace kolosal
         
         // If still no config found, try user home directory
         if (!configLoaded) {
-            const char* homeDir = getenv("HOME");
-            if (homeDir) {
-                std::string userConfigPath = std::string(homeDir) + "/.kolosal/config.yaml";
+            std::string userConfigPath;
+            
+#ifdef _WIN32
+            // On Windows, try user's AppData\Roaming directory first
+            char* userProfile = nullptr;
+            size_t len = 0;
+            if (_dupenv_s(&userProfile, &len, "USERPROFILE") == 0 && userProfile != nullptr) {
+                userConfigPath = std::string(userProfile) + "\\AppData\\Roaming\\Kolosal\\config.yaml";
+                free(userProfile);
+                
                 std::ifstream userFile(userConfigPath);
                 if (userFile.good()) {
                     userFile.close();
                     if (loadFromFile(userConfigPath)) {
-                        std::cout << "Loaded configuration from " << userConfigPath << std::endl;
+                        ServerLogger::instance().info("Loaded configuration from " + userConfigPath);
+                        currentConfigFilePath = userConfigPath; // Store exact path used
+                        ServerLogger::instance().info("Stored config file path: " + currentConfigFilePath);
+                        ServerLogger::instance().info("ServerConfig instance address during load: " + std::to_string(reinterpret_cast<uintptr_t>(this)));
                         configLoaded = true;
                     }
                 }
             }
+#elif defined(__APPLE__)
+            // On macOS, use standard Application Support directory
+            const char* homeDir = getenv("HOME");
+            if (homeDir) {
+                userConfigPath = std::string(homeDir) + "/Library/Application Support/Kolosal/config.yaml";
+                std::ifstream userFile(userConfigPath);
+                if (userFile.good()) {
+                    userFile.close();
+                    if (loadFromFile(userConfigPath)) {
+                        ServerLogger::instance().info("Loaded configuration from " + userConfigPath);
+                        currentConfigFilePath = userConfigPath; // Store exact path used
+                        ServerLogger::instance().info("Stored config file path: " + currentConfigFilePath);
+                        ServerLogger::instance().info("ServerConfig instance address during load: " + std::to_string(reinterpret_cast<uintptr_t>(this)));
+                        configLoaded = true;
+                    }
+                }
+            }
+#else
+            // On Unix/Linux systems
+            const char* homeDir = getenv("HOME");
+            if (homeDir) {
+                userConfigPath = std::string(homeDir) + "/.kolosal/config.yaml";
+                std::ifstream userFile(userConfigPath);
+                if (userFile.good()) {
+                    userFile.close();
+                    if (loadFromFile(userConfigPath)) {
+                        ServerLogger::instance().info("Loaded configuration from " + userConfigPath);
+                        currentConfigFilePath = userConfigPath; // Store exact path used
+                        ServerLogger::instance().info("Stored config file path: " + currentConfigFilePath);
+                        ServerLogger::instance().info("ServerConfig instance address during load: " + std::to_string(reinterpret_cast<uintptr_t>(this)));
+                        configLoaded = true;
+                    }
+                }
+            }
+#endif
         }
         
         if (!configLoaded) {
-            std::cout << "No configuration file found, using default settings" << std::endl;
+            ServerLogger::instance().info("No configuration file found, using default settings");
         }
 
         // Process command line arguments (they can override config file settings)
@@ -85,10 +258,20 @@ namespace kolosal
             }
             else if ((arg == "-c" || arg == "--config") && i + 1 < argc)
             {
-                if (!loadFromFile(argv[++i]))
+                std::string configFile = argv[++i];
+                if (!loadFromFile(configFile))
                 {
                     return false;
                 }
+                // Handle both relative and absolute paths from command line
+                if (std::filesystem::path(configFile).is_absolute()) {
+                    currentConfigFilePath = configFile; // Store exact absolute path
+                } else {
+                    currentConfigFilePath = std::filesystem::absolute(configFile).string(); // Convert relative to absolute
+                }
+                ServerLogger::instance().info("Loaded configuration from " + configFile);
+                ServerLogger::instance().info("Stored config file path: " + currentConfigFilePath);
+                ServerLogger::instance().info("ServerConfig instance address during load: " + std::to_string(reinterpret_cast<uintptr_t>(this)));
             }
 
             // Logging options
@@ -169,7 +352,7 @@ namespace kolosal
             {
                 ModelConfig model;
                 model.id = argv[++i];
-                model.path = argv[++i];
+                model.path = ServerConfig::makeAbsolutePath(argv[++i]);
                 model.loadImmediately = true;
                 models.push_back(model);
             }
@@ -177,7 +360,7 @@ namespace kolosal
             {
                 ModelConfig model;
                 model.id = argv[++i];
-                model.path = argv[++i];
+                model.path = ServerConfig::makeAbsolutePath(argv[++i]);
                 model.loadImmediately = false;
                 models.push_back(model);
             }
@@ -480,7 +663,7 @@ namespace kolosal
                     if (modelConfig["id"])
                         model.id = modelConfig["id"].as<std::string>();
                     if (modelConfig["path"])
-                        model.path = modelConfig["path"].as<std::string>();
+                        model.path = ServerConfig::makeAbsolutePath(modelConfig["path"].as<std::string>());
                     if (modelConfig["type"])
                         model.type = modelConfig["type"].as<std::string>();
                     // Support both new and old field names for backward compatibility
@@ -531,7 +714,7 @@ namespace kolosal
                     if (engineConfig["name"])
                         engine.name = engineConfig["name"].as<std::string>();
                     if (engineConfig["library_path"])
-                        engine.library_path = engineConfig["library_path"].as<std::string>();
+                        engine.library_path = ServerConfig::makeAbsolutePath(engineConfig["library_path"].as<std::string>());
                     if (engineConfig["version"])
                         engine.version = engineConfig["version"].as<std::string>();
                     if (engineConfig["description"])
@@ -666,7 +849,7 @@ namespace kolosal
             {
                 YAML::Node modelNode;
                 modelNode["id"] = model.id;
-                modelNode["path"] = model.path;
+                modelNode["path"] = ServerConfig::makeAbsolutePath(model.path);  // Convert to absolute path
                 modelNode["type"] = model.type;
                 modelNode["load_immediately"] = model.loadImmediately;
                 modelNode["main_gpu_id"] = model.mainGpuId;
@@ -689,7 +872,7 @@ namespace kolosal
             {
                 YAML::Node engineNode;
                 engineNode["name"] = engine.name;
-                engineNode["library_path"] = engine.library_path;
+                engineNode["library_path"] = ServerConfig::makeAbsolutePath(engine.library_path);  // Convert to absolute path
                 engineNode["version"] = engine.version;
                 engineNode["description"] = engine.description;
                 engineNode["load_on_startup"] = engine.load_on_startup;
@@ -987,6 +1170,79 @@ namespace kolosal
     void ServerConfig::setInstance(const ServerConfig& config)
     {
         getInstance() = config;
+    }
+
+    bool ServerConfig::saveToCurrentFile() const
+    {
+        ServerLogger::instance().info("saveToCurrentFile called. currentConfigFilePath: '" + currentConfigFilePath + "'");
+        ServerLogger::instance().info("ServerConfig instance address: " + std::to_string(reinterpret_cast<uintptr_t>(this)));
+        
+        if (currentConfigFilePath.empty())
+        {
+            ServerLogger::instance().info("currentConfigFilePath is empty, using fallback logic");
+            
+            // If no config file was loaded, try to determine a reasonable default location
+            // based on the same priority order used during loading
+            
+            std::vector<std::string> candidatePaths;
+            
+#ifdef _WIN32
+            // On Windows, try user's AppData\Roaming directory first (same as loading logic)
+            char* userProfile = nullptr;
+            size_t len = 0;
+            if (_dupenv_s(&userProfile, &len, "USERPROFILE") == 0 && userProfile != nullptr) {
+                std::string userConfigPath = std::string(userProfile) + "\\AppData\\Roaming\\Kolosal\\config.yaml";
+                candidatePaths.push_back(userConfigPath);
+                free(userProfile);
+            }
+#else
+            // On Unix/Linux systems, try user home directory
+            const char* homeDir = getenv("HOME");
+            if (homeDir) {
+                std::string userConfigPath = std::string(homeDir) + "/.kolosal/config.yaml";
+                candidatePaths.push_back(userConfigPath);
+            }
+#endif
+            
+            // Then try current working directory
+            candidatePaths.push_back("config.yaml");
+            
+            // Try each candidate path in order
+            for (const auto& path : candidatePaths) {
+                ServerLogger::instance().info("Trying fallback path: " + path);
+                try {
+                    // Create directory if it doesn't exist
+                    std::filesystem::path filePath(path);
+                    std::filesystem::path dirPath = filePath.parent_path();
+                    
+                    if (!dirPath.empty() && !std::filesystem::exists(dirPath)) {
+                        std::filesystem::create_directories(dirPath);
+                    }
+                    
+                    // Test if we can write to this location
+                    std::ofstream testFile(path, std::ios::app);
+                    if (testFile.is_open()) {
+                        testFile.close();
+                        ServerLogger::instance().info("No config file path available, using fallback: " + path);
+                        return saveToFile(path);
+                    }
+                } catch (const std::exception& e) {
+                    ServerLogger::instance().info("Cannot write to " + path + ": " + e.what());
+                    continue;
+                }
+            }
+            
+            std::cerr << "Error: No config file path available for saving and cannot write to any fallback location. Use saveToFile() with explicit path instead." << std::endl;
+            return false;
+        }
+        
+        ServerLogger::instance().info("Saving to current config file: " + currentConfigFilePath);
+        return saveToFile(currentConfigFilePath);
+    }
+
+    const std::string& ServerConfig::getCurrentConfigFilePath() const
+    {
+        return currentConfigFilePath;
     }
 
 } // namespace kolosal

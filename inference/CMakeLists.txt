@@ -1,6 +1,21 @@
 cmake_minimum_required(VERSION 3.14)
 project(InferenceEngine VERSION 1.0.0 LANGUAGES CXX)
 
+# Kolosal Inference Engine
+# 
+# Supports multiple acceleration backends:
+# - CPU: Default fallback using OpenBLAS
+# - CUDA: NVIDIA GPU acceleration (requires CUDA toolkit)
+# - Vulkan: Cross-platform GPU acceleration (requires Vulkan SDK)
+# - Metal: Apple GPU acceleration (macOS only, requires Metal frameworks)
+# - MPI: Multi-process parallelization
+#
+# Usage:
+# cmake -DUSE_CUDA=ON ..     # Enable CUDA acceleration
+# cmake -DUSE_VULKAN=ON ..   # Enable Vulkan acceleration  
+# cmake -DUSE_METAL=ON ..    # Enable Metal acceleration (macOS only)
+# cmake -DUSE_MPI=ON ..      # Enable MPI support
+
 # Include UCM for runtime library management
 include(${CMAKE_SOURCE_DIR}/cmake/ucm.cmake)
 
@@ -33,8 +48,15 @@ ucm_print_flags()
 # Options for inference engine
 option(USE_CUDA   "Compile with CUDA support" OFF)
 option(USE_VULKAN "Compile with VULKAN support" OFF)
+option(USE_METAL  "Compile with Metal support (macOS only)" OFF)
 option(USE_MPI    "Compile with MPI support" OFF)
 option(DEBUG      "Compile with debugging information" OFF)
+
+# Validate Metal option early
+if(USE_METAL AND NOT APPLE)
+    message(WARNING "Metal support is only available on macOS. Disabling USE_METAL.")
+    set(USE_METAL OFF CACHE BOOL "Compile with Metal support (macOS only)" FORCE)
+endif()
 
 # Source files
 set(SOURCES
@@ -54,6 +76,9 @@ if(USE_CUDA)
 elseif(USE_VULKAN)
     set(TARGET_NAME "llama-vulkan")
     set(ACCELERATION_TYPE "vulkan")
+elseif(USE_METAL)
+    set(TARGET_NAME "llama-metal")
+    set(ACCELERATION_TYPE "metal")
 else()
     set(TARGET_NAME "llama-cpu")
     set(ACCELERATION_TYPE "cpu")
@@ -161,6 +186,50 @@ elseif(USE_VULKAN)
         set(USE_VULKAN OFF)
         message(STATUS "Continuing build without Vulkan support...")
     endif()
+elseif(USE_METAL)
+    # Check if we're on macOS
+    if(NOT APPLE)
+        message(FATAL_ERROR "Metal support is only available on macOS. Please disable USE_METAL or build on macOS.")
+    endif()
+    
+    set(GGML_METAL ON CACHE BOOL "Enable GGML Metal support" FORCE)
+    message(STATUS "Using Metal for GGML acceleration")
+    
+    # Find Metal framework
+    find_library(METAL_FRAMEWORK Metal REQUIRED)
+    find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
+    find_library(METALKIT_FRAMEWORK MetalKit REQUIRED)
+    find_library(METALPERFORMANCE_FRAMEWORK MetalPerformanceShaders REQUIRED)
+    
+    if(METAL_FRAMEWORK AND FOUNDATION_FRAMEWORK AND METALKIT_FRAMEWORK AND METALPERFORMANCE_FRAMEWORK)
+        message(STATUS "Found Metal framework: ${METAL_FRAMEWORK}")
+        message(STATUS "Found Foundation framework: ${FOUNDATION_FRAMEWORK}")
+        message(STATUS "Found MetalKit framework: ${METALKIT_FRAMEWORK}")
+        message(STATUS "Found MetalPerformanceShaders framework: ${METALPERFORMANCE_FRAMEWORK}")
+        
+        target_link_libraries(${TARGET_NAME} PRIVATE 
+            ${METAL_FRAMEWORK} 
+            ${FOUNDATION_FRAMEWORK} 
+            ${METALKIT_FRAMEWORK}
+            ${METALPERFORMANCE_FRAMEWORK}
+        )
+        
+        # Add Metal-specific compiler flags
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+            set(METAL_ARCH_FLAGS "-O3")
+            message(STATUS "Using ARM64 optimizations for Metal")
+        else()
+            set(METAL_ARCH_FLAGS "-march=native -O3")
+            message(STATUS "Using x86_64 optimizations for Metal")
+        endif()
+        
+        target_compile_options(${TARGET_NAME} PRIVATE ${METAL_ARCH_FLAGS})
+        
+        # Add Metal-specific compile definitions
+        target_compile_definitions(${TARGET_NAME} PRIVATE GGML_USE_METAL)
+    else()
+        message(FATAL_ERROR "Metal frameworks not found. Metal support requires macOS with Metal development frameworks.")
+    endif()
 else()
     message(STATUS "Using OpenBLAS for GGML acceleration")
 endif()
@@ -190,6 +259,7 @@ endif()
 target_compile_definitions(${TARGET_NAME} PUBLIC
     $<$<BOOL:${USE_CUDA}>:USE_CUDA>
     $<$<BOOL:${USE_VULKAN}>:USE_VULKAN>
+    $<$<BOOL:${USE_METAL}>:USE_METAL>
     $<$<BOOL:${USE_MPI}>:USE_MPI>
     $<$<BOOL:${DEBUG}>:DEBUG>
 )
@@ -263,6 +333,24 @@ if(WIN32)
             "$<TARGET_FILE_DIR:${TARGET_NAME}>"
         COMMENT "Copying libcurl.dll to bin directory"
     )
+elseif(APPLE)
+    # For macOS, link with required system libraries
+    target_link_libraries(${TARGET_NAME} PRIVATE dl pthread)
+    
+    # Add macOS-specific compile definitions
+    target_compile_definitions(${TARGET_NAME} PRIVATE 
+        __APPLE__
+        __MACH__
+    )
+    
+    # macOS-specific compiler flags for better performance
+    if(USE_METAL)
+        target_compile_options(${TARGET_NAME} PRIVATE 
+            -Wno-format 
+            -Wno-unused-variable 
+            -Wno-unused-function
+        )
+    endif()
 else()
     # For Linux, link with required system libraries
     target_link_libraries(${TARGET_NAME} PRIVATE dl rt pthread)
@@ -288,11 +376,42 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" OR NOT CMAKE_BUILD_TYPE)
             message(STATUS "Using safe optimization flags (use -DENABLE_NATIVE_OPTIMIZATION=ON for native optimization)")
         endif()
     endif()
-    message(STATUS "Using aggressive optimization flags for Release build")
+    message(STATUS "Using aggressive optimization flags for Release build"    )
 endif()
 
 # Platform-specific configurations
-if(UNIX AND NOT APPLE)
+if(APPLE)
+    # macOS-specific configurations
+    message(STATUS "Configuring for macOS")
+    
+    # Set minimum macOS version for Metal support
+    if(USE_METAL)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS version for Metal support")
+        message(STATUS "Setting minimum macOS version to 10.13 for Metal support")
+    else()
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.12" CACHE STRING "Minimum macOS version")
+    endif()
+    
+    # Add macOS-specific compile definitions
+    target_compile_definitions(${TARGET_NAME} PRIVATE 
+        _DARWIN_C_SOURCE
+        __APPLE__
+    )
+    
+    # Enable large file support
+    target_compile_definitions(${TARGET_NAME} PRIVATE
+        _FILE_OFFSET_BITS=64
+        _LARGEFILE_SOURCE
+        _LARGEFILE64_SOURCE
+    )
+    
+    # Add Accelerate framework for better performance
+    find_library(ACCELERATE_FRAMEWORK Accelerate)
+    if(ACCELERATE_FRAMEWORK)
+        target_link_libraries(${TARGET_NAME} PRIVATE ${ACCELERATE_FRAMEWORK})
+        message(STATUS "Found Accelerate framework: ${ACCELERATE_FRAMEWORK}")
+    endif()
+elseif(UNIX AND NOT APPLE)
     # Linux-specific configurations
     message(STATUS "Configuring for Linux")
     
