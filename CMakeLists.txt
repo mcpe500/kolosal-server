@@ -546,7 +546,7 @@ if(APPLE AND NOT DEFINED USE_METAL)
     set(USE_METAL ON CACHE BOOL "Enable Metal acceleration on Apple systems" FORCE)
 endif()
 
-add_subdirectory(inference)
+# Note: inference subdirectory is already added earlier in the CMakeLists.txt
 
 # Install header files only for development packages
 option(INSTALL_HEADERS "Install header files for development" OFF)
