@@ -17,15 +17,23 @@
 #include <iostream>
 #include <thread>
 #include <filesystem>
+#include <vector>
+#include <string>
+#include <chrono>
 
 using json = nlohmann::json;
 
 namespace kolosal
 {
-    // Initialize static regex patterns
-    const std::regex ModelsRoute::modelsPattern_(R"(^/(v1/)?models/?$)");
-    const std::regex ModelsRoute::modelIdPattern_(R"(^/(v1/)?models/([^/]+)/?$)");
-    const std::regex ModelsRoute::modelStatusPattern_(R"(^/(v1/)?models/([^/]+)/status/?$)");
+    ModelsRoute::ModelsRoute()
+        : modelsPattern_(R"(^/(v1/)?models/?$)")
+        , modelIdPattern_(R"(^/(v1/)?models/([^/]+)/?$)")
+        , modelStatusPattern_(R"(^/(v1/)?models/([^/]+)/status/?$)")
+    {
+        ServerLogger::logInfo("ModelsRoute initialized");
+    }
+
+    ModelsRoute::~ModelsRoute() = default;
 
     bool ModelsRoute::match(const std::string &method, const std::string &path)
     {
@@ -207,6 +215,7 @@ namespace kolosal
                 inferenceEngine = config.defaultInferenceEngine.empty() ? "llama-cpu" : config.defaultInferenceEngine;
             }
             
+            std::string modelType = request.model_type;
             int mainGpuId = request.main_gpu_id;
             bool loadImmediately = request.load_immediately;
 
@@ -312,6 +321,7 @@ namespace kolosal
                     // Prepare engine creation parameters
                     EngineCreationParams engine_params;
                     engine_params.model_id = modelId;
+                    engine_params.model_type = modelType;
                     engine_params.load_immediately = loadImmediately;
                     engine_params.main_gpu_id = mainGpuId;
                     engine_params.loading_params = loadParams;
@@ -327,6 +337,7 @@ namespace kolosal
                             json jResponse = {
                                 {"message", "Model download already in progress. Use /downloads/" + modelId + " to check status."},
                                 {"model_id", modelId},
+                                {"model_type", modelType},
                                 {"status", "downloading"},
                                 {"download_url", modelPathStr},
                                 {"local_path", downloadPath}
@@ -347,6 +358,7 @@ namespace kolosal
                     // Return 202 Accepted for async download
                     json jResponse = {
                         {"model_id", modelId},
+                        {"model_type", modelType},
                         {"status", "downloading"},
                         {"message", "Download started in background"},
                         {"download_url", modelPathStr},
@@ -463,12 +475,26 @@ namespace kolosal
             bool success = false;
             if (loadImmediately)
             {
-                success = nodeManager.addEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
+                if (modelType == "embedding")
+                {
+                    success = nodeManager.addEmbeddingEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId);
+                }
+                else
+                {
+                    success = nodeManager.addEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
+                }
             }
             else
             {
                 // Register the engine for lazy loading - model will be loaded on first access
-                success = nodeManager.registerEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
+                if (modelType == "embedding")
+                {
+                    success = nodeManager.registerEmbeddingEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId);
+                }
+                else
+                {
+                    success = nodeManager.registerEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
+                }
                 ServerLogger::logInfo("Model '%s' registered with load_immediately=false (will load on first access)", modelId.c_str());
             }
 
@@ -493,6 +519,7 @@ namespace kolosal
                     json response = {
                         {"model_id", modelId},
                         {"model_path", modelPath},
+                        {"model_type", modelType},
                         {"status", loadImmediately ? "loaded" : "created"},
                         {"load_immediately", loadImmediately},
                         {"loading_parameters", request.loading_parameters.to_json()},
@@ -579,11 +606,25 @@ namespace kolosal
                             bool retrySuccess = false;
                             if (loadImmediately)
                             {
-                                retrySuccess = nodeManager.addEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
+                                if (modelType == "embedding")
+                                {
+                                    retrySuccess = nodeManager.addEmbeddingEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId);
+                                }
+                                else
+                                {
+                                    retrySuccess = nodeManager.addEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
+                                }
                             }
                             else
                             {
-                                retrySuccess = nodeManager.registerEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
+                                if (modelType == "embedding")
+                                {
+                                    retrySuccess = nodeManager.registerEmbeddingEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId);
+                                }
+                                else
+                                {
+                                    retrySuccess = nodeManager.registerEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
+                                }
                             }
                             
                             if (retrySuccess)
@@ -607,6 +648,7 @@ namespace kolosal
                                     json response = {
                                         {"model_id", modelId},
                                         {"model_path", modelPath},
+                                        {"model_type", modelType},
                                         {"status", loadImmediately ? "loaded" : "created"},
                                         {"load_immediately", loadImmediately},
                                         {"loading_parameters", request.loading_parameters.to_json()},

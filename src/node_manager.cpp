@@ -4,6 +4,7 @@
 #include "kolosal/download_utils.hpp"
 #include "kolosal/gpu_detection.hpp"
 #include <filesystem>
+#include <mutex>
 #include <algorithm> // For std::max and std::min
 
 #ifdef _WIN32
@@ -559,6 +560,150 @@ namespace kolosal
         return true;
     }
 
+    bool NodeManager::addEmbeddingEngine(const std::string &engineId, const char *modelPath, const LoadingParameters &loadParams, int mainGpuId)
+    {
+        // First check if engine already exists (read lock)
+        {
+            std::shared_lock<std::shared_mutex> mapLock(engineMapMutex_);
+            if (engines_.count(engineId))
+            {
+                ServerLogger::logWarning("Embedding engine with ID \'%s\' already exists.", engineId.c_str());
+                return false;
+            }
+        }
+
+        // Validate model file outside of any locks
+        ServerLogger::logInfo("Validating embedding model file for engine \'%s\': %s", engineId.c_str(), modelPath);
+        if (!validateModelFile(modelPath))
+        {
+            ServerLogger::logError("Embedding model validation failed for engine \'%s\'. Skipping engine creation.", engineId.c_str());
+            return false;
+        }
+
+        std::string actualModelPath = modelPath;
+        // Handle URL downloads outside of locks to avoid blocking other engines
+        if (is_valid_url(modelPath))
+        {
+            actualModelPath = handleUrlDownload(engineId, modelPath);
+            if (actualModelPath.empty())
+            {
+                return false; // Download failed
+            }
+        }
+
+        // Use the default CPU engine type for embedding models
+        std::string engineType = "llama-cpu";
+        std::shared_ptr<IInferenceEngine> enginePtr;
+
+        try
+        {
+            // Load the inference engine plugin if not already loaded
+            if (!inferenceLoader_->isEngineLoaded(engineType))
+            {
+                ServerLogger::logInfo("Loading %s inference engine plugin for embedding...", engineType.c_str());
+                if (!inferenceLoader_->loadEngine(engineType))
+                {
+                    ServerLogger::logError("Failed to load %s inference engine for embedding: %s",
+                                           engineType.c_str(), inferenceLoader_->getLastError().c_str());
+                    return false;
+                }
+                ServerLogger::logInfo("Successfully loaded %s inference engine plugin for embedding", engineType.c_str());
+            }
+
+            // Create engine instance from the loaded plugin
+            ServerLogger::logInfo("Creating inference engine instance for embedding...");
+            auto engineInstance = inferenceLoader_->createEngineInstance(engineType);
+            if (!engineInstance)
+            {
+                ServerLogger::logError("Failed to create %s inference engine instance for embedding: %s",
+                                       engineType.c_str(), inferenceLoader_->getLastError().c_str());
+                return false;
+            }
+
+            // Load the embedding model with safety handling
+            ServerLogger::logInfo("Loading embedding model for engine '%s' from path: %s", engineId.c_str(), actualModelPath.c_str());
+            bool loadSuccess = false;
+            try
+            {
+                // For embedding models, use the specialized loadEmbeddingModel method
+                loadSuccess = engineInstance->loadEmbeddingModel(actualModelPath.c_str(), loadParams, mainGpuId);
+            }
+            catch (const std::exception &e)
+            {
+                ServerLogger::logError("Exception during embedding model loading for engine '%s': %s", engineId.c_str(), e.what());
+                loadSuccess = false;
+            }
+            catch (...)
+            {
+                ServerLogger::logError("Unknown exception during embedding model loading for engine '%s'", engineId.c_str());
+                loadSuccess = false;
+            }
+
+            if (!loadSuccess)
+            {
+                ServerLogger::logError("Failed to load embedding model for engine ID '%s' from path '%s'", engineId.c_str(), actualModelPath.c_str());
+                // Ensure engine is properly cleaned up
+                try
+                {
+                    if (engineInstance)
+                    {
+                        engineInstance->unloadModel();
+                    }
+                }
+                catch (...)
+                {
+                    ServerLogger::logWarning("Exception during cleanup after failed embedding model load for engine '%s'", engineId.c_str());
+                }
+                return false;
+            }
+
+            enginePtr = std::shared_ptr<IInferenceEngine>(engineInstance.release());
+            ServerLogger::logInfo("Successfully loaded embedding model for engine '%s'", engineId.c_str());
+        }
+        catch (const std::exception &e)
+        {
+            ServerLogger::logError("Exception during embedding engine creation for '%s': %s", engineId.c_str(), e.what());
+            return false;
+        }
+        catch (...)
+        {
+            ServerLogger::logError("Unknown exception during embedding engine creation for '%s'", engineId.c_str());
+            return false;
+        }
+
+        // Create record and add to map (exclusive lock only for map modification)
+        auto recordPtr = std::make_shared<EngineRecord>();
+        recordPtr->engine = enginePtr;
+        recordPtr->modelPath = actualModelPath;
+        recordPtr->engineType = engineType;
+        recordPtr->loadParams = loadParams;
+        recordPtr->mainGpuId = mainGpuId;
+        recordPtr->isLoaded.store(true);
+        recordPtr->isEmbeddingModel.store(true); // Mark as embedding model
+        recordPtr->lastActivityTime = std::chrono::steady_clock::now();
+
+        {
+            std::unique_lock<std::shared_mutex> mapLock(engineMapMutex_);
+            // Double-check pattern to ensure no race condition
+            if (engines_.count(engineId))
+            {
+                ServerLogger::logWarning("Embedding engine with ID \'%s\' was added by another thread.", engineId.c_str());
+                return false;
+            }
+            engines_[engineId] = recordPtr;
+        }
+
+        ServerLogger::logInfo("Successfully added and loaded embedding engine with ID \'%s\'. Model: %s", engineId.c_str(), actualModelPath.c_str());
+        
+        // Notify autoscaling thread about new engine
+        {
+            std::lock_guard<std::mutex> lock(autoscalingMutex_);
+            autoscalingCv_.notify_one();
+        }
+        
+        return true;
+    }
+
     std::shared_ptr<IInferenceEngine> NodeManager::getEngine(const std::string &engineId)
     {
         // First, get shared access to find the engine record
@@ -656,7 +801,16 @@ namespace kolosal
                 try
                 {
                     ServerLogger::logInfo("Reloading model from path: %s", recordPtr->modelPath.c_str());
-                    loadSuccess = newEngineInstance->loadModel(recordPtr->modelPath.c_str(), recordPtr->loadParams, recordPtr->mainGpuId);
+                    // Check if this is an embedding model or regular model
+                    if (recordPtr->isEmbeddingModel.load())
+                    {
+                        // For embedding models, use the specialized loadEmbeddingModel method
+                        loadSuccess = newEngineInstance->loadEmbeddingModel(recordPtr->modelPath.c_str(), recordPtr->loadParams, recordPtr->mainGpuId);
+                    }
+                    else
+                    {
+                        loadSuccess = newEngineInstance->loadModel(recordPtr->modelPath.c_str(), recordPtr->loadParams, recordPtr->mainGpuId);
+                    }
                 }
                 catch (const std::exception &e)
                 {
@@ -699,7 +853,6 @@ namespace kolosal
             {
                 ServerLogger::logError("Unknown exception during engine reload for '%s'", engineId.c_str());
             }
-
             // Re-acquire lock to update state
             engineLock.lock();
             recordPtr->isLoading.store(false);
@@ -708,7 +861,9 @@ namespace kolosal
             {
                 recordPtr->engine = newEngine;
                 recordPtr->isLoaded.store(true);
-                ServerLogger::logInfo("Successfully reloaded engine ID \'%s\'.", engineId.c_str());
+                ServerLogger::logInfo("Successfully reloaded %s engine ID \'%s\'.", 
+                                      recordPtr->isEmbeddingModel.load() ? "embedding" : "LLM", 
+                                      engineId.c_str());
             }
             else
             {
@@ -718,7 +873,9 @@ namespace kolosal
                 }
                 else
                 {
-                    ServerLogger::logError("Failed to reload model for engine ID \'%s\' from path \'%s\'.", engineId.c_str(), recordPtr->modelPath.c_str());
+                    ServerLogger::logError("Failed to reload %s model for engine ID \'%s\' from path \'%s\'.", 
+                                          recordPtr->isEmbeddingModel.load() ? "embedding" : "LLM",
+                                          engineId.c_str(), recordPtr->modelPath.c_str());
                 }
                 recordPtr->engine = nullptr;
             }
@@ -1190,6 +1347,63 @@ namespace kolosal
         }
     }
 
+    bool NodeManager::registerEmbeddingEngine(const std::string &engineId, const char *modelPath, const LoadingParameters &loadParams, int mainGpuId)
+    {
+        // First check if engine already exists (read lock)
+        {
+            std::shared_lock<std::shared_mutex> mapLock(engineMapMutex_);
+            if (engines_.count(engineId))
+            {
+                ServerLogger::logWarning("Embedding engine with ID \'%s\' already exists.", engineId.c_str());
+                return false;
+            }
+        }
+
+        // Validate model file outside of any locks
+        ServerLogger::logInfo("Validating embedding model file for engine registration \'%s\': %s", engineId.c_str(), modelPath);
+        if (!validateModelFile(modelPath))
+        {
+            ServerLogger::logError("Embedding model validation failed for engine \'%s\'. Skipping engine registration.", engineId.c_str());
+            return false;
+        }
+
+        std::string actualModelPath = modelPath;
+        // Handle URL downloads outside of locks to avoid blocking other engines
+        if (is_valid_url(modelPath))
+        {
+            actualModelPath = handleUrlDownload(engineId, modelPath);
+            if (actualModelPath.empty())
+            {
+                return false; // Download failed
+            }
+        }
+
+        // Create a record for lazy loading (engine is not loaded yet)
+        auto recordPtr = std::make_shared<EngineRecord>();
+        recordPtr->engine = nullptr;            // No engine instance yet
+        recordPtr->modelPath = actualModelPath; // Store the actual local path
+        recordPtr->engineType = "llama-cpu";    // Default to CPU for embedding models
+        recordPtr->loadParams = loadParams;
+        recordPtr->mainGpuId = mainGpuId;
+        recordPtr->isLoaded.store(false); // Mark as not loaded for lazy loading
+        recordPtr->isEmbeddingModel.store(true); // Mark as embedding model
+        recordPtr->lastActivityTime = std::chrono::steady_clock::now();
+
+        {
+            std::unique_lock<std::shared_mutex> mapLock(engineMapMutex_);
+            // Double-check pattern to ensure no race condition
+            if (engines_.count(engineId))
+            {
+                ServerLogger::logWarning("Embedding engine with ID \'%s\' was registered by another thread.", engineId.c_str());
+                return false;
+            }
+            engines_[engineId] = recordPtr;
+        }
+
+        ServerLogger::logInfo("Successfully registered embedding engine with ID \'%s\' for lazy loading. Model: %s", engineId.c_str(), actualModelPath.c_str());
+        return true;
+    }
+
     bool NodeManager::reconfigureEngines(const std::vector<InferenceEngineConfig>& engines)
     {
         if (!inferenceLoader_)
@@ -1214,6 +1428,38 @@ namespace kolosal
         }
 
         return true;
+    }
+
+    // Singleton implementation
+    namespace {
+        std::unique_ptr<NodeManager> instance_;
+        std::mutex instanceMutex_;
+        bool isInitialized_ = false;
+    }
+
+    NodeManager* NodeManager::getInstance()
+    {
+        std::lock_guard<std::mutex> lock(instanceMutex_);
+        if (!instance_)
+        {
+            instance_ = std::make_unique<NodeManager>();
+        }
+        return instance_.get();
+    }
+
+    void NodeManager::initialize(std::chrono::seconds idleTimeout)
+    {
+        std::lock_guard<std::mutex> lock(instanceMutex_);
+        if (!instance_)
+        {
+            instance_ = std::make_unique<NodeManager>(idleTimeout);
+            isInitialized_ = true;
+        }
+    }
+
+    std::vector<std::string> NodeManager::getAvailableModels() const
+    {
+        return listEngineIds();
     }
 
     bool NodeManager::saveModelToConfig(const std::string& engineId, const std::string& modelPath, 

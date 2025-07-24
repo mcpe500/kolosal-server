@@ -1,5 +1,5 @@
 server:
-  port: "8080"
+  port: "8084"
   host: "0.0.0.0"
   idle_timeout: 300
   allow_public_access: false  # Set to true to allow access from other devices on your network
@@ -11,6 +11,34 @@ logging:
   access_log: false
   quiet_mode: true  # Suppress routine operational messages
   show_request_details: false  # Hide detailed request processing logs
+
+database:
+  # Qdrant vector database configuration
+  qdrant:
+    enabled: true
+    host: "localhost"
+    port: 6333
+    collection_name: "documents"
+    default_embedding_model: "text-embedding-3-small"  # Model to use for embedding documents
+    timeout: 30
+    # Optional authentication
+    api_key: ""
+    # Connection pooling
+    max_connections: 10
+    connection_timeout: 5
+
+# Internet search configuration
+search:
+  enabled: true                       # Enable/disable internet search endpoint
+  searxng_url: "http://localhost:8090" # SearXNG instance URL
+  timeout: 30                         # Request timeout in seconds
+  max_results: 20                     # Maximum number of search results
+  default_engine: ""                  # Default search engine (empty = SearXNG default)
+  api_key: ""                         # Optional API key for authentication
+  enable_safe_search: true            # Enable safe search by default
+  default_format: "json"              # Default output format (json, xml, csv, rss)
+  default_language: "en"              # Default search language
+  default_category: "general"         # Default search category
 
 auth:
   enabled: true
@@ -46,6 +74,7 @@ auth:
 
 models:
   - id: "qwen3-0.6b"
+    type: "llm"  # llm or embedding
     path: "https://huggingface.co/kolosal/qwen3-0.6b/resolve/main/Qwen3-0.6B-UD-Q4_K_XL.gguf"
     load_immediately: true
     main_gpu_id: 0
@@ -62,7 +91,8 @@ models:
       n_batch: 2048
       n_ubatch: 512
   - id: "gpt-3.5-turbo"
-    path: "./models/gpt-3.5-turbo.gguf"  # Relative paths are automatically converted to absolute paths
+    type: "llm"
+    path: "./models/gpt-3.5-turbo.gguf"
     load_immediately: false
     main_gpu_id: 0
     inference_engine: "llama-cuda"  # Use CUDA for GPU acceleration
@@ -77,6 +107,39 @@ models:
       n_gpu_layers: 100
       n_batch: 2048
       n_ubatch: 512
+  - id: "text-embedding-3-small"
+    type: "embedding"
+    path: "./models/all-MiniLM-L6-v2-Q4_K_M.gguf"
+    load_immediately: true
+    main_gpu_id: 0
+    inference_engine: "llama-cpu"
+    preload_context: false
+    embedding_config:
+      dimensions: 384
+      normalize: true
+      pooling_type: "mean"  # mean, cls, or none
+      max_input_length: 512
+    load_params:
+      n_ctx: 512
+      n_keep: 0
+      use_mmap: true
+      use_mlock: false
+      n_parallel: 4  # Higher parallelism for embedding models
+      cont_batching: true
+      n_batch: 512
+      n_ubatch: 128
+
+# Embedding-specific autoscaling configuration
+embedding_autoscaling:
+  enabled: true
+  min_instances: 1
+  max_instances: 4
+  scale_up_threshold: 10  # requests per second
+  scale_down_threshold: 2  # requests per second
+  scale_up_delay: 30      # seconds
+  scale_down_delay: 300   # seconds (5 minutes)
+  check_interval: 15      # seconds
+      
 
 features:
   health_check: true

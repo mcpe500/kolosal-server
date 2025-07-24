@@ -24,7 +24,8 @@ public:
     // Optional fields
     bool load_immediately = true;      // Whether to load immediately after adding (vs register for lazy loading)
     int main_gpu_id = 0;
-    std::string inference_engine; // Inference engine to use (will use configured default if empty)
+    std::string inference_engine = "llama-cpu"; // Inference engine to use (llama-cpu, llama-cuda, llama-vulkan, etc.)
+    std::string model_type = "llm";    // Model type: "llm" or "embedding"
     
     // Loading parameters (nested object)
     struct LoadingParametersModel {
@@ -211,6 +212,17 @@ public:
             j.at("inference_engine").get_to(inference_engine);
         }
 
+        if (j.contains("model_type") && !j["model_type"].is_null()) {
+            if (!j["model_type"].is_string()) {
+                throw std::runtime_error("model_type must be a string");
+            }
+            std::string type = j["model_type"].get<std::string>();
+            if (type != "llm" && type != "embedding") {
+                throw std::runtime_error("model_type must be either 'llm' or 'embedding'");
+            }
+            model_type = type;
+        }
+
         // Parse loading parameters if present
         if (j.contains("loading_parameters") && !j["loading_parameters"].is_null()) {
             if (!j["loading_parameters"].is_object()) {
@@ -227,6 +239,7 @@ public:
             {"load_immediately", load_immediately},
             {"main_gpu_id", main_gpu_id},
             {"inference_engine", inference_engine},
+            {"model_type", model_type},
             {"loading_parameters", loading_parameters.to_json()}
         };
 

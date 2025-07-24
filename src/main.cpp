@@ -356,7 +356,33 @@ int main(int argc, char *argv[])
         }
     }
 
-    // Load models if specified
+    // Enable metrics if configured
+    if (config.enableMetrics)
+    {
+        try
+        {
+            server.enableMetrics();
+            ServerLogger::logInfo("System metrics monitoring enabled");
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "Failed to enable metrics: " << e.what() << std::endl;
+            return 1;
+        }
+    } // Enable internet search if configured
+    if (config.search.enabled)
+    {
+        try
+        {
+            server.enableSearch(config.search);
+            ServerLogger::logInfo("Internet search endpoint enabled");
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "Failed to enable internet search: " << e.what() << std::endl;
+            return 1;
+        }
+    } // Load models if specified
     if (!config.models.empty())
     {
         auto &downloadManager = DownloadManager::getInstance();
@@ -367,11 +393,10 @@ int main(int argc, char *argv[])
 
         for (const auto &modelConfig : config.models)
         {
-            std::cout << "Configuring model '" << modelConfig.id << "'..." << std::endl;
-
-            // Use DownloadManager to handle both URLs and local files consistently
+            std::cout << "Configuring model '" << modelConfig.id << "'..." << std::endl;            // Use DownloadManager to handle both URLs and local files consistently
             bool success = downloadManager.loadModelAtStartup(modelConfig.id,
                                                               modelConfig.path,
+                                                              modelConfig.type,
                                                               modelConfig.loadParams,
                                                               modelConfig.mainGpuId,
                                                               modelConfig.loadImmediately,
@@ -529,6 +554,7 @@ int main(int argc, char *argv[])
     std::cout << "  GET  /models                 - List available models" << std::endl;
     std::cout << "  POST /v1/chat/completions    - Chat completions (OpenAI compatible)" << std::endl;
     std::cout << "  POST /v1/completions         - Text completions (OpenAI compatible)" << std::endl;
+    std::cout << "  POST /v1/embeddings          - Text embeddings (OpenAI compatible)" << std::endl;
     std::cout << "  GET  /engines                - List engines" << std::endl;
     std::cout << "  POST /engines                - Add new engine" << std::endl;
     std::cout << "  GET  /engines/{id}/status    - Engine status" << std::endl;

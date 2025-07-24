@@ -410,6 +410,53 @@ namespace kolosal
             {
                 allowInternetAccess = false;
             }
+            
+            // Search options
+            else if (arg == "--enable-search")
+            {
+                search.enabled = true;
+            }
+            else if (arg == "--disable-search")
+            {
+                search.enabled = false;
+            }
+            else if ((arg == "--search-url" || arg == "--searxng-url") && i + 1 < argc)
+            {
+                search.searxng_url = argv[++i];
+            }
+            else if ((arg == "--search-timeout") && i + 1 < argc)
+            {
+                search.timeout = std::stoi(argv[++i]);
+            }
+            else if ((arg == "--search-max-results") && i + 1 < argc)
+            {
+                search.max_results = std::stoi(argv[++i]);
+            }
+            else if ((arg == "--search-engine") && i + 1 < argc)
+            {
+                search.default_engine = argv[++i];
+            }
+            else if ((arg == "--search-api-key") && i + 1 < argc)
+            {
+                search.api_key = argv[++i];
+            }
+            else if ((arg == "--search-language") && i + 1 < argc)
+            {
+                search.default_language = argv[++i];
+            }
+            else if ((arg == "--search-category") && i + 1 < argc)
+            {
+                search.default_category = argv[++i];
+            }
+            else if (arg == "--search-safe-search")
+            {
+                search.enable_safe_search = true;
+            }
+            else if (arg == "--no-search-safe-search")
+            {
+                search.enable_safe_search = false;
+            }
+            
             // Help and version
             else if (arg == "-h" || arg == "--help")
             {
@@ -553,17 +600,44 @@ namespace kolosal
                 }
             }
 
+            // Load search configuration
+            if (config["search"])
+            {
+                auto searchConfig = config["search"];
+                if (searchConfig["enabled"])
+                    search.enabled = searchConfig["enabled"].as<bool>();
+                if (searchConfig["searxng_url"])
+                    search.searxng_url = searchConfig["searxng_url"].as<std::string>();
+                if (searchConfig["timeout"])
+                    search.timeout = searchConfig["timeout"].as<int>();
+                if (searchConfig["max_results"])
+                    search.max_results = searchConfig["max_results"].as<int>();
+                if (searchConfig["default_engine"])
+                    search.default_engine = searchConfig["default_engine"].as<std::string>();
+                if (searchConfig["api_key"])
+                    search.api_key = searchConfig["api_key"].as<std::string>();
+                if (searchConfig["enable_safe_search"])
+                    search.enable_safe_search = searchConfig["enable_safe_search"].as<bool>();
+                if (searchConfig["default_format"])
+                    search.default_format = searchConfig["default_format"].as<std::string>();
+                if (searchConfig["default_language"])
+                    search.default_language = searchConfig["default_language"].as<std::string>();
+                if (searchConfig["default_category"])
+                    search.default_category = searchConfig["default_category"].as<std::string>();
+            }
+
             // Load models
             if (config["models"])
             {
-                models.clear();
-                for (const auto &modelConfig : config["models"])
+                models.clear();                for (const auto &modelConfig : config["models"])
                 {
                     ModelConfig model;
                     if (modelConfig["id"])
                         model.id = modelConfig["id"].as<std::string>();
                     if (modelConfig["path"])
                         model.path = ServerConfig::makeAbsolutePath(modelConfig["path"].as<std::string>());
+                    if (modelConfig["type"])
+                        model.type = modelConfig["type"].as<std::string>();
                     // Support both new and old field names for backward compatibility
                     if (modelConfig["load_immediately"])
                         model.loadImmediately = modelConfig["load_immediately"].as<bool>();
@@ -656,6 +730,30 @@ namespace kolosal
                     enableMetrics = features["metrics"].as<bool>();
             }
 
+            // Load search configuration
+            if (config["search"])
+            {
+                auto searchConfig = config["search"];
+                if (searchConfig["enabled"])
+                    search.enabled = searchConfig["enabled"].as<bool>();
+                if (searchConfig["searxng_url"])
+                    search.searxng_url = searchConfig["searxng_url"].as<std::string>();
+                if (searchConfig["timeout"])
+                    search.timeout = searchConfig["timeout"].as<int>();
+                if (searchConfig["max_results"])
+                    search.max_results = searchConfig["max_results"].as<int>();
+                if (searchConfig["default_format"])
+                    search.default_format = searchConfig["default_format"].as<std::string>();
+                if (searchConfig["default_language"])
+                    search.default_language = searchConfig["default_language"].as<std::string>();
+                if (searchConfig["default_category"])
+                    search.default_category = searchConfig["default_category"].as<std::string>();
+                if (searchConfig["default_engine"])
+                    search.default_engine = searchConfig["default_engine"].as<std::string>();
+                if (searchConfig["api_key"])
+                    search.api_key = searchConfig["api_key"].as<std::string>();
+            }
+
             return validate();
         }
         catch (const std::exception &e)
@@ -691,10 +789,21 @@ namespace kolosal
             config["auth"]["rate_limit"]["window_size"] = static_cast<int>(auth.rateLimiter.windowSize.count());
             config["auth"]["cors"]["enabled"] = auth.cors.enabled;
             config["auth"]["cors"]["allow_credentials"] = auth.cors.allowCredentials;
-            config["auth"]["cors"]["max_age"] = auth.cors.maxAge;
-            config["auth"]["cors"]["allowed_origins"] = auth.cors.allowedOrigins;
+            config["auth"]["cors"]["max_age"] = auth.cors.maxAge;            config["auth"]["cors"]["allowed_origins"] = auth.cors.allowedOrigins;
             config["auth"]["cors"]["allowed_methods"] = auth.cors.allowedMethods;
             config["auth"]["cors"]["allowed_headers"] = auth.cors.allowedHeaders;
+            
+            // Search configuration
+            config["search"]["enabled"] = search.enabled;
+            config["search"]["searxng_url"] = search.searxng_url;
+            config["search"]["timeout"] = search.timeout;
+            config["search"]["max_results"] = search.max_results;
+            config["search"]["default_engine"] = search.default_engine;
+            config["search"]["api_key"] = search.api_key;
+            config["search"]["enable_safe_search"] = search.enable_safe_search;
+            config["search"]["default_format"] = search.default_format;
+            config["search"]["default_language"] = search.default_language;
+            config["search"]["default_category"] = search.default_category;
 
             // Models
             for (const auto &model : models)
@@ -702,6 +811,7 @@ namespace kolosal
                 YAML::Node modelNode;
                 modelNode["id"] = model.id;
                 modelNode["path"] = ServerConfig::makeAbsolutePath(model.path);  // Convert to absolute path
+                modelNode["type"] = model.type;
                 modelNode["load_immediately"] = model.loadImmediately;
                 modelNode["main_gpu_id"] = model.mainGpuId;
                 modelNode["inference_engine"] = model.inferenceEngine;
@@ -966,6 +1076,25 @@ namespace kolosal
         std::cout << "    --allow-internet-access   Allow internet access (same as --internet)\n";
         std::cout << "    --no-internet             Disable internet access\n";
         std::cout << "    --disable-internet-access Disable internet access (same as --no-internet)\n\n";
+
+        std::cout << "  Internet Search:\n";
+        std::cout << "    --enable-search           Enable internet search endpoint\n";
+        std::cout << "    --disable-search          Disable internet search endpoint\n";
+        std::cout << "    --search-url, --searxng-url URL  SearXNG instance URL (default: http://localhost:4000)\n";
+        std::cout << "    --search-timeout SEC      Search request timeout in seconds (default: 30)\n";
+        std::cout << "    --search-max-results N    Maximum number of search results (default: 20)\n";
+        std::cout << "    --search-engine ENGINE    Default search engine\n";
+        std::cout << "    --search-api-key KEY      API key for search service authentication\n";
+        std::cout << "    --search-language LANG    Default search language (default: en)\n";
+        std::cout << "    --search-category CAT     Default search category (default: general)\n";
+        std::cout << "    --search-safe-search      Enable safe search (default: enabled)\n";
+        std::cout << "    --no-search-safe-search   Disable safe search\n\n";
+        std::cout << "    --search-engine NAME      Default search engine (e.g., google, bing)\n";
+        std::cout << "    --search-api-key KEY      API key for search engine, if required\n";
+        std::cout << "    --search-language LANG    Default language for search results\n";
+        std::cout << "    --search-category CAT      Default category for search results\n";
+        std::cout << "    --search-safe-search      Enable safe search (restrict explicit content)\n";
+        std::cout << "    --no-search-safe-search   Disable safe search\n\n";
 
         std::cout << "  Help:\n";
         std::cout << "    -h, --help                Show this help message\n";

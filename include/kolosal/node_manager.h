@@ -35,6 +35,19 @@ public:
     NodeManager& operator=(NodeManager&&) = delete;
 
     /**
+     * @brief Get the singleton instance of NodeManager.
+     * 
+     * @return Pointer to the singleton instance.
+     */
+    static NodeManager* getInstance();
+
+    /**
+     * @brief Initialize the singleton instance with specific idle timeout.
+     * Should be called once at startup.
+     * 
+     * @param idleTimeout Timeout for idle model unloading.
+     */
+    static void initialize(std::chrono::seconds idleTimeout = std::chrono::seconds(300));/**
      * @brief Loads a new inference engine with the given model and parameters.
      * 
      * @param engineId A unique identifier for this engine.
@@ -47,6 +60,15 @@ public:
     bool addEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId, const std::string& engineType);
 
     /**
+     * @brief Loads a new embedding engine with the given model and parameters.
+     * 
+     * @param engineId A unique identifier for this engine.
+     * @param modelPath Path to the embedding model file.
+     * @param loadParams Parameters for loading the model.
+     * @param mainGpuId The main GPU ID to use for this engine.
+     * @return True if the engine was loaded successfully, false otherwise.
+     */
+    bool addEmbeddingEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0);    /**
      * @brief Registers a model for lazy loading without immediately loading it.
      * The model will be validated but not loaded until first access.
      * 
@@ -58,6 +80,18 @@ public:
      * @return True if the model was validated and registered successfully, false otherwise.
      */
     bool registerEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId, const std::string& engineType);
+  
+    /**
+     * @brief Registers an embedding model for lazy loading without immediately loading it.
+     * The model will be validated but not loaded until first access.
+     * 
+     * @param engineId A unique identifier for this engine.
+     * @param modelPath Path to the embedding model file.
+     * @param loadParams Parameters for loading the model.
+     * @param mainGpuId The main GPU ID to use for this engine.
+     * @return True if the model was validated and registered successfully, false otherwise.
+     */
+    bool registerEmbeddingEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0);
 
     /**
      * @brief Retrieves a pointer to an inference engine by its ID.
@@ -85,14 +119,19 @@ public:
      * @param engineId The ID of the engine to remove.
      * @return True if the engine was removed successfully, false otherwise.
      */
-    bool removeEngine(const std::string& engineId);
-
-    /**
+    bool removeEngine(const std::string& engineId);    /**
      * @brief Lists the IDs of all currently managed engines.
      * 
      * @return A vector of strings containing the engine IDs.
      */
     std::vector<std::string> listEngineIds() const;
+
+    /**
+     * @brief Gets the list of available model IDs (alias for listEngineIds for OpenAI compatibility).
+     * 
+     * @return A vector of strings containing the available model IDs.
+     */
+    std::vector<std::string> getAvailableModels() const;
 
     /**
      * @brief Get list of all available inference engine libraries.
@@ -149,6 +188,11 @@ private:
      */
     bool removeModelFromConfig(const std::string& engineId);
 
+    enum class ModelType {
+        LLM,
+        EMBEDDING
+    };
+
     struct EngineRecord {
         std::shared_ptr<IInferenceEngine> engine;
         std::string modelPath;
@@ -159,10 +203,11 @@ private:
         std::atomic<bool> isLoaded{false};
         std::atomic<bool> isLoading{false};
         std::atomic<bool> markedForRemoval{false};
+        std::atomic<bool> isEmbeddingModel{false}; // Track if this is an embedding model
         mutable std::mutex engineMutex;
         std::condition_variable loadingCv;
         
-        EngineRecord() : engineType("cpu"), mainGpuId(0), lastActivityTime(std::chrono::steady_clock::now()) {}
+        EngineRecord() : engineType("llama-cpu"), mainGpuId(0), lastActivityTime(std::chrono::steady_clock::now()) {}
         
         EngineRecord(const EngineRecord&) = delete;
         EngineRecord& operator=(const EngineRecord&) = delete;
@@ -177,6 +222,7 @@ private:
             , isLoaded(other.isLoaded.load())
             , isLoading(other.isLoading.load())
             , markedForRemoval(other.markedForRemoval.load())
+            , isEmbeddingModel(other.isEmbeddingModel.load())
         {}
         
         EngineRecord& operator=(EngineRecord&& other) noexcept {
@@ -190,6 +236,7 @@ private:
                 isLoaded.store(other.isLoaded.load());
                 isLoading.store(other.isLoading.load());
                 markedForRemoval.store(other.markedForRemoval.load());
+                isEmbeddingModel.store(other.isEmbeddingModel.load());
             }
             return *this;
         }
