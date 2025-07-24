@@ -35,6 +35,7 @@ ucm_print_flags()
 # Options for inference engine
 option(USE_CUDA   "Compile with CUDA support" OFF)
 option(USE_VULKAN "Compile with VULKAN support" OFF)
+option(USE_METAL  "Compile with Metal support (macOS only)" OFF)
 option(USE_MPI    "Compile with MPI support" OFF)
 option(DEBUG      "Compile with debugging information" OFF)
 
@@ -116,6 +117,14 @@ set(SOURCES
 add_library(kolosal_server SHARED ${SOURCES})
 target_compile_definitions(kolosal_server PRIVATE KOLOSAL_SERVER_BUILD INFERENCE_EXPORTS)
 
+# Set macOS-specific properties for the shared library
+if(APPLE)
+    set_target_properties(kolosal_server PROPERTIES
+        MACOSX_RPATH TRUE
+        INSTALL_NAME_DIR "@rpath"
+    )
+endif()
+
 # Create executable
 add_executable(kolosal_server_exe src/main.cpp)
 target_link_libraries(kolosal_server_exe PRIVATE kolosal_server)
@@ -135,7 +144,7 @@ function(copy_dll_to_output target_name dll_path)
     endif()
 endfunction()
 
-# Copy necessary DLLs to the executable directory on Windows
+# Copy necessary libraries to the executable directory
 if(WIN32)
     # Copy the main server DLL
     add_custom_command(TARGET kolosal_server_exe POST_BUILD
@@ -144,7 +153,24 @@ if(WIN32)
         "$<TARGET_FILE_DIR:kolosal_server_exe>/"
         COMMENT "Copying kolosal_server.dll to executable directory"
     )
+elseif(APPLE)
+    # Copy the main server dylib for macOS
+    add_custom_command(TARGET kolosal_server_exe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:kolosal_server>"
+        "$<TARGET_FILE_DIR:kolosal_server_exe>/"
+        COMMENT "Copying libkolosal_server.dylib to executable directory"
+    )
     
+    # Fix the install name of the dylib to use @rpath
+    add_custom_command(TARGET kolosal_server POST_BUILD
+        COMMAND install_name_tool -id "@rpath/libkolosal_server.dylib" "$<TARGET_FILE:kolosal_server>"
+        COMMENT "Setting install name for libkolosal_server.dylib"
+    )
+endif()
+
+# Copy additional libraries for Windows
+if(WIN32)
     # Note: Inference engine DLLs are now loaded at runtime and should be placed
     # in the plugins directory or same directory as the executable manually
     
@@ -385,6 +411,15 @@ target_link_libraries(kolosal_server PRIVATE Threads::Threads)
 # Platform-specific link libraries for the main library.
 if(WIN32)
     target_link_libraries(kolosal_server PRIVATE ws2_32 wbemuuid)
+elseif(APPLE)
+    # For macOS, link with required system libraries
+    target_link_libraries(kolosal_server PRIVATE dl pthread)
+    
+    # Add required macOS frameworks for system operations
+    find_library(COREFOUNDATION_FRAMEWORK CoreFoundation)
+    if(COREFOUNDATION_FRAMEWORK)
+        target_link_libraries(kolosal_server PRIVATE ${COREFOUNDATION_FRAMEWORK})
+    endif()
 else()
     # For Linux, link with required system libraries
     target_link_libraries(kolosal_server PRIVATE dl rt pthread)
@@ -460,7 +495,60 @@ if(UNIX AND NOT APPLE)
         INSTALL_RPATH_USE_LINK_PATH TRUE
     )
     
+elseif(APPLE)
+    # macOS-specific configurations
+    message(STATUS "Configuring for macOS")
+    
+    # Add macOS-specific compile definitions
+    target_compile_definitions(kolosal_server PRIVATE 
+        _DARWIN_C_SOURCE
+        __APPLE__
+    )
+    
+    # Enable large file support
+    target_compile_definitions(kolosal_server PRIVATE
+        _FILE_OFFSET_BITS=64
+        _LARGEFILE_SOURCE
+        _LARGEFILE64_SOURCE
+    )
+    
+    # Set RPATH for proper library loading
+    set_target_properties(kolosal_server_exe PROPERTIES
+        INSTALL_RPATH "@executable_path"
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH_USE_LINK_PATH TRUE
+        MACOSX_RPATH TRUE
+    )
+    
+    # Also add the other paths separately if needed
+    set_property(TARGET kolosal_server_exe APPEND PROPERTY INSTALL_RPATH "@executable_path/../lib")
+    set_property(TARGET kolosal_server_exe APPEND PROPERTY INSTALL_RPATH "/usr/local/lib")
+    set_property(TARGET kolosal_server_exe APPEND PROPERTY INSTALL_RPATH "/opt/homebrew/lib")
+    
+    set_target_properties(kolosal_server PROPERTIES
+        INSTALL_RPATH "@loader_path"
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH_USE_LINK_PATH TRUE
+        MACOSX_RPATH TRUE
+    )
+    
+    # Also add the other paths separately for the library
+    set_property(TARGET kolosal_server APPEND PROPERTY INSTALL_RPATH "@loader_path/../lib")
+    set_property(TARGET kolosal_server APPEND PROPERTY INSTALL_RPATH "/usr/local/lib")
+    set_property(TARGET kolosal_server APPEND PROPERTY INSTALL_RPATH "/opt/homebrew/lib")
+    
 endif()
+
+# Build inference engines
+message(STATUS "Building inference engines...")
+
+# On Apple systems, enable Metal by default
+if(APPLE AND NOT DEFINED USE_METAL)
+    message(STATUS "Apple system detected - enabling Metal acceleration by default")
+    set(USE_METAL ON CACHE BOOL "Enable Metal acceleration on Apple systems" FORCE)
+endif()
+
+add_subdirectory(inference)
 
 # Install header files only for development packages
 option(INSTALL_HEADERS "Install header files for development" OFF)
