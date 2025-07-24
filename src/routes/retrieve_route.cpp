@@ -2,6 +2,7 @@
 #include "kolosal/retrieval/retrieve_types.hpp"
 #include "kolosal/utils.hpp"
 #include "kolosal/server_api.hpp"
+#include "kolosal/server_config.hpp"
 #include "kolosal/logger.hpp"
 // #include "kolosal/completion_monitor.hpp"
 #include <json.hpp>
@@ -108,17 +109,32 @@ void RetrieveRoute::handle(SocketType sock, const std::string& body)
             std::lock_guard<std::mutex> lock(service_mutex_);
             if (!document_service_)
             {
-                // Create a basic database config - in a production environment,
-                // this would be passed from the main server configuration
-                DatabaseConfig db_config;
-                db_config.qdrant.enabled = true;
-                db_config.qdrant.host = "localhost";
-                db_config.qdrant.port = 6333;
-                db_config.qdrant.collectionName = "documents";
-                db_config.qdrant.defaultEmbeddingModel = "text-embedding-3-small";
-                db_config.qdrant.timeout = 30;
-                db_config.qdrant.maxConnections = 10;
-                db_config.qdrant.connectionTimeout = 5;
+                // Get database config from the server configuration
+                auto& serverConfig = ServerConfig::getInstance();
+                DatabaseConfig db_config = serverConfig.database;
+                
+                // Ensure Qdrant is configured with proper defaults if not set
+                if (db_config.qdrant.host.empty()) {
+                    db_config.qdrant.host = "localhost";
+                }
+                if (db_config.qdrant.port == 0) {
+                    db_config.qdrant.port = 6333;
+                }
+                if (db_config.qdrant.collectionName.empty()) {
+                    db_config.qdrant.collectionName = "documents";
+                }
+                if (db_config.qdrant.defaultEmbeddingModel.empty()) {
+                    db_config.qdrant.defaultEmbeddingModel = "text-embedding-3-small";
+                }
+                if (db_config.qdrant.timeout == 0) {
+                    db_config.qdrant.timeout = 30;
+                }
+                if (db_config.qdrant.maxConnections == 0) {
+                    db_config.qdrant.maxConnections = 10;
+                }
+                if (db_config.qdrant.connectionTimeout == 0) {
+                    db_config.qdrant.connectionTimeout = 5;
+                }
                 
                 document_service_ = std::make_unique<kolosal::retrieval::DocumentService>(db_config);
                 
