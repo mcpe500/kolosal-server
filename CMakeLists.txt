@@ -108,7 +108,7 @@ set(SOURCES
     
     # src/completion_monitor.cpp
     
-    external/pugixml/src/pugixml.cpp
+    # external/pugixml/src/pugixml.cpp
     # Minizip sources for DOCX parsing
     # external/mupdf/thirdparty/zlib/contrib/minizip/unzip.c
     # external/mupdf/thirdparty/zlib/contrib/minizip/ioapi.c
