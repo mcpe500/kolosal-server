@@ -71,7 +71,7 @@ database:
     host: "localhost"
     port: 6333
     collection_name: "documents"     # Qdrant collection name
-    default_embedding_model: "text-embedding-3-small"  # Default model for embedding
+    default_embedding_model: "qwen3-embedding-4b"  # Default model for embedding
     timeout: 30
     api_key: ""                      # Optional API key if Qdrant requires authentication
     max_connections: 10             # Max concurrent connections
