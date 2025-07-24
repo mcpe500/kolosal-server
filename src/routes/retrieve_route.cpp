@@ -2,6 +2,7 @@
 #include "kolosal/retrieval/retrieve_types.hpp"
 #include "kolosal/utils.hpp"
 #include "kolosal/server_api.hpp"
+#include "kolosal/server_config.hpp"
 #include "kolosal/logger.hpp"
 // #include "kolosal/completion_monitor.hpp"
 #include <json.hpp>
@@ -28,7 +29,12 @@ RetrieveRoute::~RetrieveRoute() = default;
 
 bool RetrieveRoute::match(const std::string& method, const std::string& path)
 {
-    return method == "POST" && path == "/retrieve";
+    if ((method == "POST" || method == "OPTIONS") && path == "/retrieve")
+    {
+        current_method_ = method;
+        return true;
+    }
+    return false;
 }
 
 void RetrieveRoute::handle(SocketType sock, const std::string& body)
@@ -37,7 +43,17 @@ void RetrieveRoute::handle(SocketType sock, const std::string& body)
 
     try
     {
-        ServerLogger::logInfo("[Thread %u] Received retrieve request", std::this_thread::get_id());
+        ServerLogger::logInfo("[Thread %u] Received %s request for /retrieve", 
+                              std::this_thread::get_id(), current_method_.c_str());
+
+        // Handle OPTIONS request for CORS preflight
+        if (current_method_ == "OPTIONS")
+        {
+            handleOptions(sock);
+            return;
+        }
+
+        ServerLogger::logInfo("[Thread %u] Processing retrieve request", std::this_thread::get_id());
 
         // Check for empty body
         if (body.empty())
@@ -93,17 +109,32 @@ void RetrieveRoute::handle(SocketType sock, const std::string& body)
             std::lock_guard<std::mutex> lock(service_mutex_);
             if (!document_service_)
             {
-                // Create a basic database config - in a production environment,
-                // this would be passed from the main server configuration
-                DatabaseConfig db_config;
-                db_config.qdrant.enabled = true;
-                db_config.qdrant.host = "localhost";
-                db_config.qdrant.port = 6333;
-                db_config.qdrant.collectionName = "documents";
-                db_config.qdrant.defaultEmbeddingModel = "text-embedding-3-small";
-                db_config.qdrant.timeout = 30;
-                db_config.qdrant.maxConnections = 10;
-                db_config.qdrant.connectionTimeout = 5;
+                // Get database config from the server configuration
+                auto& serverConfig = ServerConfig::getInstance();
+                DatabaseConfig db_config = serverConfig.database;
+                
+                // Ensure Qdrant is configured with proper defaults if not set
+                if (db_config.qdrant.host.empty()) {
+                    db_config.qdrant.host = "localhost";
+                }
+                if (db_config.qdrant.port == 0) {
+                    db_config.qdrant.port = 6333;
+                }
+                if (db_config.qdrant.collectionName.empty()) {
+                    db_config.qdrant.collectionName = "documents";
+                }
+                if (db_config.qdrant.defaultEmbeddingModel.empty()) {
+                    db_config.qdrant.defaultEmbeddingModel = "text-embedding-3-small";
+                }
+                if (db_config.qdrant.timeout == 0) {
+                    db_config.qdrant.timeout = 30;
+                }
+                if (db_config.qdrant.maxConnections == 0) {
+                    db_config.qdrant.maxConnections = 10;
+                }
+                if (db_config.qdrant.connectionTimeout == 0) {
+                    db_config.qdrant.connectionTimeout = 5;
+                }
                 
                 document_service_ = std::make_unique<kolosal::retrieval::DocumentService>(db_config);
                 
@@ -170,6 +201,34 @@ void RetrieveRoute::handle(SocketType sock, const std::string& body)
         }
 
         ServerLogger::logError("[Thread %u] Error handling retrieve request: %s", std::this_thread::get_id(), ex.what());
+        sendErrorResponse(sock, 500, "Internal server error: " + std::string(ex.what()), "server_error");
+    }
+}
+
+void RetrieveRoute::handleOptions(SocketType sock)
+{
+    try
+    {
+        ServerLogger::logDebug("[Thread %u] Handling OPTIONS request for /retrieve endpoint", 
+                               std::this_thread::get_id());
+
+        std::map<std::string, std::string> headers = {
+            {"Content-Type", "text/plain"},
+            {"Access-Control-Allow-Origin", "*"},
+            {"Access-Control-Allow-Methods", "POST, OPTIONS"},
+            {"Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key"},
+            {"Access-Control-Max-Age", "86400"} // Cache preflight for 24 hours
+        };
+        
+        send_response(sock, 200, "", headers);
+        
+        ServerLogger::logDebug("[Thread %u] Successfully handled OPTIONS request", 
+                               std::this_thread::get_id());
+    }
+    catch (const std::exception& ex)
+    {
+        ServerLogger::logError("[Thread %u] Error handling OPTIONS request: %s", 
+                               std::this_thread::get_id(), ex.what());
         sendErrorResponse(sock, 500, "Internal server error: " + std::string(ex.what()), "server_error");
     }
 }

@@ -626,6 +626,34 @@ namespace kolosal
                     search.default_category = searchConfig["default_category"].as<std::string>();
             }
 
+            // Load database configuration
+            if (config["database"])
+            {
+                auto databaseConfig = config["database"];
+                if (databaseConfig["qdrant"])
+                {
+                    auto qdrantConfig = databaseConfig["qdrant"];
+                    if (qdrantConfig["enabled"])
+                        database.qdrant.enabled = qdrantConfig["enabled"].as<bool>();
+                    if (qdrantConfig["host"])
+                        database.qdrant.host = qdrantConfig["host"].as<std::string>();
+                    if (qdrantConfig["port"])
+                        database.qdrant.port = qdrantConfig["port"].as<int>();
+                    if (qdrantConfig["collection_name"])
+                        database.qdrant.collectionName = qdrantConfig["collection_name"].as<std::string>();
+                    if (qdrantConfig["default_embedding_model"])
+                        database.qdrant.defaultEmbeddingModel = qdrantConfig["default_embedding_model"].as<std::string>();
+                    if (qdrantConfig["timeout"])
+                        database.qdrant.timeout = qdrantConfig["timeout"].as<int>();
+                    if (qdrantConfig["api_key"])
+                        database.qdrant.apiKey = qdrantConfig["api_key"].as<std::string>();
+                    if (qdrantConfig["max_connections"])
+                        database.qdrant.maxConnections = qdrantConfig["max_connections"].as<int>();
+                    if (qdrantConfig["connection_timeout"])
+                        database.qdrant.connectionTimeout = qdrantConfig["connection_timeout"].as<int>();
+                }
+            }
+
             // Load models
             if (config["models"])
             {
@@ -804,6 +832,17 @@ namespace kolosal
             config["search"]["default_format"] = search.default_format;
             config["search"]["default_language"] = search.default_language;
             config["search"]["default_category"] = search.default_category;
+
+            // Database configuration
+            config["database"]["qdrant"]["enabled"] = database.qdrant.enabled;
+            config["database"]["qdrant"]["host"] = database.qdrant.host;
+            config["database"]["qdrant"]["port"] = database.qdrant.port;
+            config["database"]["qdrant"]["collection_name"] = database.qdrant.collectionName;
+            config["database"]["qdrant"]["default_embedding_model"] = database.qdrant.defaultEmbeddingModel;
+            config["database"]["qdrant"]["timeout"] = database.qdrant.timeout;
+            config["database"]["qdrant"]["api_key"] = database.qdrant.apiKey;
+            config["database"]["qdrant"]["max_connections"] = database.qdrant.maxConnections;
+            config["database"]["qdrant"]["connection_timeout"] = database.qdrant.connectionTimeout;
 
             // Models
             for (const auto &model : models)

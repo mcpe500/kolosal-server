@@ -15,12 +15,37 @@ namespace kolosal
 
     bool HealthStatusRoute::match(const std::string &method, const std::string &path)
     {
-        return (method == "GET" && (path == "/health" || path == "/v1/health" || path == "/status"));
+        if ((method == "GET" || method == "OPTIONS") && 
+            (path == "/health" || path == "/v1/health" || path == "/status"))
+        {
+            current_method_ = method;
+            return true;
+        }
+        return false;
     }
 
     void HealthStatusRoute::handle(SocketType sock, const std::string &body)
-    {        try
+    {        
+        try
         {
+            // Handle OPTIONS request for CORS preflight
+            if (current_method_ == "OPTIONS")
+            {
+                ServerLogger::logDebug("[Thread %u] Handling OPTIONS request for health endpoint", 
+                                       std::this_thread::get_id());
+                
+                std::map<std::string, std::string> headers = {
+                    {"Content-Type", "text/plain"},
+                    {"Access-Control-Allow-Origin", "*"},
+                    {"Access-Control-Allow-Methods", "GET, OPTIONS"},
+                    {"Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key"},
+                    {"Access-Control-Max-Age", "86400"} // Cache preflight for 24 hours
+                };
+                
+                send_response(sock, 200, "", headers);
+                return;
+            }
+
             ServerLogger::logDebug("[Thread %u] Received health status request", std::this_thread::get_id());
 
             // Get the NodeManager and collect metrics
@@ -60,7 +85,16 @@ namespace kolosal
                                {"name", "Kolosal Inference Server"}, {"version", "1.0.0"}, {"uptime", "running"} // Could be enhanced with actual uptime
                            }},
                 {"node_manager", {{"total_engines", engineIds.size()}, {"loaded_engines", loadedCount}, {"unloaded_engines", unloadedCount}, {"autoscaling", "enabled"}}},
-                {"engines", engineSummary}};            send_response(sock, 200, response.dump());
+                {"engines", engineSummary}};
+
+            std::map<std::string, std::string> headers = {
+                {"Content-Type", "application/json"},
+                {"Access-Control-Allow-Origin", "*"},
+                {"Access-Control-Allow-Methods", "GET, OPTIONS"},
+                {"Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key"}
+            };
+
+            send_response(sock, 200, response.dump(), headers);
             ServerLogger::logDebug("[Thread %u] Successfully provided health status - %zu engines total (%d loaded, %d unloaded)",
                                   std::this_thread::get_id(), engineIds.size(), loadedCount, unloadedCount);
         }
@@ -70,7 +104,14 @@ namespace kolosal
 
             json jError = {{"error", {{"message", std::string("Server error: ") + ex.what()}, {"type", "server_error"}, {"param", nullptr}, {"code", nullptr}}}};
 
-            send_response(sock, 500, jError.dump());
+            std::map<std::string, std::string> headers = {
+                {"Content-Type", "application/json"},
+                {"Access-Control-Allow-Origin", "*"},
+                {"Access-Control-Allow-Methods", "GET, OPTIONS"},
+                {"Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key"}
+            };
+
+            send_response(sock, 500, jError.dump(), headers);
         }
     }
 

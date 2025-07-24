@@ -79,26 +79,28 @@ set(SOURCES
     src/routes/server_logs_route.cpp    
     src/routes/embedding_route.cpp
     src/routes/internet_search_route.cpp
-    src/routes/parse_docx_route.cpp
-    src/routes/parse_pdf_route.cpp
-    src/routes/parse_html_route.cpp
+    src/routes/parse_document_route.cpp
     src/routes/retrieve_route.cpp
-    src/routes/add_documents_route.cpp
-    src/routes/remove_documents_route.cpp
+    src/routes/documents_route.cpp
     src/routes/downloads_route.cpp
+    src/routes/chunking_route.cpp
     
     # Retrieval files
     src/retrieval/add_document_types.cpp
     src/retrieval/remove_document_types.cpp
+    src/retrieval/document_list_types.cpp
     src/retrieval/retrieve_types.cpp
     src/retrieval/document_service.cpp
     src/retrieval/parse_docx.cpp
     src/retrieval/parse_pdf.cpp
     src/retrieval/parse_html.cpp
+    src/retrieval/chunking_types.cpp
     
     # Model files
     src/models/embedding_request_model.cpp
     src/models/embedding_response_model.cpp
+    src/models/chunking_request_model.cpp
+    src/models/chunking_response_model.cpp
 
     src/auth/rate_limiter.cpp
     src/auth/cors_handler.cpp
@@ -258,15 +260,38 @@ if(WIN32)
     endforeach()
     
     if(MUPDF_MISSING)
-        # Add custom target to build MuPDF using devenv (Visual Studio)
-        # devenv can automatically retarget projects to the current VS version
-        add_custom_target(mupdf_build
-            COMMAND devenv mupdf.sln /upgrade
-            COMMAND devenv mupdf.sln /build "Release|x64" /project libmupdf
-            COMMAND devenv mupdf.sln /build "Release|x64" /project libthirdparty
-            WORKING_DIRECTORY ${MUPDF_PATH}/platform/win32
-            COMMENT "Building MuPDF libraries using devenv with auto-upgrade"
+        # Add custom target to build MuPDF using MSBuild (more reliable than devenv)
+        # First try to find MSBuild
+        find_program(MSBUILD_EXECUTABLE
+            NAMES MSBuild.exe
+            PATHS
+            "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/MSBuild/Current/Bin"
+            "C:/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin"
+            "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin"
+            "C:/Program Files (x86)/Microsoft Visual Studio/2019/Enterprise/MSBuild/Current/Bin"
+            "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/MSBuild/Current/Bin"
+            "C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/MSBuild/Current/Bin"
+            "C:/Program Files (x86)/MSBuild/14.0/Bin"
         )
+        
+        if(MSBUILD_EXECUTABLE)
+            message(STATUS "Found MSBuild: ${MSBUILD_EXECUTABLE}")
+            add_custom_target(mupdf_build
+                COMMAND ${MSBUILD_EXECUTABLE} mupdf.sln /p:Configuration=Release /p:Platform=x64 /t:libmupdf
+                COMMAND ${MSBUILD_EXECUTABLE} mupdf.sln /p:Configuration=Release /p:Platform=x64 /t:libthirdparty
+                WORKING_DIRECTORY ${MUPDF_PATH}/platform/win32
+                COMMENT "Building MuPDF libraries using MSBuild"
+            )
+        else()
+            message(WARNING "MSBuild not found. Trying with cmake --build")
+            add_custom_target(mupdf_build
+                COMMAND ${CMAKE_COMMAND} -S . -B build -A x64
+                COMMAND ${CMAKE_COMMAND} --build build --config Release --target libmupdf
+                COMMAND ${CMAKE_COMMAND} --build build --config Release --target libthirdparty
+                WORKING_DIRECTORY ${MUPDF_PATH}/platform/win32
+                COMMENT "Building MuPDF libraries using cmake"
+            )
+        endif()
         add_dependencies(kolosal_server mupdf_build)
     endif()
 endif()
@@ -548,7 +573,7 @@ if(APPLE AND NOT DEFINED USE_METAL)
     set(USE_METAL ON CACHE BOOL "Enable Metal acceleration on Apple systems" FORCE)
 endif()
 
-add_subdirectory(inference)
+# Note: inference subdirectory is already added earlier in the CMakeLists.txt
 
 # Install header files only for development packages
 option(INSTALL_HEADERS "Install header files for development" OFF)
