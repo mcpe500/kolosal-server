@@ -32,9 +32,12 @@ bool DocumentsRoute::match(const std::string& method, const std::string& path)
     if ((method == "POST" && path == "/add_documents") ||
         (method == "POST" && path == "/remove_documents") ||
         (method == "GET" && path == "/list_documents") ||
-        (method == "POST" && path == "/info_documents"))
+        (method == "POST" && path == "/info_documents") ||
+        (method == "OPTIONS" && (path == "/add_documents" || path == "/remove_documents" || 
+                                path == "/list_documents" || path == "/info_documents")))
     {
         current_endpoint_ = path;
+        current_method_ = method;
         return true;
     }
     return false;
@@ -44,10 +47,14 @@ void DocumentsRoute::handle(SocketType sock, const std::string& body)
 {
     try
     {
-        ServerLogger::logInfo("[Thread %u] Received request for endpoint: %s", 
-                              std::this_thread::get_id(), current_endpoint_.c_str());
+        ServerLogger::logInfo("[Thread %u] Received %s request for endpoint: %s", 
+                              std::this_thread::get_id(), current_method_.c_str(), current_endpoint_.c_str());
 
-        if (current_endpoint_ == "/add_documents")
+        if (current_method_ == "OPTIONS")
+        {
+            handleOptions(sock);
+        }
+        else if (current_endpoint_ == "/add_documents")
         {
             handleAddDocuments(sock, body);
         }
@@ -441,6 +448,34 @@ void DocumentsRoute::handleDocumentsInfo(SocketType sock, const std::string& bod
     catch (const std::exception& ex)
     {
         ServerLogger::logError("[Thread %u] Error handling info documents request: %s", 
+                               std::this_thread::get_id(), ex.what());
+        sendErrorResponse(sock, 500, "Internal server error: " + std::string(ex.what()), "server_error");
+    }
+}
+
+void DocumentsRoute::handleOptions(SocketType sock)
+{
+    try
+    {
+        ServerLogger::logDebug("[Thread %u] Handling OPTIONS request for CORS preflight", 
+                               std::this_thread::get_id());
+
+        std::map<std::string, std::string> headers = {
+            {"Content-Type", "text/plain"},
+            {"Access-Control-Allow-Origin", "*"},
+            {"Access-Control-Allow-Methods", "GET, POST, OPTIONS"},
+            {"Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key"},
+            {"Access-Control-Max-Age", "86400"} // Cache preflight for 24 hours
+        };
+        
+        send_response(sock, 200, "", headers);
+        
+        ServerLogger::logDebug("[Thread %u] Successfully handled OPTIONS request", 
+                               std::this_thread::get_id());
+    }
+    catch (const std::exception& ex)
+    {
+        ServerLogger::logError("[Thread %u] Error handling OPTIONS request: %s", 
                                std::this_thread::get_id(), ex.what());
         sendErrorResponse(sock, 500, "Internal server error: " + std::string(ex.what()), "server_error");
     }
