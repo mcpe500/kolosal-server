@@ -38,6 +38,7 @@ option(USE_VULKAN "Compile with VULKAN support" OFF)
 option(USE_METAL  "Compile with Metal support (macOS only)" OFF)
 option(USE_MPI    "Compile with MPI support" OFF)
 option(DEBUG      "Compile with debugging information" OFF)
+option(USE_PODOFO "Compile with PoDoFo PDF support" ON)
 
 # Define include directories.
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -287,6 +288,7 @@ target_compile_definitions(kolosal_server PUBLIC
   $<$<BOOL:${USE_MPI}>:USE_MPI>
   $<$<BOOL:${DEBUG}>:DEBUG>
   $<$<BOOL:${USE_CPPUPROFILE_GPU}>:USE_CPPUPROFILE_GPU>
+  $<$<BOOL:${USE_PODOFO}>:USE_PODOFO>
 )
 
 # Add subdirectories for external libraries
@@ -343,6 +345,264 @@ if(NOT TARGET minizip_static)
     )
 endif()
 
+# Set up ZLIB variables for other libraries (like PoDoFo) to find
+if(TARGET zlibstatic)
+    # Set ZLIB variables so find_package(ZLIB) works for dependencies
+    get_target_property(ZLIB_INCLUDE_DIR zlibstatic INTERFACE_INCLUDE_DIRECTORIES)
+    if(NOT ZLIB_INCLUDE_DIR)
+        set(ZLIB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/zlib;${CMAKE_CURRENT_BINARY_DIR}/external/zlib")
+    endif()
+    set(ZLIB_LIBRARY zlibstatic)
+    set(ZLIB_LIBRARIES ${ZLIB_LIBRARY})
+    set(ZLIB_FOUND TRUE)
+    set(ZLIB_VERSION_STRING "1.2.11") # Adjust if needed
+    
+    # Also set for the ZLIB target to be found
+    set_target_properties(zlibstatic PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${ZLIB_INCLUDE_DIR}"
+    )
+    
+    # Create ZLIB::ZLIB imported target for modern CMake
+    if(NOT TARGET ZLIB::ZLIB)
+        add_library(ZLIB::ZLIB ALIAS zlibstatic)
+    endif()
+    
+    message(STATUS "ZLIB variables set for PoDoFo: ${ZLIB_INCLUDE_DIR}")
+endif()
+
+# Add PoDoFo
+if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
+    # Check if PoDoFo has its own CMakeLists.txt
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/CMakeLists.txt")
+        # Set up paths to PoDoFo dependencies
+        set(PODOFO_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/extern/deps/3rdparty")
+        
+        # Determine platform-specific library directory
+        if(WIN32)
+            if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+                set(PODOFO_LIB_SUBDIR "Win64")
+            else()
+                set(PODOFO_LIB_SUBDIR "Win32")
+            endif()
+        elseif(APPLE)
+            set(PODOFO_LIB_SUBDIR "macosx-x86_64")
+        else()
+            set(PODOFO_LIB_SUBDIR "linux-x86_64")
+        endif()
+        
+        # Set up Freetype
+        set(FREETYPE_INCLUDE_DIRS "${PODOFO_DEPS_DIR}/freetype/include/freetype2;${PODOFO_DEPS_DIR}/freetype/include")
+        set(FREETYPE_INCLUDE_DIR "${PODOFO_DEPS_DIR}/freetype/include/freetype2")
+        if(WIN32)
+            if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+                set(FREETYPE_LIBRARY "${PODOFO_DEPS_DIR}/freetype/lib/${PODOFO_LIB_SUBDIR}/freetyped.lib")
+            else()
+                set(FREETYPE_LIBRARY "${PODOFO_DEPS_DIR}/freetype/lib/${PODOFO_LIB_SUBDIR}/freetype.lib")
+            endif()
+        else()
+            set(FREETYPE_LIBRARY "${PODOFO_DEPS_DIR}/freetype/lib/${PODOFO_LIB_SUBDIR}/libfreetype.a")
+        endif()
+        set(FREETYPE_LIBRARIES ${FREETYPE_LIBRARY})
+        
+        # Create an imported target for Freetype so PoDoFo can find it properly
+        if(NOT TARGET Freetype::Freetype)
+            add_library(Freetype::Freetype STATIC IMPORTED)
+            set_target_properties(Freetype::Freetype PROPERTIES
+                IMPORTED_LOCATION ${FREETYPE_LIBRARY}
+                INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
+            )
+        endif()
+        
+        # Set up JPEG
+        set(JPEG_INCLUDE_DIR "${PODOFO_DEPS_DIR}/libjpeg/include")
+        if(WIN32)
+            if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+                set(JPEG_LIBRARY "${PODOFO_DEPS_DIR}/libjpeg/lib/${PODOFO_LIB_SUBDIR}/jpegd.lib")
+            else()
+                set(JPEG_LIBRARY "${PODOFO_DEPS_DIR}/libjpeg/lib/${PODOFO_LIB_SUBDIR}/jpeg.lib")
+            endif()
+        else()
+            set(JPEG_LIBRARY "${PODOFO_DEPS_DIR}/libjpeg/lib/${PODOFO_LIB_SUBDIR}/libjpeg.a")
+        endif()
+        set(JPEG_LIBRARIES ${JPEG_LIBRARY})
+        
+        # Create an imported target for JPEG
+        if(NOT TARGET JPEG::JPEG)
+            add_library(JPEG::JPEG STATIC IMPORTED)
+            set_target_properties(JPEG::JPEG PROPERTIES
+                IMPORTED_LOCATION ${JPEG_LIBRARY}
+                INTERFACE_INCLUDE_DIRECTORIES "${JPEG_INCLUDE_DIR}"
+            )
+        endif()
+        
+        # Set up PNG
+        set(PNG_PNG_INCLUDE_DIR "${PODOFO_DEPS_DIR}/libpng/include")
+        set(PNG_INCLUDE_DIR ${PNG_PNG_INCLUDE_DIR})
+        if(WIN32)
+            if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+                set(PNG_LIBRARY "${PODOFO_DEPS_DIR}/libpng/lib/${PODOFO_LIB_SUBDIR}/pngd.lib")
+            else()
+                set(PNG_LIBRARY "${PODOFO_DEPS_DIR}/libpng/lib/${PODOFO_LIB_SUBDIR}/png.lib")
+            endif()
+        else()
+            set(PNG_LIBRARY "${PODOFO_DEPS_DIR}/libpng/lib/${PODOFO_LIB_SUBDIR}/libpng.a")
+        endif()
+        set(PNG_LIBRARIES ${PNG_LIBRARY})
+        
+        # Create an imported target for PNG
+        if(NOT TARGET PNG::PNG)
+            add_library(PNG::PNG STATIC IMPORTED)
+            set_target_properties(PNG::PNG PROPERTIES
+                IMPORTED_LOCATION ${PNG_LIBRARY}
+                INTERFACE_INCLUDE_DIRECTORIES "${PNG_INCLUDE_DIR}"
+            )
+        endif()
+        
+        # Set up TIFF
+        set(TIFF_INCLUDE_DIR "${PODOFO_DEPS_DIR}/libtiff/include")
+        if(WIN32)
+            if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+                set(TIFF_LIBRARY "${PODOFO_DEPS_DIR}/libtiff/lib/${PODOFO_LIB_SUBDIR}/tiffd.lib")
+            else()
+                set(TIFF_LIBRARY "${PODOFO_DEPS_DIR}/libtiff/lib/${PODOFO_LIB_SUBDIR}/tiff.lib")
+            endif()
+        else()
+            set(TIFF_LIBRARY "${PODOFO_DEPS_DIR}/libtiff/lib/${PODOFO_LIB_SUBDIR}/libtiff.a")
+        endif()
+        set(TIFF_LIBRARIES ${TIFF_LIBRARY})
+        
+        # Create an imported target for TIFF
+        if(NOT TARGET TIFF::TIFF)
+            add_library(TIFF::TIFF STATIC IMPORTED)
+            set_target_properties(TIFF::TIFF PROPERTIES
+                IMPORTED_LOCATION ${TIFF_LIBRARY}
+                INTERFACE_INCLUDE_DIRECTORIES "${TIFF_INCLUDE_DIR}"
+            )
+        endif()
+        
+        # Set up LibXml2
+        set(LIBXML2_INCLUDE_DIR "${PODOFO_DEPS_DIR}/libxml2/include")
+        set(LIBXML2_INCLUDE_DIRS ${LIBXML2_INCLUDE_DIR})
+        if(WIN32)
+            if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+                set(LIBXML2_LIBRARY "${PODOFO_DEPS_DIR}/libxml2/lib/${PODOFO_LIB_SUBDIR}/libxml2d.lib")
+            else()
+                set(LIBXML2_LIBRARY "${PODOFO_DEPS_DIR}/libxml2/lib/${PODOFO_LIB_SUBDIR}/libxml2.lib")
+            endif()
+        else()
+            set(LIBXML2_LIBRARY "${PODOFO_DEPS_DIR}/libxml2/lib/${PODOFO_LIB_SUBDIR}/libxml2.a")
+        endif()
+        set(LIBXML2_LIBRARIES ${LIBXML2_LIBRARY})
+        
+        # Create an imported target for LibXml2
+        if(NOT TARGET LibXml2::LibXml2)
+            add_library(LibXml2::LibXml2 STATIC IMPORTED)
+            set_target_properties(LibXml2::LibXml2 PROPERTIES
+                IMPORTED_LOCATION ${LIBXML2_LIBRARY}
+                INTERFACE_INCLUDE_DIRECTORIES "${LIBXML2_INCLUDE_DIR}"
+            )
+        endif()
+        
+        # Set up Fontconfig
+        set(Fontconfig_INCLUDE_DIR "${PODOFO_DEPS_DIR}/fontconfig/include")
+        set(Fontconfig_INCLUDE_DIRS ${Fontconfig_INCLUDE_DIR})
+        if(WIN32)
+            if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+                set(Fontconfig_LIBRARY "${PODOFO_DEPS_DIR}/fontconfig/lib/${PODOFO_LIB_SUBDIR}/fontconfigd.lib")
+            else()
+                set(Fontconfig_LIBRARY "${PODOFO_DEPS_DIR}/fontconfig/lib/${PODOFO_LIB_SUBDIR}/fontconfig.lib")
+            endif()
+        else()
+            set(Fontconfig_LIBRARY "${PODOFO_DEPS_DIR}/fontconfig/lib/${PODOFO_LIB_SUBDIR}/libfontconfig.a")
+        endif()
+        set(Fontconfig_LIBRARIES ${Fontconfig_LIBRARY})
+        
+        # Create an imported target for Fontconfig
+        if(NOT TARGET Fontconfig::Fontconfig)
+            add_library(Fontconfig::Fontconfig STATIC IMPORTED)
+            set_target_properties(Fontconfig::Fontconfig PROPERTIES
+                IMPORTED_LOCATION ${Fontconfig_LIBRARY}
+                INTERFACE_INCLUDE_DIRECTORIES "${Fontconfig_INCLUDE_DIR}"
+            )
+        endif()
+        
+        # Set found flags
+        if(EXISTS "${FREETYPE_LIBRARY}")
+            set(FREETYPE_FOUND TRUE)
+            message(STATUS "Found PoDoFo Freetype: ${FREETYPE_LIBRARY}")
+        endif()
+        
+        if(EXISTS "${JPEG_LIBRARY}")
+            set(JPEG_FOUND TRUE)
+            message(STATUS "Found PoDoFo JPEG: ${JPEG_LIBRARY}")
+        endif()
+        
+        if(EXISTS "${PNG_LIBRARY}")
+            set(PNG_FOUND TRUE)
+            message(STATUS "Found PoDoFo PNG: ${PNG_LIBRARY}")
+        endif()
+        
+        if(EXISTS "${TIFF_LIBRARY}")
+            set(TIFF_FOUND TRUE)
+            message(STATUS "Found PoDoFo TIFF: ${TIFF_LIBRARY}")
+        endif()
+        
+        if(EXISTS "${LIBXML2_LIBRARY}")
+            set(LIBXML2_FOUND TRUE)
+            message(STATUS "Found PoDoFo LibXml2: ${LIBXML2_LIBRARY}")
+        endif()
+        
+        if(EXISTS "${Fontconfig_LIBRARY}")
+            set(Fontconfig_FOUND TRUE)
+            message(STATUS "Found PoDoFo Fontconfig: ${Fontconfig_LIBRARY}")
+        endif()
+        
+        # Configure PoDoFo options
+        set(PODOFO_BUILD_STATIC ON CACHE BOOL "Build PoDoFo as static library" FORCE)
+        set(PODOFO_BUILD_TEST OFF CACHE BOOL "Disable PoDoFo tests" FORCE)
+        set(PODOFO_BUILD_EXAMPLES OFF CACHE BOOL "Disable PoDoFo examples" FORCE)
+        set(PODOFO_BUILD_UNSUPPORTED_TOOLS OFF CACHE BOOL "Disable PoDoFo tools" FORCE)
+        set(PODOFO_BUILD_LIB_ONLY ON CACHE BOOL "Build only PoDoFo library" FORCE)
+        
+        # Disable installation and exports to avoid target export issues
+        set(CMAKE_SKIP_INSTALL_RULES ON CACHE BOOL "Skip install rules for PoDoFo" FORCE)
+        set(PODOFO_BUILD_INSTALL OFF CACHE BOOL "Disable PoDoFo installation" FORCE)
+        
+        # Temporarily override add_custom_target to ignore uninstall target
+        function(add_custom_target target_name)
+            if(target_name STREQUAL "uninstall")
+                message(STATUS "Skipping duplicate uninstall target from PoDoFo")
+            else()
+                # Call the original add_custom_target
+                _add_custom_target(${target_name} ${ARGN})
+            endif()
+        endfunction()
+        
+        # Temporarily override install function to prevent export issues
+        function(install)
+            # Ignore all install commands from PoDoFo to avoid export conflicts
+            message(STATUS "Skipping install command from PoDoFo: ${ARGN}")
+        endfunction()
+        
+        add_subdirectory(external/podofo EXCLUDE_FROM_ALL)
+        
+        # Restore original functions by unsetting our overrides
+        unset(add_custom_target)
+        unset(install)
+        
+        # Set target properties for position independent code
+        if(TARGET podofo_static)
+            set_target_properties(podofo_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        endif()
+        
+        message(STATUS "PoDoFo library added")
+    else()
+        message(WARNING "PoDoFo CMakeLists.txt not found. PoDoFo support will be disabled")
+    endif()
+elseif(NOT USE_PODOFO)
+    message(STATUS "PoDoFo support disabled")
+endif()
+
 # Add PugiXML
 if(NOT TARGET pugixml)
     # Check if PugiXML has its own CMakeLists.txt
@@ -372,6 +632,12 @@ endif()
 # Link libraries - llama components are handled by inference library
 set(KOLOSAL_LINK_LIBRARIES yaml-cpp llama-cpu zlibstatic minizip_static pugixml)
 
+# Add PoDoFo if available and enabled
+if(USE_PODOFO AND TARGET podofo_static)
+    list(APPEND KOLOSAL_LINK_LIBRARIES podofo_static)
+    message(STATUS "PoDoFo library will be linked")
+endif()
+
 # Add cppuprofile if enabled
 if(USE_CPPUPROFILE_GPU)
     list(APPEND KOLOSAL_LINK_LIBRARIES cppuprofile)
@@ -382,6 +648,11 @@ target_link_libraries(kolosal_server PRIVATE ${KOLOSAL_LINK_LIBRARIES})
 # Link CURL libraries and include directories
 target_include_directories(kolosal_server PRIVATE ${CURL_INCLUDE_DIR})
 target_link_libraries(kolosal_server PRIVATE ${CURL_LIBRARIES})
+
+# Add PoDoFo include directories if enabled
+if(USE_PODOFO AND TARGET podofo_static)
+    target_include_directories(kolosal_server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/src)
+endif()
 
 # Find and link thread library for the main library.
 find_package(Threads REQUIRED)

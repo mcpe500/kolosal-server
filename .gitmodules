@@ -7,3 +7,6 @@
 [submodule "external/zlib"]
 	path = external/zlib
 	url = https://github.com/madler/zlib
+[submodule "external/podofo"]
+	path = external/podofo
+	url = https://github.com/podofo/podofo
