@@ -48,7 +48,9 @@ namespace retrieval
             other.ctx_ = nullptr;
         }
         return *this;
-    }    // RAII MuPDF Document Management
+    }    
+    
+    // RAII MuPDF Document Management
     MuPDFDocument::MuPDFDocument(fz_context *ctx, const std::string &filepath)
         : ctx_(ctx), doc_(nullptr), stream_(nullptr)
     {
@@ -94,7 +96,9 @@ namespace retrieval
             }
             throw std::runtime_error("Failed to open PDF from memory");
         }
-    }    MuPDFDocument::~MuPDFDocument()
+    }    
+    
+    MuPDFDocument::~MuPDFDocument()
     {
         if (doc_ && ctx_)
         {

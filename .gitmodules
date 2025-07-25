@@ -1,9 +1,9 @@
 [submodule "beast"]
 	path = beast
 	url = https://github.com/boostorg/beast
-[submodule "external/mupdf"]
-	path = external/mupdf
-	url = https://github.com/ArtifexSoftware/mupdf.git
 [submodule "external/pugixml"]
 	path = external/pugixml
 	url = https://github.com/zeux/pugixml.git
+[submodule "external/zlib"]
+	path = external/zlib
+	url = https://github.com/madler/zlib
