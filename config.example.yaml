@@ -26,6 +26,8 @@ database:
     # Connection pooling
     max_connections: 10
     connection_timeout: 5
+    # Embedding batch processing
+    embedding_batch_size: 5
 
 # Internet search configuration
 search:
