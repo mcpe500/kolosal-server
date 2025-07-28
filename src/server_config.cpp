@@ -651,6 +651,8 @@ namespace kolosal
                         database.qdrant.maxConnections = qdrantConfig["max_connections"].as<int>();
                     if (qdrantConfig["connection_timeout"])
                         database.qdrant.connectionTimeout = qdrantConfig["connection_timeout"].as<int>();
+                    if (qdrantConfig["embedding_batch_size"])
+                        database.qdrant.embeddingBatchSize = qdrantConfig["embedding_batch_size"].as<int>();
                 }
             }
 
@@ -843,6 +845,7 @@ namespace kolosal
             config["database"]["qdrant"]["api_key"] = database.qdrant.apiKey;
             config["database"]["qdrant"]["max_connections"] = database.qdrant.maxConnections;
             config["database"]["qdrant"]["connection_timeout"] = database.qdrant.connectionTimeout;
+            config["database"]["qdrant"]["embedding_batch_size"] = database.qdrant.embeddingBatchSize;
 
             // Models
             for (const auto &model : models)
