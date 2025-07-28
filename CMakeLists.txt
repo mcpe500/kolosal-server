@@ -78,7 +78,7 @@ set(SOURCES
     src/routes/server_logs_route.cpp    
     src/routes/embedding_route.cpp
     src/routes/internet_search_route.cpp
-    # src/routes/parse_document_route.cpp
+    src/routes/parse_document_route.cpp
     src/routes/retrieve_route.cpp
     src/routes/documents_route.cpp
     src/routes/downloads_route.cpp
@@ -166,8 +166,13 @@ endif()
 
 # Copy additional libraries for Windows
 if(WIN32)
-    # Note: Inference engine DLLs are now loaded at runtime and should be placed
-    # in the plugins directory or same directory as the executable manually
+    # Copy inference engine DLL to executable directory
+    add_custom_command(TARGET kolosal_server_exe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:llama-cpu>"
+        "$<TARGET_FILE_DIR:kolosal_server_exe>/"
+        COMMENT "Copying llama-cpu.dll to executable directory"
+    )
     
     # Copy CURL DLL if it exists
     set(CURL_DLL_PATHS
@@ -222,19 +227,7 @@ add_subdirectory(${YAML_CPP_PATH})
 # All llama.cpp, CUDA, Vulkan, and MPI dependencies are handled by the inference library
 add_subdirectory(inference)
 
-
-# Only add yaml-cpp if it hasn't been added by the inference subdirectory
-# Note: yaml-cpp is still needed for server configuration
-if(NOT TARGET yaml-cpp)
-    add_subdirectory(external/yaml-cpp EXCLUDE_FROM_ALL)
-    # Ensure yaml-cpp is built with -fPIC if needed
-    if(CMAKE_POSITION_INDEPENDENT_CODE)
-        set_target_properties(yaml-cpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
-        message(STATUS "Applied -fPIC to yaml-cpp static library")
-    endif()
-endif()
-
-# Link the main server library with yaml-cpp only
+# Link the main server library with yaml-cpp
 target_link_libraries(kolosal_server PUBLIC yaml-cpp)
 
 # Configure CURL for main server (download utilities need it)
@@ -293,13 +286,6 @@ target_compile_definitions(kolosal_server PUBLIC
 
 # Add subdirectories for external libraries
 # llama.cpp is handled by the inference subdirectory, not directly
-# set(LLAMA_CPP_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp")
-# add_subdirectory(${LLAMA_CPP_PATH})
-
-# Only add yaml-cpp if it hasn't been added by llama.cpp
-if(NOT TARGET yaml-cpp)
-    add_subdirectory(external/yaml-cpp EXCLUDE_FROM_ALL)
-endif()
 
 # Add zlib (disable minizip for now due to config issues)
 if(NOT TARGET zlibstatic)
@@ -645,9 +631,11 @@ endif()
 
 target_link_libraries(kolosal_server PRIVATE ${KOLOSAL_LINK_LIBRARIES})
 
-# Link CURL libraries and include directoriesn
-target_include_directories(kolosal_server PRIVATE ${CURL_INCLUDE_DIR})
-target_link_libraries(kolosal_server PRIVATE ${CURL_LIBRARIES})
+# Link CURL libraries and include directories
+if(CURL_LIBRARY)
+    target_include_directories(kolosal_server PRIVATE ${CURL_PATH}/include)
+    target_link_libraries(kolosal_server PRIVATE ${CURL_LIBRARY})
+endif()
 
 # Add PoDoFo include directories if enabled
 if(USE_PODOFO AND TARGET podofo_static)
