@@ -394,7 +394,7 @@ std::future<AddDocumentsResponse> DocumentService::addDocuments(const AddDocumen
                                   request.documents.size(), collection_name.c_str());
             
             // Use batching to generate embeddings
-            const int batch_size = config_.qdrant.embeddingBatchSize;
+            const int batch_size = pImpl->config_.qdrant.embeddingBatchSize;
             ServerLogger::logInfo("Using embedding batch size: %d", batch_size);
             
             std::vector<std::string> document_ids;
