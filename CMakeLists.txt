@@ -91,7 +91,7 @@ set(SOURCES
     src/retrieval/retrieve_types.cpp
     src/retrieval/document_service.cpp
     src/retrieval/parse_docx.cpp
-    # src/retrieval/parse_pdf.cpp
+    src/retrieval/parse_pdf.cpp
     src/retrieval/parse_html.cpp
     src/retrieval/chunking_types.cpp
     
@@ -645,13 +645,18 @@ endif()
 
 target_link_libraries(kolosal_server PRIVATE ${KOLOSAL_LINK_LIBRARIES})
 
-# Link CURL libraries and include directories
+# Link CURL libraries and include directoriesn
 target_include_directories(kolosal_server PRIVATE ${CURL_INCLUDE_DIR})
 target_link_libraries(kolosal_server PRIVATE ${CURL_LIBRARIES})
 
 # Add PoDoFo include directories if enabled
 if(USE_PODOFO AND TARGET podofo_static)
-    target_include_directories(kolosal_server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/src)
+    target_include_directories(kolosal_server PRIVATE 
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/src
+        ${CMAKE_CURRENT_BINARY_DIR}/external/podofo/src/podofo/podofo/auxiliary
+    )
+    # Define PODOFO_STATIC for static linking
+    target_compile_definitions(kolosal_server PRIVATE PODOFO_STATIC)
 endif()
 
 # Find and link thread library for the main library.
