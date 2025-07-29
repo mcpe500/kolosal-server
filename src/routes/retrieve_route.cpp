@@ -135,6 +135,9 @@ void RetrieveRoute::handle(SocketType sock, const std::string& body)
                 if (db_config.qdrant.connectionTimeout == 0) {
                     db_config.qdrant.connectionTimeout = 5;
                 }
+                if (db_config.qdrant.embeddingBatchSize == 0) {
+                    db_config.qdrant.embeddingBatchSize = 5;
+                }
                 
                 document_service_ = std::make_unique<kolosal::retrieval::DocumentService>(db_config);
                 
