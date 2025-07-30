@@ -10,22 +10,24 @@
 
 //-----------------routes-----------------//
 
+// Core routes
+
 #include "kolosal/routes/models_route.hpp"
 #include "kolosal/routes/engines_route.hpp"
 #include "kolosal/routes/health_status_route.hpp"
 #include "kolosal/routes/server_logs_route.hpp"
 #include "kolosal/routes/downloads_route.hpp"
 
-//-----------------llm routes-----------------//
+// LLM routes
 
 #include "kolosal/routes/llm/oai_completions_route.hpp"
 #include "kolosal/routes/llm/completion_route.hpp"
 
-//-----------------config routes-----------------//
+// Config routes
 
 #include "kolosal/routes/config/auth_config_route.hpp"
 
-//-----------------retrieval routes-----------------//
+// Retrieval routes
 
 #include "kolosal/routes/retrieval/embedding_route.hpp"
 #include "kolosal/routes/retrieval/parse_document_route.hpp"
@@ -82,6 +84,10 @@ namespace kolosal
             
             // Register routes
             ServerLogger::logInfo("Registering routes");
+
+            //-----------------routes-----------------//
+
+            // Register core routes
             
             pImpl->server->addRoute(std::make_unique<ModelsRoute>());
             pImpl->server->addRoute(std::make_unique<EnginesRoute>());
@@ -89,10 +95,16 @@ namespace kolosal
             pImpl->server->addRoute(std::make_unique<ServerLogsRoute>());
             pImpl->server->addRoute(std::make_unique<DownloadsRoute>());
             
+            // LLM routes
+
             pImpl->server->addRoute(std::make_unique<OaiCompletionsRoute>());
             pImpl->server->addRoute(std::make_unique<CompletionRoute>());
+
+            // Config routes
             
             pImpl->server->addRoute(std::make_unique<AuthConfigRoute>());
+
+            // Retrieval routes
 
             pImpl->server->addRoute(std::make_unique<EmbeddingRoute>());
             pImpl->server->addRoute(std::make_unique<ParseDocumentRoute>());
