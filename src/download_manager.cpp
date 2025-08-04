@@ -663,8 +663,8 @@ namespace kolosal
         // Check if the model path is a URL
         if (is_valid_url(model_path))
         {
-            // Generate download path
-            std::string download_path = generate_download_path(model_path, "./models");
+            // Generate download path using executable directory
+            std::string download_path = generate_download_path_executable(model_path);
 
             // Check if file already exists and is complete
             if (std::filesystem::exists(download_path))

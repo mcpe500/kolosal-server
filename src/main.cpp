@@ -405,7 +405,7 @@ int main(int argc, char *argv[])
             if (success)
             {
                 // Check if this was a URL that started an async download
-                if (is_valid_url(modelConfig.path) && !std::filesystem::exists(generate_download_path(modelConfig.path, "./models")))
+                if (is_valid_url(modelConfig.path) && !std::filesystem::exists(generate_download_path_executable(modelConfig.path)))
                 {
                     std::cout << "✓ Model '" << modelConfig.id << "' download started (async)" << std::endl;
                     ServerLogger::logInfo("Model '%s' download started from URL: %s", modelConfig.id.c_str(), modelConfig.path.c_str());

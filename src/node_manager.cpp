@@ -1332,8 +1332,10 @@ namespace kolosal
     {
         ServerLogger::logInfo("Model path for engine \'%s\' is a URL. Starting download: %s", engineId.c_str(), modelPath.c_str());
 
-        // Generate local path for the downloaded model
-        std::string downloadsDir = std::filesystem::absolute("./models").string();
+        // Generate local path for the downloaded model - use executable directory
+        std::string executableDir = getExecutableDirectory();
+        std::filesystem::path modelsPath = std::filesystem::path(executableDir) / "models";
+        std::string downloadsDir = std::filesystem::absolute(modelsPath).string();
         std::string localPath = generate_download_path(modelPath, downloadsDir);
 
         // Check if the file already exists locally
