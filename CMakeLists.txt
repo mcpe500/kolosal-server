@@ -943,13 +943,13 @@ endif()
 # Only install on Apple for DMG packaging
 if(APPLE)
     install(TARGETS kolosal_server
-        LIBRARY DESTINATION "Kolosal CLI.app/Contents/Frameworks"
-        ARCHIVE DESTINATION "Kolosal CLI.app/Contents/Frameworks"
+        LIBRARY DESTINATION "Kolosal.app/Contents/Frameworks"
+        ARCHIVE DESTINATION "Kolosal.app/Contents/Frameworks"
         COMPONENT Runtime
     )
     
     install(TARGETS kolosal_server_exe
-        RUNTIME DESTINATION "Kolosal CLI.app/Contents/MacOS"
+        RUNTIME DESTINATION "Kolosal.app/Contents/MacOS"
         COMPONENT Runtime
     )
     
