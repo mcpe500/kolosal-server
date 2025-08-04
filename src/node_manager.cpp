@@ -55,6 +55,75 @@ namespace kolosal
 #endif
     }
 
+#ifdef __APPLE__
+    // Helper function to detect if we're running from a macOS app bundle
+    static bool isRunningFromAppBundle()
+    {
+        try {
+            std::string execDir = getExecutableDirectory();
+            std::filesystem::path execPath(execDir);
+            
+            // Check if we're in a typical app bundle structure
+            // App bundles have structure: App.app/Contents/MacOS/executable
+            if (execPath.filename() == "MacOS") {
+                auto contentsPath = execPath.parent_path();
+                if (contentsPath.filename() == "Contents") {
+                    auto appPath = contentsPath.parent_path();
+                    if (appPath.extension() == ".app") {
+                        return true;
+                    }
+                }
+            }
+            
+            // Also check if we have the typical app bundle directories nearby
+            auto frameworksPath = execPath / "../Frameworks";
+            auto resourcesPath = execPath / "../Resources";
+            if (std::filesystem::exists(frameworksPath) && 
+                std::filesystem::exists(resourcesPath)) {
+                return true;
+            }
+            
+            return false;
+        } catch (const std::exception& e) {
+            ServerLogger::logWarning("Failed to detect app bundle structure: %s", e.what());
+            return false;
+        }
+    }
+
+    // Helper function to get app bundle-aware search paths for libraries
+    static std::vector<std::string> getLibrarySearchPaths(const std::string& execDir, const std::string& libName)
+    {
+        std::vector<std::string> searchPaths;
+        
+        if (isRunningFromAppBundle()) {
+            ServerLogger::logInfo("App bundle detected, prioritizing Frameworks directory");
+            // Prioritize app bundle paths
+            searchPaths.insert(searchPaths.end(), {
+                execDir + "/../Frameworks/" + libName + std::string(LIBRARY_EXTENSION),
+                execDir + "/../lib/" + libName + std::string(LIBRARY_EXTENSION)
+            });
+        }
+        
+        // Add standard app installation paths
+        searchPaths.insert(searchPaths.end(), {
+            "/Applications/Kolosal CLI.app/Contents/Frameworks/" + libName + std::string(LIBRARY_EXTENSION),
+            "/Applications/Kolosal CLI.app/Contents/MacOS/lib/" + libName + std::string(LIBRARY_EXTENSION),
+            // Standard macOS Homebrew paths
+            "/opt/homebrew/lib/" + libName + std::string(LIBRARY_EXTENSION),
+            "/usr/local/lib/" + libName + std::string(LIBRARY_EXTENSION),
+            // Paths relative to executable directory (fallback)
+            execDir + "/lib/" + libName + std::string(LIBRARY_EXTENSION),
+            execDir + "/../lib/" + libName + std::string(LIBRARY_EXTENSION),
+            // Current directory paths
+            "./" + libName + std::string(LIBRARY_EXTENSION),
+            "./lib/" + libName + std::string(LIBRARY_EXTENSION),
+            "../lib/" + libName + std::string(LIBRARY_EXTENSION)
+        });
+        
+        return searchPaths;
+    }
+#endif
+
     NodeManager::NodeManager(std::chrono::seconds idleTimeout)
         : idleTimeout_(idleTimeout), stopAutoscaling_(false)
     {
@@ -204,57 +273,43 @@ namespace kolosal
                 std::string execDir = getExecutableDirectory();
                 ServerLogger::logInfo("Searching for inference engines. Executable directory: %s", execDir.c_str());
                 
-                std::vector<std::string> searchPaths = {
-                    // Standard macOS Homebrew paths
-                    "/opt/homebrew/lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
-                    "/opt/homebrew/lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
-                    "/usr/local/lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
-                    "/usr/local/lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
-                    // macOS App bundle paths (if installed as app)
-                    "/Applications/Kolosal CLI.app/Contents/MacOS/lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
-                    "/Applications/Kolosal CLI.app/Contents/MacOS/lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
-                    // Paths relative to executable directory
-                    execDir + "/lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
-                    execDir + "/lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
-                    execDir + "/../lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
-                    execDir + "/../lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
-                    // Relative paths
-                    "./lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
-                    "./lib/libllama-cpu" + std::string(LIBRARY_EXTENSION),
-                    "./libllama-metal" + std::string(LIBRARY_EXTENSION),
-                    "./libllama-cpu" + std::string(LIBRARY_EXTENSION),
-                    // Library paths relative to executable
-                    "../lib/libllama-metal" + std::string(LIBRARY_EXTENSION),
-                    "../lib/libllama-cpu" + std::string(LIBRARY_EXTENSION)
-                };
+                // Use helper function to get app bundle-aware search paths
+                std::vector<std::string> metalPaths = getLibrarySearchPaths(execDir, "libllama-metal");
+                std::vector<std::string> cpuPaths = getLibrarySearchPaths(execDir, "libllama-cpu");
                 
-                for (const auto& path : searchPaths)
+                // Check for Metal engine first
+                for (const auto& path : metalPaths)
                 {
-                    ServerLogger::logInfo("Checking for inference engine at: %s", path.c_str());
+                    ServerLogger::logInfo("Checking for Metal inference engine at: %s", path.c_str());
                     if (std::filesystem::exists(path))
                     {
-                        if (path.find("metal") != std::string::npos)
-                        {
-                            defaultEngines.emplace_back("llama-metal", path, "Apple Metal GPU acceleration");
-                            ServerLogger::logInfo("Found Metal inference engine: %s", path.c_str());
-                        }
-                        else if (path.find("cpu") != std::string::npos)
-                        {
-                            defaultEngines.emplace_back("llama-cpu", path, "CPU inference engine");
-                            ServerLogger::logInfo("Found CPU inference engine: %s", path.c_str());
-                        }
+                        defaultEngines.emplace_back("llama-metal", path, "Apple Metal GPU acceleration");
+                        ServerLogger::logInfo("Found Metal inference engine: %s", path.c_str());
+                        break; // Found Metal, stop searching
+                    }
+                }
+                
+                // Check for CPU engine
+                for (const auto& path : cpuPaths)
+                {
+                    ServerLogger::logInfo("Checking for CPU inference engine at: %s", path.c_str());
+                    if (std::filesystem::exists(path))
+                    {
+                        defaultEngines.emplace_back("llama-cpu", path, "CPU inference engine");
+                        ServerLogger::logInfo("Found CPU inference engine: %s", path.c_str());
+                        break; // Found CPU, stop searching
                     }
                 }
                 
                 // If still no engines found, provide detailed logging
                 if (defaultEngines.empty())
                 {
-                    ServerLogger::logError("No inference engine libraries found in any of the searched paths:");
-                    for (const auto& path : searchPaths)
-                    {
-                        ServerLogger::logError("  - %s", path.c_str());
-                    }
-                    ServerLogger::logError("Please ensure inference engine libraries are properly installed.");
+                    ServerLogger::logError("No inference engine libraries found in any of the searched paths.");
+                    ServerLogger::logError("Please ensure inference engine libraries are properly installed in:");
+                    ServerLogger::logError("  - App bundle Frameworks directory (../Frameworks/)");
+                    ServerLogger::logError("  - Homebrew locations (/opt/homebrew/lib/ or /usr/local/lib/)");
+                    ServerLogger::logError("  - Application bundle (/Applications/Kolosal CLI.app/Contents/Frameworks/)");
+                    ServerLogger::logError("  - Relative to executable (./lib/ or ../lib/)");
                 }
             }
 #else
