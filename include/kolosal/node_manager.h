@@ -60,6 +60,18 @@ public:
     bool addEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId, const std::string& engineType);
 
     /**
+     * @brief Loads a new inference engine with platform-specific default engine type.
+     * Uses llama-metal on Apple platforms, llama-cpu on others.
+     * 
+     * @param engineId A unique identifier for this engine.
+     * @param modelPath Path to the model file.
+     * @param loadParams Parameters for loading the model.
+     * @param mainGpuId The main GPU ID to use for this engine.
+     * @return True if the engine was loaded successfully, false otherwise.
+     */
+    bool addEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0);
+
+    /**
      * @brief Loads a new embedding engine with the given model and parameters.
      * 
      * @param engineId A unique identifier for this engine.
@@ -80,6 +92,18 @@ public:
      * @return True if the model was validated and registered successfully, false otherwise.
      */
     bool registerEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId, const std::string& engineType);
+
+    /**
+     * @brief Registers a model for lazy loading with platform-specific default engine type.
+     * Uses llama-metal on Apple platforms, llama-cpu on others.
+     * 
+     * @param engineId A unique identifier for this engine.
+     * @param modelPath Path to the model file.
+     * @param loadParams Parameters for loading the model.
+     * @param mainGpuId The main GPU ID to use for this engine.
+     * @return True if the model was validated and registered successfully, false otherwise.
+     */
+    bool registerEngine(const std::string& engineId, const char* modelPath, const LoadingParameters& loadParams, int mainGpuId = 0);
   
     /**
      * @brief Registers an embedding model for lazy loading without immediately loading it.
@@ -207,7 +231,11 @@ private:
         mutable std::mutex engineMutex;
         std::condition_variable loadingCv;
         
+#ifdef __APPLE__
+        EngineRecord() : engineType("llama-metal"), mainGpuId(0), lastActivityTime(std::chrono::steady_clock::now()) {}
+#else
         EngineRecord() : engineType("llama-cpu"), mainGpuId(0), lastActivityTime(std::chrono::steady_clock::now()) {}
+#endif
         
         EngineRecord(const EngineRecord&) = delete;
         EngineRecord& operator=(const EngineRecord&) = delete;

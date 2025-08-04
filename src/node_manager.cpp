@@ -124,6 +124,16 @@ namespace kolosal
     }
 #endif
 
+    // Helper function to get platform-specific default inference engine
+    static std::string getPlatformDefaultInferenceEngine()
+    {
+#ifdef __APPLE__
+        return "llama-metal";
+#else
+        return "llama-cpu";
+#endif
+    }
+
     NodeManager::NodeManager(std::chrono::seconds idleTimeout)
         : idleTimeout_(idleTimeout), stopAutoscaling_(false)
     {
@@ -615,6 +625,20 @@ namespace kolosal
         return true;
     }
 
+    bool NodeManager::addEngine(const std::string &engineId, const char *modelPath, const LoadingParameters &loadParams, int mainGpuId)
+    {
+        // Use platform-specific default inference engine
+        auto& config = ServerConfig::getInstance();
+        std::string engineType = !config.defaultInferenceEngine.empty() ? 
+                                 config.defaultInferenceEngine : getPlatformDefaultInferenceEngine();
+        
+        ServerLogger::logInfo("Using inference engine '%s' for model '%s' (platform default)", 
+                            engineType.c_str(), engineId.c_str());
+        
+        // Call the main addEngine method with the determined engine type
+        return addEngine(engineId, modelPath, loadParams, mainGpuId, engineType);
+    }
+
     bool NodeManager::addEmbeddingEngine(const std::string &engineId, const char *modelPath, const LoadingParameters &loadParams, int mainGpuId)
     {
         // First check if engine already exists (read lock)
@@ -649,7 +673,7 @@ namespace kolosal
         // Use the default inference engine for embedding models if available
         auto& config = ServerConfig::getInstance();
         std::string engineType = !config.defaultInferenceEngine.empty() ? 
-                                 config.defaultInferenceEngine : "llama-cpu";
+                                 config.defaultInferenceEngine : getPlatformDefaultInferenceEngine();
         ServerLogger::logInfo("Using inference engine '%s' for embedding model '%s'", 
                             engineType.c_str(), engineId.c_str());
         std::shared_ptr<IInferenceEngine> enginePtr;
@@ -1318,6 +1342,20 @@ namespace kolosal
         return true;
     }
 
+    bool NodeManager::registerEngine(const std::string &engineId, const char *modelPath, const LoadingParameters &loadParams, int mainGpuId)
+    {
+        // Use platform-specific default inference engine
+        auto& config = ServerConfig::getInstance();
+        std::string engineType = !config.defaultInferenceEngine.empty() ? 
+                                 config.defaultInferenceEngine : getPlatformDefaultInferenceEngine();
+        
+        ServerLogger::logInfo("Using inference engine '%s' for model registration '%s' (platform default)", 
+                            engineType.c_str(), engineId.c_str());
+        
+        // Call the main registerEngine method with the determined engine type
+        return registerEngine(engineId, modelPath, loadParams, mainGpuId, engineType);
+    }
+
     std::pair<bool, bool> NodeManager::getEngineStatus(const std::string &engineId) const
     {
         std::shared_lock<std::shared_mutex> mapLock(engineMapMutex_);
@@ -1451,7 +1489,7 @@ namespace kolosal
         // Use the default inference engine for embedding models if available
         auto& config = ServerConfig::getInstance();
         std::string engineType = !config.defaultInferenceEngine.empty() ? 
-                                 config.defaultInferenceEngine : "llama-cpu";
+                                 config.defaultInferenceEngine : getPlatformDefaultInferenceEngine();
         recordPtr->engineType = engineType;    // Use appropriate engine type
         ServerLogger::logInfo("Registering embedding model '%s' with inference engine '%s'", 
                             engineId.c_str(), engineType.c_str());
@@ -1543,11 +1581,12 @@ namespace kolosal
         {
             auto &config = ServerConfig::getInstance();
             
-            // Apply default inference engine logic: if the passed engine is empty or "llama-cpu",
+            // Apply default inference engine logic: if the passed engine is empty or platform default,
             // and we have a configured default, use that instead
             std::string actualInferenceEngine = inferenceEngine;
+            const std::string platformDefault = getPlatformDefaultInferenceEngine();
             if (!config.defaultInferenceEngine.empty() && 
-                (actualInferenceEngine.empty() || actualInferenceEngine == "llama-cpu"))
+                (actualInferenceEngine.empty() || actualInferenceEngine == platformDefault))
             {
                 actualInferenceEngine = config.defaultInferenceEngine;
                 ServerLogger::logInfo("Using default inference engine '%s' for model '%s' instead of '%s'", 

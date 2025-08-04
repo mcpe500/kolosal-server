@@ -25,6 +25,16 @@ using json = nlohmann::json;
 
 namespace kolosal
 {
+    // Helper function to get platform-specific default inference engine
+    static std::string getPlatformDefaultInferenceEngine()
+    {
+#ifdef __APPLE__
+        return "llama-metal";
+#else
+        return "llama-cpu";
+#endif
+    }
+
     ModelsRoute::ModelsRoute()
         : modelsPattern_(R"(^/(v1/)?models/?$)")
         , modelIdPattern_(R"(^/(v1/)?models/([^/]+)/?$)")
@@ -286,9 +296,10 @@ namespace kolosal
                 }
                 else
                 {
-                    // Only fall back to llama-cpu if no default is configured
-                    inferenceEngine = "llama-cpu";
-                    ServerLogger::logWarning("No default inference engine configured, falling back to llama-cpu for model '%s'", modelId.c_str());
+                    // Only fall back to platform-specific default if no default is configured
+                    inferenceEngine = getPlatformDefaultInferenceEngine();
+                    ServerLogger::logWarning("No default inference engine configured, falling back to %s for model '%s'", 
+                                           inferenceEngine.c_str(), modelId.c_str());
                 }
             }
             
@@ -605,7 +616,7 @@ namespace kolosal
                 }
                 else
                 {
-                    success = nodeManager.registerEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
+                    success = nodeManager.registerEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId);
                 }
                 ServerLogger::logInfo("Model '%s' registered with load_immediately=false (will load on first access)", modelId.c_str());
             }
@@ -735,7 +746,7 @@ namespace kolosal
                                 }
                                 else
                                 {
-                                    retrySuccess = nodeManager.registerEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId, inferenceEngine);
+                                    retrySuccess = nodeManager.registerEngine(modelId, actualModelPath.c_str(), loadParams, mainGpuId);
                                 }
                             }
                             

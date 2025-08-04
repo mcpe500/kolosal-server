@@ -95,6 +95,16 @@ namespace kolosal
     }
 #endif
 
+    // Helper function to get platform-specific default inference engine
+    static std::string getPlatformDefaultInferenceEngine()
+    {
+#ifdef __APPLE__
+        return "llama-metal";
+#else
+        return "llama-cpu";
+#endif
+    }
+
     /**
      * @brief Convert a relative path to an absolute path with fallback to executable directory
      * @param path The path to convert (can be relative or already absolute)
@@ -598,9 +608,10 @@ namespace kolosal
         // Apply default inference engine to models that don't have one specified
         if (!defaultInferenceEngine.empty())
         {
+            const std::string platformDefault = getPlatformDefaultInferenceEngine();
             for (auto &model : models)
             {
-                if (model.inferenceEngine.empty() || model.inferenceEngine == "llama-cpu")
+                if (model.inferenceEngine.empty() || model.inferenceEngine == platformDefault)
                 {
                     model.inferenceEngine = defaultInferenceEngine;
                 }
@@ -859,9 +870,10 @@ namespace kolosal
             // Apply default inference engine to models that don't have one specified
             if (!defaultInferenceEngine.empty())
             {
+                const std::string platformDefault = getPlatformDefaultInferenceEngine();
                 for (auto &model : models)
                 {
-                    if (model.inferenceEngine.empty() || model.inferenceEngine == "llama-cpu")
+                    if (model.inferenceEngine.empty() || model.inferenceEngine == platformDefault)
                     {
                         model.inferenceEngine = defaultInferenceEngine;
                     }

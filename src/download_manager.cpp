@@ -539,8 +539,7 @@ namespace kolosal
                         progress->engine_params->model_id,
                         actualModelPath.c_str(),
                         progress->engine_params->loading_params,
-                        progress->engine_params->main_gpu_id,
-                        progress->engine_params->inference_engine);
+                        progress->engine_params->main_gpu_id);
                     
                     ServerLogger::logInfo("Creating LLM engine immediately for model: %s", 
                                         progress->engine_params->model_id.c_str());
@@ -552,8 +551,7 @@ namespace kolosal
                         progress->engine_params->model_id,
                         actualModelPath.c_str(),
                         progress->engine_params->loading_params,
-                        progress->engine_params->main_gpu_id,
-                        progress->engine_params->inference_engine);
+                        progress->engine_params->main_gpu_id);
                     
                     ServerLogger::logInfo("Registering LLM engine for lazy loading: %s", 
                                         progress->engine_params->model_id.c_str());
@@ -709,7 +707,7 @@ namespace kolosal
                         }
                         else
                         {
-                            return node_manager.registerEngine(model_id, download_path.c_str(), load_params, main_gpu_id, inference_engine);
+                            return node_manager.registerEngine(model_id, download_path.c_str(), load_params, main_gpu_id);
                         }
                     }
                 }
@@ -752,7 +750,7 @@ namespace kolosal
                 }
                 else
                 {
-                    return node_manager.registerEngine(model_id, model_path.c_str(), load_params, main_gpu_id, inference_engine);
+                    return node_manager.registerEngine(model_id, model_path.c_str(), load_params, main_gpu_id);
                 }
             }
         }
