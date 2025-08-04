@@ -277,7 +277,19 @@ namespace kolosal
             if (inferenceEngine.empty())
             {
                 auto& config = ServerConfig::getInstance();
-                inferenceEngine = config.defaultInferenceEngine.empty() ? "llama-cpu" : config.defaultInferenceEngine;
+
+                std::cout << "Using default inference engine: " << config.defaultInferenceEngine << std::endl;
+
+                if (!config.defaultInferenceEngine.empty())
+                {
+                    inferenceEngine = config.defaultInferenceEngine;
+                }
+                else
+                {
+                    // Only fall back to llama-cpu if no default is configured
+                    inferenceEngine = "llama-cpu";
+                    ServerLogger::logWarning("No default inference engine configured, falling back to llama-cpu for model '%s'", modelId.c_str());
+                }
             }
             
             std::string modelType = request.model_type;

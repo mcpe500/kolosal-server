@@ -646,8 +646,12 @@ namespace kolosal
             }
         }
 
-        // Use the default CPU engine type for embedding models
-        std::string engineType = "llama-cpu";
+        // Use the default inference engine for embedding models if available
+        auto& config = ServerConfig::getInstance();
+        std::string engineType = !config.defaultInferenceEngine.empty() ? 
+                                 config.defaultInferenceEngine : "llama-cpu";
+        ServerLogger::logInfo("Using inference engine '%s' for embedding model '%s'", 
+                            engineType.c_str(), engineId.c_str());
         std::shared_ptr<IInferenceEngine> enginePtr;
 
         try
@@ -820,6 +824,7 @@ namespace kolosal
 
             // Create new engine instance using dynamic loader with safety handlers
             std::string engineType = recordPtr->engineType;
+            ServerLogger::logInfo("Stored engine type for '%s': '%s'", engineId.c_str(), engineType.c_str());
             std::shared_ptr<IInferenceEngine> newEngine;
 
             try
@@ -1291,6 +1296,9 @@ namespace kolosal
         recordPtr->isLoaded.store(false); // Mark as not loaded for lazy loading
         recordPtr->lastActivityTime = std::chrono::steady_clock::now();
 
+        ServerLogger::logInfo("Registering engine '%s' with engine type '%s' (passed: '%s')", 
+                            engineId.c_str(), recordPtr->engineType.c_str(), engineType.c_str());
+
         {
             std::unique_lock<std::shared_mutex> mapLock(engineMapMutex_);
             // Double-check pattern to ensure no race condition
@@ -1439,7 +1447,15 @@ namespace kolosal
         auto recordPtr = std::make_shared<EngineRecord>();
         recordPtr->engine = nullptr;            // No engine instance yet
         recordPtr->modelPath = actualModelPath; // Store the actual local path
-        recordPtr->engineType = "llama-cpu";    // Default to CPU for embedding models
+        
+        // Use the default inference engine for embedding models if available
+        auto& config = ServerConfig::getInstance();
+        std::string engineType = !config.defaultInferenceEngine.empty() ? 
+                                 config.defaultInferenceEngine : "llama-cpu";
+        recordPtr->engineType = engineType;    // Use appropriate engine type
+        ServerLogger::logInfo("Registering embedding model '%s' with inference engine '%s'", 
+                            engineId.c_str(), engineType.c_str());
+        
         recordPtr->loadParams = loadParams;
         recordPtr->mainGpuId = mainGpuId;
         recordPtr->isLoaded.store(false); // Mark as not loaded for lazy loading
