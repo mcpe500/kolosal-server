@@ -125,7 +125,7 @@ namespace kolosal
 #endif
 
     // Helper function to get platform-specific default inference engine
-    static std::string getPlatformDefaultInferenceEngine()
+    std::string getPlatformDefaultInferenceEngine()
     {
 #ifdef __APPLE__
         return "llama-metal";

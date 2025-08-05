@@ -17,6 +17,9 @@
 
 namespace kolosal {
 
+// Forward declaration of helper function
+std::string getPlatformDefaultInferenceEngine();
+
 /**
  * @brief Manages a collection of InferenceEngine instances.
  * 
@@ -231,11 +234,7 @@ private:
         mutable std::mutex engineMutex;
         std::condition_variable loadingCv;
         
-#ifdef __APPLE__
-        EngineRecord() : engineType("llama-metal"), mainGpuId(0), lastActivityTime(std::chrono::steady_clock::now()) {}
-#else
-        EngineRecord() : engineType("llama-cpu"), mainGpuId(0), lastActivityTime(std::chrono::steady_clock::now()) {}
-#endif
+        EngineRecord() : engineType(getPlatformDefaultInferenceEngine()), mainGpuId(0), lastActivityTime(std::chrono::steady_clock::now()) {}
         
         EngineRecord(const EngineRecord&) = delete;
         EngineRecord& operator=(const EngineRecord&) = delete;
