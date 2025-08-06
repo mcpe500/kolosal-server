@@ -12,6 +12,7 @@
 #include <fstream>
 #include <cstring>
 #include <chrono>
+#include <future>
 #ifdef USE_VULKAN
 #include <vulkan/vulkan.h>
 #endif
@@ -413,41 +414,78 @@ namespace
 
 		~LlamaInferenceService()
 		{
-			stop();
+			try {
+				stop();
 
-			// Wait for the inference thread to finish before cleaning up resources
-			if (inferenceThread.joinable())
-			{
-				inferenceThread.join();
-			}
-
-			// Clean up all remaining jobs to prevent accessing freed resources
-			{
-				std::lock_guard<std::mutex> lock(mtx);
-				for (auto &job : jobs)
+				// Wait for the inference thread to finish before cleaning up resources
+				if (inferenceThread.joinable())
 				{
-					std::lock_guard<std::mutex> jobLock(job->mtx);
-					if (!job->isFinished)
-					{
-						job->hasError = true;
-						job->errorMessage = "Service is shutting down";
-						job->isFinished = true;
-						job->cv.notify_all();
-					}
-					if (job->smpl)
-					{
-						common_sampler_free(job->smpl);
-						job->smpl = nullptr;
+					// Use a timeout to prevent hanging
+					auto future = std::async(std::launch::async, [this]() {
+						inferenceThread.join();
+					});
+					
+					if (future.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
+						// If thread doesn't join within timeout, detach it
+						inferenceThread.detach();
 					}
 				}
-				jobs.clear();
+
+				// Clean up all remaining jobs to prevent accessing freed resources
+				{
+					std::lock_guard<std::mutex> lock(mtx);
+					for (auto &job : jobs)
+					{
+						std::lock_guard<std::mutex> jobLock(job->mtx);
+						if (!job->isFinished)
+						{
+							job->hasError = true;
+							job->errorMessage = "Service is shutting down";
+							job->isFinished = true;
+							job->cv.notify_all();
+						}
+						if (job->smpl)
+						{
+							try {
+								common_sampler_free(job->smpl);
+								job->smpl = nullptr;
+							} catch (...) {
+								// Ignore sampler cleanup errors
+							}
+						}
+					}
+					jobs.clear();
+				}
+
+				// Cleanup llama resources in proper order
+				try {
+					if (context) {
+						llama_free(context);
+						context = nullptr;
+					}
+				} catch (...) {}
+				
+				try {
+					if (model) {
+						llama_free_model(model);
+						model = nullptr;
+					}
+				} catch (...) {}
+				
+				try {
+					llama_batch_free(batch);
+				} catch (...) {}
+				
+				try {
+					if (threadpool) {
+						ggml_threadpool_free(threadpool);
+						threadpool = nullptr;
+					}
+				} catch (...) {}
+				
+			} catch (...) {
+				// Ignore all errors during destructor to prevent terminate() calls
 			}
-
-			llama_free(context);
-			llama_free_model(model);
-			llama_batch_free(batch);
-
-			ggml_threadpool_free(threadpool);
 		}
 
 		void stop() override
@@ -1595,26 +1633,56 @@ namespace
 
 		~EmbeddingInferenceService()
 		{
-			stop();
+			try {
+				stop();
 
-			// Wait for any remaining jobs to complete
-			auto timeout = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-			while (std::chrono::steady_clock::now() < timeout)
-			{
+				// Wait for any remaining jobs to complete with timeout
+				auto timeout = std::chrono::steady_clock::now() + std::chrono::seconds(5); // Reduced timeout
+				while (std::chrono::steady_clock::now() < timeout)
 				{
-					std::lock_guard<std::mutex> lock(mtx);
-					if (jobs.empty())
-						break;
+					{
+						std::lock_guard<std::mutex> lock(mtx);
+						if (jobs.empty())
+							break;
+					}
+					std::this_thread::sleep_for(std::chrono::milliseconds(50)); // Shorter sleep
 				}
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-			}
 
-			// Clean up in proper order
-			llama_detach_threadpool(context);
-			llama_batch_free(batch);
-			llama_free(context);
-			llama_free_model(model);
-			ggml_threadpool_free(threadpool);
+				// Clean up in proper order with error handling
+				try {
+					if (context) {
+						llama_detach_threadpool(context);
+					}
+				} catch (...) {}
+				
+				try {
+					llama_batch_free(batch);
+				} catch (...) {}
+				
+				try {
+					if (context) {
+						llama_free(context);
+						context = nullptr;
+					}
+				} catch (...) {}
+				
+				try {
+					if (model) {
+						llama_free_model(model);
+						model = nullptr;
+					}
+				} catch (...) {}
+				
+				try {
+					if (threadpool) {
+						ggml_threadpool_free(threadpool);
+						threadpool = nullptr;
+					}
+				} catch (...) {}
+				
+			} catch (...) {
+				// Ignore all errors during destructor to prevent terminate() calls
+			}
 		}
 
 		void stop() override
@@ -2452,11 +2520,29 @@ bool InferenceEngine::Impl::hasActiveJobs()
 
 InferenceEngine::Impl::~Impl()
 {
-	threadPool.shutdown();
-	jobs.clear();
-	llama_backend_free();
-
-	inferenceService.reset();
+	// Shutdown in proper order to prevent crashes
+	try {
+		// First stop the threadpool to halt any ongoing operations
+		threadPool.shutdown();
+		
+		// Clear pending jobs before stopping the inference service
+		{
+			std::lock_guard<std::mutex> lock(jobsMutex);
+			jobs.clear();
+		}
+		
+		// Stop the inference service before freeing llama backend
+		// This ensures the service can properly cleanup its resources
+		inferenceService.reset();
+		
+		// Finally free the llama backend after all services are stopped
+		llama_backend_free();
+	} catch (const std::exception& e) {
+		// Log error but don't throw in destructor
+		std::cerr << "[INFERENCE] Error during engine cleanup: " << e.what() << std::endl;
+	} catch (...) {
+		// Ignore any other errors during cleanup to prevent terminate()
+	}
 }
 
 INFERENCE_API InferenceEngine::InferenceEngine()
