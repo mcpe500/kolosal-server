@@ -338,18 +338,7 @@ namespace kolosal
                     std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 }
 
-                // Send final result if no error occurred
-                if (!engine->hasJobError(jobId))
-                {
-                    CompletionResult finalResult = engine->getJobResult(jobId);
-                    json finalResponse = completionResultToJson(finalResult);
-                    finalResponse["partial"] = false;
-
-                    std::string sseData = "data: " + finalResponse.dump() + "\n\n";
-                    send_stream_chunk(sock, StreamChunk(sseData, false));
-                }
-
-                // Send the final [DONE] marker
+                // Send the final [DONE] marker to indicate completion
                 send_stream_chunk(sock, StreamChunk("data: [DONE]\n\n", false));
 
                 // Then terminate the stream
@@ -550,18 +539,7 @@ namespace kolosal
                     std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 }
 
-                // Send final result if no error occurred
-                if (!engine->hasJobError(jobId))
-                {
-                    CompletionResult finalResult = engine->getJobResult(jobId);
-                    json finalResponse = completionResultToJson(finalResult);
-                    finalResponse["partial"] = false;
-
-                    std::string sseData = "data: " + finalResponse.dump() + "\n\n";
-                    send_stream_chunk(sock, StreamChunk(sseData, false));
-                }
-
-                // Send the final [DONE] marker
+                // Send the final [DONE] marker to indicate completion
                 send_stream_chunk(sock, StreamChunk("data: [DONE]\n\n", false));
 
                 // Then terminate the stream
