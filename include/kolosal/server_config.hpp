@@ -65,6 +65,13 @@ struct AuthConfig {
  * @brief Database configuration
  */
 struct DatabaseConfig {
+    enum class VectorDatabase {
+        FAISS,
+        QDRANT
+    };
+    
+    VectorDatabase vectorDatabase = VectorDatabase::FAISS; // Default to FAISS
+    
     struct QdrantConfig {
         bool enabled = false;
         std::string host = "localhost";
@@ -77,6 +84,18 @@ struct DatabaseConfig {
         int connectionTimeout = 5;
         int embeddingBatchSize = 5;
     } qdrant;
+    
+    struct FaissConfig {
+        std::string indexType = "Flat"; // Index type: Flat, IVF, HNSW
+        std::string indexPath = "./data/faiss_index"; // Path to store index
+        int dimensions = 1536; // Default embedding dimensions
+        bool normalizeVectors = true; // Normalize vectors before storing
+        int nlist = 100; // Number of clusters for IVF index
+        int nprobe = 10; // Number of clusters to search for IVF index
+        bool useGPU = false; // Use GPU acceleration if available
+        int gpuDevice = 0; // GPU device ID
+        std::string metricType = "IP"; // Distance metric: L2, IP (Inner Product)
+    } faiss;
     
     DatabaseConfig() = default;
 };

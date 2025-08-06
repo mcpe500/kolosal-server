@@ -72,6 +72,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/zlib/contrib/minizip)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/maddy/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/zlib)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/src)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/faiss)
 
 # Define source files.
 set(SOURCES
@@ -82,6 +83,7 @@ set(SOURCES
     src/download_utils.cpp
     src/download_manager.cpp
     src/qdrant_client.cpp
+    src/faiss_client.cpp
     src/node_manager.cpp
     src/inference_loader.cpp
     src/inference_interface_impl.cpp
@@ -247,6 +249,7 @@ target_compile_definitions(kolosal_server PUBLIC
   $<$<BOOL:${DEBUG}>:DEBUG>
   $<$<BOOL:${USE_CPPUPROFILE_GPU}>:USE_CPPUPROFILE_GPU>
   $<$<BOOL:${USE_PODOFO}>:USE_PODOFO>
+  $<$<BOOL:${USE_FAISS}>:USE_FAISS>
 )
 
 # Add subdirectories for external libraries
@@ -1104,6 +1107,49 @@ if(NOT TARGET pugixml)
     endif()
 endif()
 
+# Add FAISS
+option(USE_FAISS "Compile with FAISS support" OFF)
+if(USE_FAISS AND NOT TARGET faiss)
+    message(STATUS "Configuring FAISS vector database support...")
+    
+    # Try to use system FAISS first
+    find_package(faiss QUIET)
+    if(faiss_FOUND)
+        message(STATUS "Found system FAISS: ${faiss_DIR}")
+        # Use system FAISS
+        set(FAISS_LIBRARIES faiss)
+    else()
+        # Check if we have FAISS source code
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/faiss/CMakeLists.txt")
+            message(STATUS "Building FAISS from source...")
+            
+            # Configure FAISS build options
+            set(FAISS_ENABLE_GPU OFF CACHE BOOL "Disable FAISS GPU support by default")
+            set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "Disable FAISS Python bindings")
+            set(BUILD_TESTING OFF CACHE BOOL "Disable FAISS tests")
+            set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build FAISS as static library")
+            
+            # Enable GPU support if CUDA is available and requested
+            if(USE_CUDA)
+                find_package(CUDA QUIET)
+                if(CUDA_FOUND)
+                    set(FAISS_ENABLE_GPU ON CACHE BOOL "Enable FAISS GPU support with CUDA")
+                    message(STATUS "FAISS GPU support enabled with CUDA")
+                endif()
+            endif()
+            
+            add_subdirectory(external/faiss EXCLUDE_FROM_ALL)
+            set(FAISS_LIBRARIES faiss)
+        else()
+            message(WARNING "FAISS source not found. Creating stub target.")
+            # Create a stub target to prevent build errors
+            add_library(faiss INTERFACE)
+            set(FAISS_LIBRARIES faiss)
+            set(USE_FAISS OFF)
+        endif()
+    endif()
+endif()
+
 # Add cppuprofile if GPU monitoring is enabled
 if(USE_CPPUPROFILE_GPU)
     # Configure cppuprofile with NVIDIA support
@@ -1114,6 +1160,12 @@ endif()
 
 # Link libraries - use the determined inference target
 set(KOLOSAL_LINK_LIBRARIES yaml-cpp ${INFERENCE_TARGET} minizip_static pugixml)
+
+# Add FAISS if enabled
+if(USE_FAISS AND FAISS_LIBRARIES)
+    list(APPEND KOLOSAL_LINK_LIBRARIES ${FAISS_LIBRARIES})
+    message(STATUS "FAISS library will be linked")
+endif()
 
 # Note: zlibstatic is already linked through minizip_static, so no need to link it directly
 
