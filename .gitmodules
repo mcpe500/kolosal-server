@@ -10,3 +10,6 @@
 [submodule "external/podofo"]
 	path = external/podofo
 	url = https://github.com/podofo/podofo
+[submodule "external/faiss"]
+	path = external/faiss
+	url = https://github.com/facebookresearch/faiss.git
