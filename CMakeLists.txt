@@ -71,6 +71,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/pugixml/src)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/zlib/contrib/minizip)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/maddy/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/zlib)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/src)
 
 # Define source files.
 set(SOURCES
@@ -268,7 +269,7 @@ if(NOT TARGET zlibstatic)
     endif()
     
     # Fallback to bundled zlib if system zlib not found or on Windows
-    if(NOT ZLIB_FOUND)
+    if(NOT ZLIB_FOUND OR WIN32)
         message(STATUS "Using bundled ZLIB")
         # Configure zlib options
         set(ZLIB_BUILD_TESTING OFF CACHE BOOL "Disable zlib tests" FORCE)
@@ -285,6 +286,9 @@ if(NOT TARGET zlibstatic)
         if(TARGET zlibstatic AND UNIX)
             target_compile_definitions(zlibstatic PRIVATE _POSIX_C_SOURCE=200809L)
         endif()
+        
+        # Set ZLIB_FOUND to TRUE so the ZLIB setup section below will run
+        set(ZLIB_FOUND TRUE)
     endif()
 endif()
 
@@ -327,33 +331,36 @@ endif()
 # Set up ZLIB variables for other libraries (like PoDoFo) to find
 if(ZLIB_FOUND)
     # Set ZLIB variables so find_package(ZLIB) works for dependencies
-    if(TARGET zlibstatic AND NOT TARGET ZLIB::ZLIB)
-        # This is bundled zlib
+    
+    # Set the include directory variables
+    if(TARGET zlibstatic)
+        message(STATUS "zlibstatic target found")
         get_target_property(ZLIB_INCLUDE_DIR zlibstatic INTERFACE_INCLUDE_DIRECTORIES)
         if(NOT ZLIB_INCLUDE_DIR)
             set(ZLIB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/zlib;${CMAKE_CURRENT_BINARY_DIR}/external/zlib")
         endif()
-        set(ZLIB_LIBRARY zlibstatic)
         
-        # Also set for the ZLIB target to be found
-        set_target_properties(zlibstatic PROPERTIES
-            INTERFACE_INCLUDE_DIRECTORIES "${ZLIB_INCLUDE_DIR}"
-        )
-        
-        # Create ZLIB::ZLIB imported target for modern CMake if not exists
-        add_library(ZLIB::ZLIB ALIAS zlibstatic)
-    elseif(TARGET ZLIB::ZLIB)
-        # This is system zlib, already has ZLIB::ZLIB target
-        get_target_property(ZLIB_INCLUDE_DIR ZLIB::ZLIB INTERFACE_INCLUDE_DIRECTORIES)
-        set(ZLIB_LIBRARY ZLIB::ZLIB)
-        # Create zlibstatic alias for compatibility
-        if(NOT TARGET zlibstatic)
-            add_library(zlibstatic ALIAS ZLIB::ZLIB)
+        # Create the ZLIB::ZLIB alias immediately so PoDoFo can use it
+        if(NOT TARGET ZLIB::ZLIB)
+            add_library(ZLIB::ZLIB ALIAS zlibstatic)
+            message(STATUS "Created ZLIB::ZLIB alias for zlibstatic")
         endif()
+        
+        # Set variables for PoDoFo to use the alias
+        set(ZLIB_LIBRARY ZLIB::ZLIB CACHE STRING "ZLIB Library" FORCE)
+        set(ZLIB_LIBRARIES ZLIB::ZLIB CACHE STRING "ZLIB Libraries" FORCE)
+    else()
+        message(STATUS "zlibstatic target not found")
+        set(ZLIB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/zlib;${CMAKE_CURRENT_BINARY_DIR}/external/zlib")
+        set(ZLIB_LIBRARY "" CACHE STRING "ZLIB Library" FORCE)
+        set(ZLIB_LIBRARIES "" CACHE STRING "ZLIB Libraries" FORCE)
     endif()
     
-    set(ZLIB_LIBRARIES ${ZLIB_LIBRARY})
     set(ZLIB_VERSION_STRING "1.2.11") # Adjust if needed
+    
+    # Set the cache variables that find_package(ZLIB) expects  
+    set(ZLIB_INCLUDE_DIR ${ZLIB_INCLUDE_DIR} CACHE PATH "ZLIB include directory" FORCE)
+    set(ZLIB_FOUND TRUE CACHE BOOL "ZLIB found" FORCE)
     
     message(STATUS "ZLIB variables set for PoDoFo: ${ZLIB_INCLUDE_DIR}")
 endif()
@@ -361,6 +368,35 @@ endif()
 # Add PoDoFo
 if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
     message(STATUS "Configuring PoDoFo PDF support...")
+    
+    # Pre-configure OpenSSL variables for PoDoFo BEFORE any dependency checks
+    # This ensures PoDoFo's find_package(OpenSSL) will find our bundled OpenSSL
+    if(WIN32)
+        set(PODOFO_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/extern/deps/3rdparty")
+        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+            set(PODOFO_LIB_SUBDIR "Win64")
+        else()
+            set(PODOFO_LIB_SUBDIR "Win32")
+        endif()
+        
+        # Set OpenSSL paths for Windows
+        set(OPENSSL_ROOT_DIR "${PODOFO_DEPS_DIR}/openssl" CACHE PATH "OpenSSL root directory" FORCE)
+        set(OPENSSL_INCLUDE_DIR "${PODOFO_DEPS_DIR}/openssl/include" CACHE PATH "OpenSSL include directory" FORCE)
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            set(OPENSSL_SSL_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/ssld.lib" CACHE FILEPATH "OpenSSL SSL library" FORCE)
+            set(OPENSSL_CRYPTO_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/cryptod.lib" CACHE FILEPATH "OpenSSL crypto library" FORCE)
+        else()
+            set(OPENSSL_SSL_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/ssl.lib" CACHE FILEPATH "OpenSSL SSL library" FORCE)
+            set(OPENSSL_CRYPTO_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/crypto.lib" CACHE FILEPATH "OpenSSL crypto library" FORCE)
+        endif()
+        set(OPENSSL_LIBRARIES "${OPENSSL_SSL_LIBRARY};${OPENSSL_CRYPTO_LIBRARY}" CACHE STRING "OpenSSL libraries" FORCE)
+        set(OPENSSL_FOUND TRUE CACHE BOOL "OpenSSL found" FORCE)
+        
+        message(STATUS "Pre-configured OpenSSL for PoDoFo on Windows:")
+        message(STATUS "  OPENSSL_ROOT_DIR = ${OPENSSL_ROOT_DIR}")
+        message(STATUS "  OPENSSL_CRYPTO_LIBRARY = ${OPENSSL_CRYPTO_LIBRARY}")
+        message(STATUS "  OPENSSL_SSL_LIBRARY = ${OPENSSL_SSL_LIBRARY}")
+    endif()
     
     # Helpful message for developers
     if(APPLE)
@@ -785,6 +821,12 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
             message(STATUS "PoDoFo dependency - Fontconfig: SKIPPED (macOS)")
         endif()
         
+        if(OPENSSL_FOUND)
+            message(STATUS "PoDoFo dependency - OpenSSL: FOUND")
+        else()
+            message(WARNING "PoDoFo dependency - OpenSSL: NOT FOUND")
+        endif()
+        
         # Create or fix the global freetype target that PoDoFo will need for linking
         # This must be done before PoDoFo's subdirectory is processed
         message(STATUS "DEBUG: FREETYPE_FOUND=${FREETYPE_FOUND}")
@@ -856,7 +898,7 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
         
         # Check if we have enough dependencies to build PoDoFo
         set(REQUIRED_DEPS_FOUND TRUE)
-        if(NOT FREETYPE_FOUND OR NOT JPEG_FOUND OR NOT PNG_FOUND OR NOT TIFF_FOUND OR NOT LIBXML2_FOUND)
+        if(NOT FREETYPE_FOUND OR NOT JPEG_FOUND OR NOT PNG_FOUND OR NOT TIFF_FOUND OR NOT LIBXML2_FOUND OR NOT OPENSSL_FOUND)
             set(REQUIRED_DEPS_FOUND FALSE)
         endif()
         if(NOT APPLE AND NOT Fontconfig_FOUND)
@@ -887,6 +929,32 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
         # set(CMAKE_SKIP_INSTALL_RULES ON CACHE BOOL "Skip install rules for PoDoFo" FORCE)
         set(PODOFO_BUILD_INSTALL OFF CACHE BOOL "Disable PoDoFo installation" FORCE)
         
+        # Set OpenSSL variables as cache variables BEFORE adding PoDoFo subdirectory
+        if(WIN32)
+            set(PODOFO_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/extern/deps/3rdparty")
+            if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+                set(PODOFO_LIB_SUBDIR "Win64")
+            else()
+                set(PODOFO_LIB_SUBDIR "Win32")
+            endif()
+            
+            if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+                set(OPENSSL_SSL_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/ssld.lib" CACHE STRING "OpenSSL SSL library" FORCE)
+                set(OPENSSL_CRYPTO_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/cryptod.lib" CACHE STRING "OpenSSL crypto library" FORCE)
+            else()
+                set(OPENSSL_SSL_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/ssl.lib" CACHE STRING "OpenSSL SSL library" FORCE)
+                set(OPENSSL_CRYPTO_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/crypto.lib" CACHE STRING "OpenSSL crypto library" FORCE)
+            endif()
+            set(OPENSSL_ROOT_DIR "${PODOFO_DEPS_DIR}/openssl" CACHE PATH "OpenSSL root directory" FORCE)
+            set(OPENSSL_INCLUDE_DIR "${PODOFO_DEPS_DIR}/openssl/include" CACHE PATH "OpenSSL include directory" FORCE)
+            set(OPENSSL_LIBRARIES ${OPENSSL_SSL_LIBRARY} ${OPENSSL_CRYPTO_LIBRARY} CACHE STRING "OpenSSL libraries" FORCE)
+            
+            message(STATUS "Pre-setting OpenSSL for PoDoFo:")
+            message(STATUS "  OPENSSL_ROOT_DIR = ${OPENSSL_ROOT_DIR}")
+            message(STATUS "  OPENSSL_CRYPTO_LIBRARY = ${OPENSSL_CRYPTO_LIBRARY}")
+            message(STATUS "  OPENSSL_SSL_LIBRARY = ${OPENSSL_SSL_LIBRARY}")
+        endif()
+        
         # Pre-configure Freetype for PoDoFo (prevent it from running its own find_package)
         if(FREETYPE_FOUND)
             # Set all the freetype variables that PoDoFo expects
@@ -896,6 +964,45 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
             set(FREETYPE_LIBRARIES "${FREETYPE_LIBRARIES}" CACHE STRING "Freetype libraries" FORCE)
             set(FREETYPE_INCLUDE_DIR "${FREETYPE_INCLUDE_DIRS}" CACHE STRING "Freetype include dir" FORCE)
             set(FREETYPE_INCLUDE_DIRS "${FREETYPE_INCLUDE_DIRS}" CACHE STRING "Freetype include dirs" FORCE)
+        endif()
+        
+        # Create imported OpenSSL targets that PoDoFo expects
+        # This bypasses the find_package(OpenSSL) call by providing the targets directly
+        if(WIN32 AND NOT TARGET OpenSSL::SSL AND NOT TARGET OpenSSL::Crypto)
+            set(PODOFO_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/extern/deps/3rdparty")
+            if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+                set(PODOFO_LIB_SUBDIR "Win64")
+            else()
+                set(PODOFO_LIB_SUBDIR "Win32")
+            endif()
+            
+            set(OPENSSL_INCLUDE_DIR "${PODOFO_DEPS_DIR}/openssl/include")
+            if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+                set(OPENSSL_SSL_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/ssld.lib")
+                set(OPENSSL_CRYPTO_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/cryptod.lib")
+            else()
+                set(OPENSSL_SSL_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/ssl.lib")
+                set(OPENSSL_CRYPTO_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/crypto.lib")
+            endif()
+            
+            # Create the imported targets that PoDoFo expects
+            add_library(OpenSSL::SSL STATIC IMPORTED GLOBAL)
+            set_target_properties(OpenSSL::SSL PROPERTIES
+                IMPORTED_LOCATION "${OPENSSL_SSL_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+            )
+            
+            add_library(OpenSSL::Crypto STATIC IMPORTED GLOBAL)
+            set_target_properties(OpenSSL::Crypto PROPERTIES
+                IMPORTED_LOCATION "${OPENSSL_CRYPTO_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+            )
+            
+            # Set the variables that PoDoFo might check
+            set(OPENSSL_FOUND TRUE)
+            set(OPENSSL_LIBRARIES "${OPENSSL_SSL_LIBRARY};${OPENSSL_CRYPTO_LIBRARY}")
+            
+            message(STATUS "Created OpenSSL imported targets for PoDoFo")
         endif()
         
         # Temporarily override add_custom_target to ignore uninstall target
@@ -1006,11 +1113,15 @@ if(USE_CPPUPROFILE_GPU)
 endif()
 
 # Link libraries - use the determined inference target
-set(KOLOSAL_LINK_LIBRARIES yaml-cpp ${INFERENCE_TARGET} zlibstatic minizip_static pugixml)
+set(KOLOSAL_LINK_LIBRARIES yaml-cpp ${INFERENCE_TARGET} minizip_static pugixml)
+
+# Note: zlibstatic is already linked through minizip_static, so no need to link it directly
 
 # Add PoDoFo if available and enabled
 if(USE_PODOFO AND TARGET podofo_static)
     list(APPEND KOLOSAL_LINK_LIBRARIES podofo_static)
+    # Add OpenSSL libraries for PoDoFo
+    list(APPEND KOLOSAL_LINK_LIBRARIES OpenSSL::SSL OpenSSL::Crypto)
     message(STATUS "PoDoFo library will be linked")
     
     # Also explicitly link the libxml2 library path to bypass any target resolution issues
