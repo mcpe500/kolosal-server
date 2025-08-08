@@ -85,6 +85,46 @@ namespace kolosal
             if (j.contains("toolChoice") && j["toolChoice"].is_string()) {
                 params.toolChoice = j["toolChoice"].get<std::string>();
             }
+
+            // Grammar and JSON schema support
+            if (j.contains("grammar") && j["grammar"].is_string()) {
+                params.grammar = j["grammar"].get<std::string>();
+            }
+
+            // Accept both "jsonSchema" and OpenAI-style "response_format"
+            if (j.contains("jsonSchema")) {
+                if (j["jsonSchema"].is_string()) {
+                    params.jsonSchema = j["jsonSchema"].get<std::string>();
+                } else if (j["jsonSchema"].is_object()) {
+                    params.jsonSchema = j["jsonSchema"].dump();
+                }
+            }
+
+            // Map OpenAI response_format to jsonSchema when provided
+            if (j.contains("response_format") && j["response_format"].is_object()) {
+                const auto &rf = j["response_format"];
+                if (rf.contains("type") && rf["type"].is_string()) {
+                    const std::string type = rf["type"].get<std::string>();
+                    if (type == "json_object") {
+                        // Enforce generic JSON object
+                        params.jsonSchema = std::string("{") + "\"type\":\"object\"}";
+                    } else if (type == "json_schema") {
+                        // Support OpenAI style where schema can be nested under json_schema.schema
+                        if (rf.contains("json_schema")) {
+                            const auto &js = rf["json_schema"];
+                            if (js.is_object()) {
+                                if (js.contains("schema") && js["schema"].is_object()) {
+                                    params.jsonSchema = js["schema"].dump();
+                                } else {
+                                    params.jsonSchema = js.dump();
+                                }
+                            } else if (js.is_string()) {
+                                params.jsonSchema = js.get<std::string>();
+                            }
+                        }
+                    }
+                }
+            }
             
             return params;
         }
@@ -134,6 +174,40 @@ namespace kolosal
             
             if (j.contains("seqId") && j["seqId"].is_number_integer()) {
                 params.seqId = j["seqId"].get<int>();
+            }
+
+            // Grammar and JSON schema support
+            if (j.contains("grammar") && j["grammar"].is_string()) {
+                params.grammar = j["grammar"].get<std::string>();
+            }
+            if (j.contains("jsonSchema")) {
+                if (j["jsonSchema"].is_string()) {
+                    params.jsonSchema = j["jsonSchema"].get<std::string>();
+                } else if (j["jsonSchema"].is_object()) {
+                    params.jsonSchema = j["jsonSchema"].dump();
+                }
+            }
+            if (j.contains("response_format") && j["response_format"].is_object()) {
+                const auto &rf = j["response_format"];
+                if (rf.contains("type") && rf["type"].is_string()) {
+                    const std::string type = rf["type"].get<std::string>();
+                    if (type == "json_object") {
+                        params.jsonSchema = std::string("{") + "\"type\":\"object\"}";
+                    } else if (type == "json_schema") {
+                        if (rf.contains("json_schema")) {
+                            const auto &js = rf["json_schema"];
+                            if (js.is_object()) {
+                                if (js.contains("schema") && js["schema"].is_object()) {
+                                    params.jsonSchema = js["schema"].dump();
+                                } else {
+                                    params.jsonSchema = js.dump();
+                                }
+                            } else if (js.is_string()) {
+                                params.jsonSchema = js.get<std::string>();
+                            }
+                        }
+                    }
+                }
             }
             
             return params;
