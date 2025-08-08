@@ -968,41 +968,74 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
         
         # Create imported OpenSSL targets that PoDoFo expects
         # This bypasses the find_package(OpenSSL) call by providing the targets directly
-        if(WIN32 AND NOT TARGET OpenSSL::SSL AND NOT TARGET OpenSSL::Crypto)
-            set(PODOFO_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/extern/deps/3rdparty")
-            if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-                set(PODOFO_LIB_SUBDIR "Win64")
+        if(NOT TARGET OpenSSL::SSL AND NOT TARGET OpenSSL::Crypto)
+            if(WIN32)
+                # Windows: Use bundled OpenSSL from PoDoFo dependencies
+                set(PODOFO_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/extern/deps/3rdparty")
+                if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+                    set(PODOFO_LIB_SUBDIR "Win64")
+                else()
+                    set(PODOFO_LIB_SUBDIR "Win32")
+                endif()
+                
+                set(OPENSSL_INCLUDE_DIR "${PODOFO_DEPS_DIR}/openssl/include")
+                if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+                    set(OPENSSL_SSL_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/ssld.lib")
+                    set(OPENSSL_CRYPTO_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/cryptod.lib")
+                else()
+                    set(OPENSSL_SSL_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/ssl.lib")
+                    set(OPENSSL_CRYPTO_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/crypto.lib")
+                endif()
+                
+                # Create the imported targets that PoDoFo expects
+                add_library(OpenSSL::SSL STATIC IMPORTED GLOBAL)
+                set_target_properties(OpenSSL::SSL PROPERTIES
+                    IMPORTED_LOCATION "${OPENSSL_SSL_LIBRARY}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+                )
+                
+                add_library(OpenSSL::Crypto STATIC IMPORTED GLOBAL)
+                set_target_properties(OpenSSL::Crypto PROPERTIES
+                    IMPORTED_LOCATION "${OPENSSL_CRYPTO_LIBRARY}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+                )
+                
+                # Set the variables that PoDoFo might check
+                set(OPENSSL_FOUND TRUE)
+                set(OPENSSL_LIBRARIES "${OPENSSL_SSL_LIBRARY};${OPENSSL_CRYPTO_LIBRARY}")
+                
+                message(STATUS "Created OpenSSL imported targets for PoDoFo (Windows)")
             else()
-                set(PODOFO_LIB_SUBDIR "Win32")
+                # macOS and Linux: Use system OpenSSL
+                find_package(OpenSSL QUIET)
+                if(OPENSSL_FOUND)
+                    message(STATUS "Found system OpenSSL: ${OPENSSL_LIBRARIES}")
+                    # OpenSSL::SSL and OpenSSL::Crypto targets should be created by find_package
+                    if(NOT TARGET OpenSSL::SSL OR NOT TARGET OpenSSL::Crypto)
+                        # Create targets manually if find_package didn't create them
+                        if(NOT TARGET OpenSSL::SSL)
+                            add_library(OpenSSL::SSL UNKNOWN IMPORTED GLOBAL)
+                            set_target_properties(OpenSSL::SSL PROPERTIES
+                                IMPORTED_LOCATION "${OPENSSL_SSL_LIBRARY}"
+                                INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+                            )
+                        endif()
+                        if(NOT TARGET OpenSSL::Crypto)
+                            add_library(OpenSSL::Crypto UNKNOWN IMPORTED GLOBAL)
+                            set_target_properties(OpenSSL::Crypto PROPERTIES
+                                IMPORTED_LOCATION "${OPENSSL_CRYPTO_LIBRARY}"
+                                INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+                            )
+                        endif()
+                    endif()
+                    message(STATUS "Created OpenSSL imported targets for PoDoFo (Unix)")
+                else()
+                    message(WARNING "OpenSSL not found on system. PoDoFo may not link correctly.")
+                    # Create dummy targets to avoid linking errors
+                    add_library(OpenSSL::SSL INTERFACE IMPORTED GLOBAL)
+                    add_library(OpenSSL::Crypto INTERFACE IMPORTED GLOBAL)
+                endif()
             endif()
-            
-            set(OPENSSL_INCLUDE_DIR "${PODOFO_DEPS_DIR}/openssl/include")
-            if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-                set(OPENSSL_SSL_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/ssld.lib")
-                set(OPENSSL_CRYPTO_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/cryptod.lib")
-            else()
-                set(OPENSSL_SSL_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/ssl.lib")
-                set(OPENSSL_CRYPTO_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/crypto.lib")
-            endif()
-            
-            # Create the imported targets that PoDoFo expects
-            add_library(OpenSSL::SSL STATIC IMPORTED GLOBAL)
-            set_target_properties(OpenSSL::SSL PROPERTIES
-                IMPORTED_LOCATION "${OPENSSL_SSL_LIBRARY}"
-                INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
-            )
-            
-            add_library(OpenSSL::Crypto STATIC IMPORTED GLOBAL)
-            set_target_properties(OpenSSL::Crypto PROPERTIES
-                IMPORTED_LOCATION "${OPENSSL_CRYPTO_LIBRARY}"
-                INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
-            )
-            
-            # Set the variables that PoDoFo might check
-            set(OPENSSL_FOUND TRUE)
-            set(OPENSSL_LIBRARIES "${OPENSSL_SSL_LIBRARY};${OPENSSL_CRYPTO_LIBRARY}")
-            
-            message(STATUS "Created OpenSSL imported targets for PoDoFo")
         endif()
         
         # Temporarily override add_custom_target to ignore uninstall target
@@ -1120,8 +1153,13 @@ set(KOLOSAL_LINK_LIBRARIES yaml-cpp ${INFERENCE_TARGET} minizip_static pugixml)
 # Add PoDoFo if available and enabled
 if(USE_PODOFO AND TARGET podofo_static)
     list(APPEND KOLOSAL_LINK_LIBRARIES podofo_static)
-    # Add OpenSSL libraries for PoDoFo
-    list(APPEND KOLOSAL_LINK_LIBRARIES OpenSSL::SSL OpenSSL::Crypto)
+    # Add OpenSSL libraries for PoDoFo only if targets exist
+    if(TARGET OpenSSL::SSL AND TARGET OpenSSL::Crypto)
+        list(APPEND KOLOSAL_LINK_LIBRARIES OpenSSL::SSL OpenSSL::Crypto)
+        message(STATUS "PoDoFo library will be linked with OpenSSL")
+    else()
+        message(WARNING "OpenSSL targets not found, PoDoFo will be linked without OpenSSL")
+    endif()
     message(STATUS "PoDoFo library will be linked")
     
     # Also explicitly link the libxml2 library path to bypass any target resolution issues
