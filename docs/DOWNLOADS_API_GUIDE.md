@@ -7,6 +7,21 @@ The Downloads API provides comprehensive model download management capabilities 
 **Base Endpoints:** `/downloads` or `/v1/downloads`  
 **Supported Operations:** GET, POST, DELETE
 
+`/v1` is a stable alias; both `/downloads` and `/v1/downloads` resolve identically today. For production integrations, prefer the versioned path to guard against future non-breaking additions on the un-versioned alias.
+
+### Quick Method Matrix
+
+| Action | Method + Path | Alternate | Body | Idempotent | Notes |
+|--------|---------------|----------|------|------------|-------|
+| List active downloads | `GET /v1/downloads` | `GET /downloads` | None | Yes | Includes summary counts |
+| Single download status | `GET /v1/downloads/{id}` | `GET /downloads/{id}` | None | Yes | Detailed progress fields |
+| Cancel single | `DELETE /v1/downloads/{id}` | `POST /v1/downloads/{id}/cancel` | None | No | Fails if already terminal |
+| Pause | `POST /v1/downloads/{id}/pause` | — | None | No | Only if status=downloading |
+| Resume | `POST /v1/downloads/{id}/resume` | — | None | No | Only if status=paused |
+| Cancel all | `DELETE /v1/downloads` | `POST /v1/downloads/cancel` | Optional | No | Skips already terminal |
+
+Terminal statuses: `completed`, `failed`, `cancelled`. Transitional: `downloading`, `paused`, `creating_engine`.
+
 ## API Endpoints
 
 ### 1. Get All Downloads Status
@@ -1382,3 +1397,135 @@ headers: {
 - **Error Resilience**: Implement retry logic for network failures
 - **Progress Caching**: Cache progress data to reduce API calls
 - **Status Optimization**: Only update UI when significant changes occur
+
+## Advanced: Progress & Percentage Notes
+
+`percentage = (downloaded_bytes / total_bytes) * 100` (guarded; invalid values coerced to 0.0). `download_speed_bps` is average since `start_time` (not instantaneous). `estimated_remaining_seconds` appears only while actively downloading with valid speed & percentage.
+
+## Advanced: Curl Examples
+
+```bash
+# All downloads
+curl -s http://localhost:8080/v1/downloads | jq
+
+# Single download
+curl -s http://localhost:8080/v1/downloads/my-model-id | jq
+
+# Cancel (DELETE)
+curl -X DELETE http://localhost:8080/v1/downloads/my-model-id
+
+# Cancel (POST action)
+curl -X POST http://localhost:8080/v1/downloads/my-model-id/cancel
+
+# Pause / Resume
+curl -X POST http://localhost:8080/v1/downloads/my-model-id/pause
+curl -X POST http://localhost:8080/v1/downloads/my-model-id/resume
+
+# Cancel all
+curl -X POST http://localhost:8080/v1/downloads/cancel
+```
+
+## Advanced: Error Structure
+
+All errors follow:
+
+```json
+{
+  "error": {
+    "message": "string",
+    "type": "invalid_request_error | not_found_error | server_error",
+    "param": "string|null",
+    "code": "string|null"
+  }
+}
+```
+
+| Scenario | HTTP | type | code | Notes |
+|----------|------|------|------|-------|
+| Unknown model id (GET) | 404 | not_found_error | download_not_found | Re-check id casing |
+| Unknown model id (cancel/pause/resume) | 404 | not_found_error | (null) | Operation on non-existent download |
+| Cancel already terminal | 400 | invalid_request_error | (null) | Status completed/failed/cancelled |
+| Bad path | 400 | invalid_request_error | invalid_endpoint | Regex failed to match |
+| Bad model id segment | 400 | invalid_request_error | invalid_path_format | Missing id component |
+| Internal exception | 500 | server_error | (null) | Inspect server logs |
+
+## Advanced: Polling Guidance
+
+Polling every 1–2s per active item is usually sufficient. For many simultaneous downloads prefer a single `GET /v1/downloads` then derive UI deltas client-side.
+
+## Advanced: Pause / Resume Semantics
+
+Pause is best-effort; a short delay before transition to `paused` may occur. Resume may restart from 0 if underlying source lacks range support.
+
+## Advanced: Roadmap Ideas
+
+- SSE / WebSocket streaming updates
+- Prioritized queue & reordering
+- Throttling & rate shaping
+- Retry policy configuration via API
+
+## Advanced: Change Log (Doc Additions)
+
+- Added method matrix, curl samples, error table, progress computation notes, polling & roadmap sections.
+
+## Progress & Percentage Notes
+`percentage = (downloaded_bytes / total_bytes) * 100` (guarded; invalid values coerced to 0.0). `download_speed_bps` is average since `start_time` (not instantaneous). `estimated_remaining_seconds` appears only while actively downloading with valid speed & percentage.
+
+## Curl Examples
+```bash
+# All downloads
+curl -s http://localhost:8080/v1/downloads | jq
+
+# Single download
+curl -s http://localhost:8080/v1/downloads/my-model-id | jq
+
+# Cancel (DELETE)
+curl -X DELETE http://localhost:8080/v1/downloads/my-model-id
+
+# Cancel (POST action)
+curl -X POST http://localhost:8080/v1/downloads/my-model-id/cancel
+
+# Pause / Resume
+curl -X POST http://localhost:8080/v1/downloads/my-model-id/pause
+curl -X POST http://localhost:8080/v1/downloads/my-model-id/resume
+
+# Cancel all
+curl -X POST http://localhost:8080/v1/downloads/cancel
+```
+
+## Error Structure
+All errors follow:
+```json
+{
+  "error": {
+    "message": "string",
+    "type": "invalid_request_error | not_found_error | server_error",
+    "param": "string|null",
+    "code": "string|null"
+  }
+}
+```
+
+| Scenario | HTTP | type | code | Notes |
+|----------|------|------|------|-------|
+| Unknown model id (GET) | 404 | not_found_error | download_not_found | Re-check id casing |
+| Unknown model id (cancel/pause/resume) | 404 | not_found_error | (null) | Operation on non-existent download |
+| Cancel already terminal | 400 | invalid_request_error | (null) | Status completed/failed/cancelled |
+| Bad path | 400 | invalid_request_error | invalid_endpoint | Regex failed to match |
+| Bad model id segment | 400 | invalid_request_error | invalid_path_format | Missing id component |
+| Internal exception | 500 | server_error | (null) | Inspect server logs |
+
+## Polling Guidance
+Polling every 1–2s per active item is usually sufficient. For many simultaneous downloads prefer a single `GET /v1/downloads` then derive UI deltas client-side.
+
+## Pause / Resume Semantics
+Pause is best-effort; a short delay before transition to `paused` may occur. Resume may restart from 0 if underlying source lacks range support.
+
+## Roadmap Ideas
+- SSE / WebSocket streaming updates
+- Prioritized queue & reordering
+- Throttling & rate shaping
+- Retry policy configuration via API
+
+## Change Log (Doc Additions)
+- Added method matrix, curl samples, error table, progress computation notes, polling & roadmap sections.
