@@ -229,17 +229,35 @@ namespace kolosal
                     config.defaultInferenceEngine = preferredEngine;
                     ServerLogger::logInfo("Set default inference engine to: %s", config.defaultInferenceEngine.c_str());
                     
-                    // Save the updated configuration to file to persist the choice
-                    ServerLogger::logInfo("About to save default inference engine configuration");
-                    ServerLogger::logInfo("Current config file path during initialization: '%s'", config.getCurrentConfigFilePath().c_str());
-                    
-                    if (config.saveToCurrentFile())
+                    // Persisting default engine changes to disk is disabled by default on macOS app bundle installs.
+                    // Allow opt-in via environment variable KOLOSAL_ALLOW_CONFIG_SAVE=1
+                    auto canWritePath = [&config]() -> bool {
+                        std::string path = config.getCurrentConfigFilePath();
+                        if (path.empty()) return false;
+                        try {
+                            std::filesystem::path p(path);
+                            if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path());
+                            std::ofstream ofs(path, std::ios::app);
+                            if (!ofs.is_open()) return false; ofs.close(); return true;
+                        } catch (...) { return false; }
+                    };
+                    const char *allowSave = getenv("KOLOSAL_ALLOW_CONFIG_SAVE");
+                    if ((allowSave && std::string(allowSave) == "1") || canWritePath())
                     {
-                        ServerLogger::logInfo("Saved default inference engine configuration to current config file");
+                        ServerLogger::logInfo("Persisting default inference engine to config (KOLOSAL_ALLOW_CONFIG_SAVE=1)");
+                        ServerLogger::logInfo("Current config file path during initialization: '%s'", config.getCurrentConfigFilePath().c_str());
+                        if (config.saveToCurrentFile())
+                        {
+                            ServerLogger::logInfo("Saved default inference engine configuration to current config file");
+                        }
+                        else
+                        {
+                            ServerLogger::logWarning("Failed to save default inference engine configuration to current config file");
+                        }
                     }
                     else
                     {
-                        ServerLogger::logWarning("Failed to save default inference engine configuration to current config file");
+                        ServerLogger::logInfo("Skipping config file write (set KOLOSAL_ALLOW_CONFIG_SAVE=1 to force; path not writable)");
                     }
                 }
             }
@@ -396,10 +414,19 @@ namespace kolosal
                         config.defaultInferenceEngine = preferredEngine;
                         ServerLogger::logInfo("Set default inference engine to: %s", config.defaultInferenceEngine.c_str());
                         
-                        // Save configuration if possible
-                        if (config.saveToCurrentFile())
+                        // Persisting configuration is opt-in
+                        auto canWritePath = [&config]() -> bool {
+                            std::string path = config.getCurrentConfigFilePath();
+                            if (path.empty()) return false;
+                            try { std::filesystem::path p(path); if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path()); std::ofstream ofs(path, std::ios::app); if (!ofs.is_open()) return false; ofs.close(); return true;} catch (...) { return false; }
+                        };
+                        const char *allowSave = getenv("KOLOSAL_ALLOW_CONFIG_SAVE");
+                        if ((allowSave && std::string(allowSave) == "1") || canWritePath())
                         {
-                            ServerLogger::logInfo("Saved default configuration to file");
+                            if (config.saveToCurrentFile())
+                            {
+                                ServerLogger::logInfo("Saved default configuration to file");
+                            }
                         }
                     }
                 }
@@ -1378,10 +1405,8 @@ namespace kolosal
     {
         ServerLogger::logInfo("Model path for engine \'%s\' is a URL. Starting download: %s", engineId.c_str(), modelPath.c_str());
 
-        // Generate local path for the downloaded model - use executable directory
-        std::string executableDir = getExecutableDirectory();
-        std::filesystem::path modelsPath = std::filesystem::path(executableDir) / "models";
-        std::string downloadsDir = std::filesystem::absolute(modelsPath).string();
+    // Generate local path for the downloaded model - use user-writable models directory
+    std::string downloadsDir = get_executable_models_directory();
         std::string localPath = generate_download_path(modelPath, downloadsDir);
 
         // Check if the file already exists locally
@@ -1642,13 +1667,25 @@ namespace kolosal
             ServerLogger::logInfo("Current config file path in NodeManager: '%s'", config.getCurrentConfigFilePath().c_str());
             ServerLogger::logInfo("ServerConfig instance address during model save: %lu", reinterpret_cast<uintptr_t>(&config));
             
-            if (!config.saveToCurrentFile())
+            auto canWritePathModel = [&config]() -> bool {
+                std::string path = config.getCurrentConfigFilePath();
+                if (path.empty()) return false;
+                try { std::filesystem::path p(path); if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path()); std::ofstream ofs(path, std::ios::app); if (!ofs.is_open()) return false; ofs.close(); return true;} catch (...) { return false; }
+            };
+            const char *allowSaveModel = getenv("KOLOSAL_ALLOW_CONFIG_SAVE");
+            if ((allowSaveModel && std::string(allowSaveModel) == "1") || canWritePathModel())
             {
-                ServerLogger::logWarning("Failed to save configuration to file for model '%s'. Configuration changes are in memory only.", engineId.c_str());
-                return false;
+                if (!config.saveToCurrentFile())
+                {
+                    ServerLogger::logWarning("Failed to save configuration to file for model '%s'. Configuration changes are in memory only.", engineId.c_str());
+                    return false;
+                }
+                ServerLogger::logInfo("Successfully saved model '%s' to configuration file", engineId.c_str());
             }
-            
-            ServerLogger::logInfo("Successfully saved model '%s' to configuration file", engineId.c_str());
+            else
+            {
+                ServerLogger::logInfo("Skipping saving model '%s' to config (not writable and KOLOSAL_ALLOW_CONFIG_SAVE not set)", engineId.c_str());
+            }
             return true;
         }
         catch (const std::exception &ex)
@@ -1680,13 +1717,25 @@ namespace kolosal
                 ServerLogger::logInfo("Current config file path in NodeManager: '%s'", config.getCurrentConfigFilePath().c_str());
                 ServerLogger::logInfo("ServerConfig instance address during model removal: %lu", reinterpret_cast<uintptr_t>(&config));
                 
-                if (!config.saveToCurrentFile())
+                auto canWritePathRemove = [&config]() -> bool {
+                    std::string path = config.getCurrentConfigFilePath();
+                    if (path.empty()) return false;
+                    try { std::filesystem::path p(path); if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path()); std::ofstream ofs(path, std::ios::app); if (!ofs.is_open()) return false; ofs.close(); return true;} catch (...) { return false; }
+                };
+                const char *allowSaveRemove = getenv("KOLOSAL_ALLOW_CONFIG_SAVE");
+                if ((allowSaveRemove && std::string(allowSaveRemove) == "1") || canWritePathRemove())
                 {
-                    ServerLogger::logWarning("Failed to save configuration to file after removing model '%s'. Configuration changes are in memory only.", engineId.c_str());
-                    return false;
+                    if (!config.saveToCurrentFile())
+                    {
+                        ServerLogger::logWarning("Failed to save configuration to file after removing model '%s'. Configuration changes are in memory only.", engineId.c_str());
+                        return false;
+                    }
+                    ServerLogger::logInfo("Successfully updated configuration file after removing model '%s'", engineId.c_str());
                 }
-                
-                ServerLogger::logInfo("Successfully updated configuration file after removing model '%s'", engineId.c_str());
+                else
+                {
+                    ServerLogger::logInfo("Skipping config update after removing model '%s' (not writable and KOLOSAL_ALLOW_CONFIG_SAVE not set)", engineId.c_str());
+                }
                 return true;
             }
             else

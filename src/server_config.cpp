@@ -618,6 +618,71 @@ namespace kolosal
             }
         }
 
+        // After loading (and applying any CLI overrides), ensure config resides in a user-writable location.
+        // This migrates read-only bundle/system configs to the user's profile so subsequent saves succeed.
+        try {
+#ifdef _WIN32
+            char* userProfile = nullptr; size_t len = 0; std::string userConfigPath;
+            if (_dupenv_s(&userProfile, &len, "APPDATA") == 0 && userProfile) {
+                userConfigPath = std::string(userProfile) + "\\Kolosal\\config.yaml";
+                free(userProfile);
+            }
+#elif defined(__APPLE__)
+            const char* homeDir = getenv("HOME");
+            std::string userConfigPath = homeDir ? (std::string(homeDir) + "/Library/Application Support/Kolosal/config.yaml") : std::string();
+#else
+            const char* homeDir = getenv("HOME");
+            std::string userConfigPath = homeDir ? (std::string(homeDir) + "/.kolosal/config.yaml") : std::string();
+#endif
+            auto isWritable = [](const std::string& path) -> bool {
+                if (path.empty()) return false;
+                try {
+                    std::filesystem::path p(path);
+                    if (p.has_parent_path()) {
+                        std::filesystem::create_directories(p.parent_path());
+                    }
+                    std::ofstream ofs(path, std::ios::app);
+                    if (!ofs.is_open()) return false;
+                    ofs.close();
+                    return true;
+                } catch (...) { return false; }
+            };
+
+            bool needsMigration = false;
+            if (currentConfigFilePath.empty()) {
+                needsMigration = true;
+            } else {
+                // If existing path not writable, migrate
+                if (!isWritable(currentConfigFilePath)) {
+                    needsMigration = true;
+                }
+            }
+
+            if (needsMigration && !userConfigPath.empty()) {
+                try {
+                    std::filesystem::path userPath(userConfigPath);
+                    if (userPath.has_parent_path()) {
+                        std::filesystem::create_directories(userPath.parent_path());
+                    }
+                    if (!currentConfigFilePath.empty() && std::filesystem::exists(currentConfigFilePath)) {
+                        std::error_code ec;
+                        std::filesystem::copy_file(currentConfigFilePath, userConfigPath, std::filesystem::copy_options::overwrite_existing, ec);
+                        if (ec) {
+                            ServerLogger::instance().info("Config migration copy failed: " + ec.message());
+                        } else {
+                            ServerLogger::instance().info("Migrated config from '" + currentConfigFilePath + "' to user path '" + userConfigPath + "'");
+                        }
+                    }
+                    // Point current config path to user-writable location regardless of copy success
+                    currentConfigFilePath = userConfigPath;
+                } catch (const std::exception& e) {
+                    ServerLogger::instance().info(std::string("Config migration skipped due to error: ") + e.what());
+                }
+            }
+        } catch (const std::exception& e) {
+            ServerLogger::instance().info(std::string("Config migration wrapper error: ") + e.what());
+        }
+
         return validate();
     }
 
