@@ -537,7 +537,7 @@ namespace kolosal
             }
         }
 
-        // Create engine instance using dynamic loader with safety handlers
+    // Create engine instance using dynamic loader with safety handlers
         ServerLogger::logInfo("Creating %s inference engine for ID '%s'", engineType.c_str(), engineId.c_str());
 
         std::shared_ptr<IInferenceEngine> enginePtr;
@@ -567,12 +567,19 @@ namespace kolosal
                 return false;
             }
 
+            // Prepare effective loading parameters. Force GPU engines to use 100 layers unless user provided >0.
+            LoadingParameters effectiveParams = loadParams;
+            if ((engineType == "llama-vulkan" || engineType == "llama-cuda" || engineType == "llama-metal") && effectiveParams.n_gpu_layers <= 0) {
+                effectiveParams.n_gpu_layers = 100;
+                ServerLogger::logInfo("Forcing n_gpu_layers=100 for GPU engine '%s' (engineType=%s)", engineId.c_str(), engineType.c_str());
+            }
+
             // Load the model with safety handling
-            ServerLogger::logInfo("Loading model for engine '%s' from path: %s", engineId.c_str(), actualModelPath.c_str());
+            ServerLogger::logInfo("Loading model for engine '%s' from path: %s (n_gpu_layers=%d)", engineId.c_str(), actualModelPath.c_str(), effectiveParams.n_gpu_layers);
             bool loadSuccess = false;
             try
             {
-                loadSuccess = engineInstance->loadModel(actualModelPath.c_str(), loadParams, mainGpuId);
+                loadSuccess = engineInstance->loadModel(actualModelPath.c_str(), effectiveParams, mainGpuId);
             }
             catch (const std::exception &e)
             {
@@ -622,7 +629,7 @@ namespace kolosal
         recordPtr->engine = enginePtr;
         recordPtr->modelPath = actualModelPath;
         recordPtr->engineType = engineType;
-        recordPtr->loadParams = loadParams;
+        recordPtr->loadParams = effectiveParams;
         recordPtr->mainGpuId = mainGpuId;
         recordPtr->isLoaded.store(true);
         recordPtr->lastActivityTime = std::chrono::steady_clock::now();
@@ -640,8 +647,8 @@ namespace kolosal
 
         ServerLogger::logInfo("Successfully added and loaded engine with ID \'%s\'. Model: %s", engineId.c_str(), actualModelPath.c_str());
 
-        // Save model to configuration file
-        saveModelToConfig(engineId, modelPath, loadParams, mainGpuId, engineType, true);
+    // Save model to configuration file (persist effective params)
+    saveModelToConfig(engineId, modelPath, recordPtr->loadParams, mainGpuId, engineType, true);
 
         // Notify autoscaling thread about new engine
         {
@@ -730,13 +737,20 @@ namespace kolosal
                 return false;
             }
 
+            // Prepare effective parameters. Force n_gpu_layers=100 for GPU engines unless user specified >0.
+            LoadingParameters effectiveParams = loadParams;
+            if ((engineType == "llama-vulkan" || engineType == "llama-cuda" || engineType == "llama-metal") && effectiveParams.n_gpu_layers <= 0) {
+                effectiveParams.n_gpu_layers = 100;
+                ServerLogger::logInfo("Forcing n_gpu_layers=100 for embedding GPU engine '%s' (engineType=%s)", engineId.c_str(), engineType.c_str());
+            }
+
             // Load the embedding model with safety handling
-            ServerLogger::logInfo("Loading embedding model for engine '%s' from path: %s", engineId.c_str(), actualModelPath.c_str());
+            ServerLogger::logInfo("Loading embedding model for engine '%s' from path: %s (n_gpu_layers=%d)", engineId.c_str(), actualModelPath.c_str(), effectiveParams.n_gpu_layers);
             bool loadSuccess = false;
             try
             {
                 // For embedding models, use the specialized loadEmbeddingModel method
-                loadSuccess = engineInstance->loadEmbeddingModel(actualModelPath.c_str(), loadParams, mainGpuId);
+                loadSuccess = engineInstance->loadEmbeddingModel(actualModelPath.c_str(), effectiveParams, mainGpuId);
             }
             catch (const std::exception &e)
             {
@@ -786,7 +800,7 @@ namespace kolosal
         recordPtr->engine = enginePtr;
         recordPtr->modelPath = actualModelPath;
         recordPtr->engineType = engineType;
-        recordPtr->loadParams = loadParams;
+    recordPtr->loadParams = effectiveParams;
         recordPtr->mainGpuId = mainGpuId;
         recordPtr->isLoaded.store(true);
         recordPtr->isEmbeddingModel.store(true); // Mark as embedding model
@@ -1342,7 +1356,7 @@ namespace kolosal
         recordPtr->engine = nullptr;            // No engine instance yet
         recordPtr->modelPath = actualModelPath; // Store the actual local path
         recordPtr->engineType = engineType;     // Store the engine type
-        recordPtr->loadParams = loadParams;
+    recordPtr->loadParams = effectiveParams; // persist forced params
         recordPtr->mainGpuId = mainGpuId;
         recordPtr->isLoaded.store(false); // Mark as not loaded for lazy loading
         recordPtr->lastActivityTime = std::chrono::steady_clock::now();
