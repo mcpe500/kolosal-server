@@ -989,21 +989,47 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
             endif()
         endif()
         
-        # Also fix xml2 target for LibXml2
+        # Ensure libxml2 targets expected by PoDoFo exist
         message(STATUS "DEBUG: LIBXML2_FOUND=${LIBXML2_FOUND}")
-        
-        # Create proper LibXml2::LibXml2 target if it doesn't exist
-        if(NOT TARGET LibXml2::LibXml2)
+
+        # If we found libxml2 but no imported target exists yet, create one using detected paths (avoid hardcoded macOS SDK)
+        if(LIBXML2_FOUND AND NOT TARGET LibXml2::LibXml2)
+            # Determine a concrete library file path for IMPORTED_LOCATION
+            set(_KOLOSAL_XML2_IMPORT "${LIBXML2_LIBRARIES}")
+            if(_KOLOSAL_XML2_IMPORT MATCHES ";")
+                list(GET _KOLOSAL_XML2_IMPORT 0 _KOLOSAL_XML2_IMPORT)
+            endif()
             add_library(LibXml2::LibXml2 UNKNOWN IMPORTED GLOBAL)
             set_target_properties(LibXml2::LibXml2 PROPERTIES
-                IMPORTED_LOCATION "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib/libxml2.tbd"
+                IMPORTED_LOCATION "${_KOLOSAL_XML2_IMPORT}"
                 INTERFACE_INCLUDE_DIRECTORIES "${LIBXML2_INCLUDE_DIRS}"
             )
-            message(STATUS "DEBUG: Created LibXml2::LibXml2 imported library target")
+            message(STATUS "DEBUG: Created LibXml2::LibXml2 imported library target at ${_KOLOSAL_XML2_IMPORT}")
         endif()
-        
-        # Do NOT create xml2 target as it conflicts with PoDoFo's expectations
-        # PoDoFo should use LibXml2::LibXml2 target instead
+
+        # Some PoDoFo builds still reference a plain 'xml2' target; provide a lightweight bridge
+        if(LIBXML2_FOUND AND NOT TARGET xml2)
+            if(TARGET LibXml2::LibXml2)
+                add_library(xml2 INTERFACE IMPORTED GLOBAL)
+                set_target_properties(xml2 PROPERTIES
+                    INTERFACE_LINK_LIBRARIES LibXml2::LibXml2
+                    INTERFACE_INCLUDE_DIRECTORIES "${LIBXML2_INCLUDE_DIRS}"
+                )
+                message(STATUS "DEBUG: Created interface xml2 target forwarding to LibXml2::LibXml2")
+            else()
+                # Fallback if only raw LIBXML2_LIBRARIES exist
+                set(_KOLOSAL_XML2_IMPORT "${LIBXML2_LIBRARIES}")
+                if(_KOLOSAL_XML2_IMPORT MATCHES ";")
+                    list(GET _KOLOSAL_XML2_IMPORT 0 _KOLOSAL_XML2_IMPORT)
+                endif()
+                add_library(xml2 UNKNOWN IMPORTED GLOBAL)
+                set_target_properties(xml2 PROPERTIES
+                    IMPORTED_LOCATION "${_KOLOSAL_XML2_IMPORT}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${LIBXML2_INCLUDE_DIRS}"
+                )
+                message(STATUS "DEBUG: Created imported xml2 target at ${_KOLOSAL_XML2_IMPORT}")
+            endif()
+        endif()
         
         # Check if we have enough dependencies to build PoDoFo
         set(REQUIRED_DEPS_FOUND TRUE)
