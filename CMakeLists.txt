@@ -830,6 +830,15 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
         # Create or fix the global freetype target that PoDoFo will need for linking
         # This must be done before PoDoFo's subdirectory is processed
         message(STATUS "DEBUG: FREETYPE_FOUND=${FREETYPE_FOUND}")
+        # Determine a usable freetype library path for imported/alias targets (avoid macOS-specific path on Linux)
+        set(_KOLOSAL_FT_LIB "")
+        if(APPLE)
+            # Prefer Homebrew path (original behavior); could be refined to detect actual location
+            set(_KOLOSAL_FT_LIB "/opt/homebrew/lib/libfreetype.dylib")
+        elseif(FREETYPE_LIBRARIES)
+            # Use first library from discovery
+            list(GET FREETYPE_LIBRARIES 0 _KOLOSAL_FT_LIB)
+        endif()
         if(TARGET freetype)
             message(STATUS "DEBUG: Target 'freetype' already exists")
             get_target_property(FREETYPE_TYPE freetype TYPE)
@@ -853,31 +862,39 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
                     # Fix the real target if it doesn't have proper library location
                     if(REAL_FREETYPE_LOCATION STREQUAL "freetype" OR NOT REAL_FREETYPE_LOCATION)
                         message(STATUS "DEBUG: Fixing ${FREETYPE_ALIASED} target with proper library path")
-                        set_target_properties(${FREETYPE_ALIASED} PROPERTIES
-                            IMPORTED_LOCATION "/opt/homebrew/lib/libfreetype.dylib"
-                            INTERFACE_LINK_LIBRARIES "/opt/homebrew/lib/libfreetype.dylib"
-                            INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
-                        )
+                        if(_KOLOSAL_FT_LIB)
+                            set_target_properties(${FREETYPE_ALIASED} PROPERTIES
+                                IMPORTED_LOCATION "${_KOLOSAL_FT_LIB}"
+                                INTERFACE_LINK_LIBRARIES "${_KOLOSAL_FT_LIB}"
+                                INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
+                            )
+                        endif()
                     endif()
                 endif()
             else()
                 # It's a regular target, try to update it if possible
                 if(NOT FREETYPE_TYPE STREQUAL "ALIAS")
-                    set_target_properties(freetype PROPERTIES
-                        INTERFACE_LINK_LIBRARIES "/opt/homebrew/lib/libfreetype.dylib"
-                        INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
-                        IMPORTED_LOCATION "/opt/homebrew/lib/libfreetype.dylib"
-                    )
+                    if(_KOLOSAL_FT_LIB)
+                        set_target_properties(freetype PROPERTIES
+                            INTERFACE_LINK_LIBRARIES "${_KOLOSAL_FT_LIB}"
+                            INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
+                            IMPORTED_LOCATION "${_KOLOSAL_FT_LIB}"
+                        )
+                    endif()
                 endif()
             endif()
             message(STATUS "Handled existing freetype target for PoDoFo compatibility")
         else()
             message(STATUS "DEBUG: Target 'freetype' does not exist yet")
-            add_library(freetype INTERFACE IMPORTED GLOBAL)
-            set_target_properties(freetype PROPERTIES
-                INTERFACE_LINK_LIBRARIES "/opt/homebrew/lib/libfreetype.dylib"
-                INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
-            )
+            if(_KOLOSAL_FT_LIB)
+                add_library(freetype INTERFACE IMPORTED GLOBAL)
+                set_target_properties(freetype PROPERTIES
+                    INTERFACE_LINK_LIBRARIES "${_KOLOSAL_FT_LIB}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
+                )
+            else()
+                message(WARNING "Could not determine freetype library path for imported target; relying on existing Freetype::Freetype if available")
+            endif()
         endif()
         
         # Also fix xml2 target for LibXml2
@@ -1108,10 +1125,17 @@ if(USE_PODOFO AND REQUIRED_DEPS_FOUND)
             get_target_property(REAL_FREETYPE_LOCATION ${FREETYPE_ALIASED} IMPORTED_LOCATION)
             if(REAL_FREETYPE_LOCATION STREQUAL "freetype" OR NOT REAL_FREETYPE_LOCATION)
                 message(STATUS "Post-PoDoFo: Fixing ${FREETYPE_ALIASED} target with proper library path")
-                set_target_properties(${FREETYPE_ALIASED} PROPERTIES
-                    IMPORTED_LOCATION "/opt/homebrew/lib/libfreetype.dylib"
-                    INTERFACE_LINK_LIBRARIES "/opt/homebrew/lib/libfreetype.dylib"
-                )
+                if(APPLE)
+                    set(_KOLOSAL_FT_LIB "/opt/homebrew/lib/libfreetype.dylib")
+                elseif(FREETYPE_LIBRARIES)
+                    list(GET FREETYPE_LIBRARIES 0 _KOLOSAL_FT_LIB)
+                endif()
+                if(_KOLOSAL_FT_LIB)
+                    set_target_properties(${FREETYPE_ALIASED} PROPERTIES
+                        IMPORTED_LOCATION "${_KOLOSAL_FT_LIB}"
+                        INTERFACE_LINK_LIBRARIES "${_KOLOSAL_FT_LIB}"
+                    )
+                endif()
             endif()
         endif()
     endif()
