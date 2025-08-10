@@ -73,6 +73,51 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/maddy/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/zlib)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/src)
 
+# --- Ensure freetype imported target exists early when PoDoFo support is enabled (Linux needs this) ---
+if(USE_PODOFO AND NOT TARGET freetype)
+    # Try to locate freetype via standard find_package first (quiet to avoid spam)
+    find_package(Freetype QUIET)
+    if(NOT FREETYPE_FOUND)
+        # Fallback: try direct library search (covers minimal systems)
+        find_library(FREETYPE_LIBRARY NAMES freetype)
+        if(FREETYPE_LIBRARY)
+            set(FREETYPE_LIBRARIES ${FREETYPE_LIBRARY})
+            set(FREETYPE_FOUND TRUE)
+            # Attempt include dir heuristic if not provided
+            if(NOT FREETYPE_INCLUDE_DIRS)
+                if(EXISTS "/usr/include/freetype2")
+                    set(FREETYPE_INCLUDE_DIRS "/usr/include/freetype2")
+                elseif(EXISTS "/usr/local/include/freetype2")
+                    set(FREETYPE_INCLUDE_DIRS "/usr/local/include/freetype2")
+                endif()
+            endif()
+        endif()
+    endif()
+    if(FREETYPE_FOUND AND FREETYPE_LIBRARIES)
+        # Pick a representative freetype library path
+        set(_FT_LIB_IMPORT "")
+        foreach(_lib ${FREETYPE_LIBRARIES})
+            if(_lib MATCHES "freetype")
+                set(_FT_LIB_IMPORT ${_lib})
+                break()
+            endif()
+        endforeach()
+        if(NOT _FT_LIB_IMPORT)
+            list(GET FREETYPE_LIBRARIES 0 _FT_LIB_IMPORT)
+        endif()
+        if(NOT TARGET freetype)
+            add_library(freetype UNKNOWN IMPORTED GLOBAL)
+            set_target_properties(freetype PROPERTIES
+                IMPORTED_LOCATION "${_FT_LIB_IMPORT}"
+                INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
+            )
+            message(STATUS "Global: Created imported freetype target at ${_FT_LIB_IMPORT}")
+        endif()
+    else()
+        message(WARNING "Global: PoDoFo enabled but freetype library could not be located yet; will attempt later. Install libfreetype6-dev if linking fails.")
+    endif()
+endif()
+
 # Define source files.
 set(SOURCES
     src/server.cpp
