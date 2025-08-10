@@ -280,6 +280,20 @@ namespace kolosal
         ServerLogger::logError("All model directory strategies failed; last error: %s", tec.message().c_str());
         return fallbackPath.string();
 #else
+        // Linux / other Unix: prefer user-writable directory (~/.kolosal/models) to avoid
+        // permission issues when the executable resides in /usr/bin (would otherwise try /usr/bin/models).
+        const char *homeDir = std::getenv("HOME");
+        if (homeDir && *homeDir) {
+            std::filesystem::path userModels = std::filesystem::path(homeDir) / ".kolosal" / "models";
+            std::error_code ec;
+            std::filesystem::create_directories(userModels, ec);
+            if (!ec) {
+                return std::filesystem::absolute(userModels).string();
+            } else {
+                ServerLogger::logWarning("Could not create user models directory (%s): %s", userModels.string().c_str(), ec.message().c_str());
+            }
+        }
+        // Fallback to executable-adjacent path
         std::string executableDir = get_executable_directory();
         std::filesystem::path modelsPath = std::filesystem::path(executableDir) / "models";
         return std::filesystem::absolute(modelsPath).string();

@@ -24,7 +24,10 @@ public:
     // Optional fields
     bool load_immediately = true;      // Whether to load immediately after adding (vs register for lazy loading)
     int main_gpu_id = 0;
-    std::string inference_engine = "llama-cpu"; // Inference engine to use (llama-cpu, llama-cuda, llama-vulkan, etc.)
+    // Leave unset by default so ModelsRoute can apply current config default_inference_engine.
+    // Previously this was hard-coded to "llama-cpu", which prevented honoring a user-updated
+    // default (e.g. PUT /engines setting llama-vulkan) when the client omitted inference_engine.
+    std::string inference_engine; // Inference engine to use (llama-cpu, llama-cuda, llama-vulkan, etc.)
     std::string model_type = "llm";    // Model type: "llm" or "embedding"
     
     // Loading parameters (nested object)
