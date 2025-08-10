@@ -1212,6 +1212,25 @@ if(USE_CPPUPROFILE_GPU)
     list(APPEND KOLOSAL_LINK_LIBRARIES cppuprofile)
 endif()
 
+# Ensure a 'freetype' target exists if PoDoFo (or other components) expect it but only raw library paths were found
+if(USE_PODOFO AND NOT TARGET freetype)
+    if(FREETYPE_LIBRARIES)
+        add_library(freetype UNKNOWN IMPORTED)
+        # If multiple libraries listed, take first for IMPORTED_LOCATION
+        set(_FT_LIB_IMPORT "${FREETYPE_LIBRARIES}")
+        if(FREETYPE_LIBRARIES MATCHES ";")
+            list(GET FREETYPE_LIBRARIES 0 _FT_LIB_IMPORT)
+        endif()
+        set_target_properties(freetype PROPERTIES
+            IMPORTED_LOCATION "${_FT_LIB_IMPORT}"
+            INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
+        )
+        message(STATUS "Created fallback imported 'freetype' target at ${_FT_LIB_IMPORT}")
+    else()
+        message(WARNING "PoDoFo enabled but no FREETYPE_LIBRARIES found and 'freetype' target missing")
+    endif()
+endif()
+
 target_link_libraries(kolosal_server PRIVATE ${KOLOSAL_LINK_LIBRARIES})
 
 # Link CURL libraries and include directories
