@@ -909,8 +909,60 @@ namespace kolosal
                     InferenceEngineConfig engine;
                     if (engineConfig["name"])
                         engine.name = engineConfig["name"].as<std::string>();
-                    if (engineConfig["library_path"])
-                        engine.library_path = ServerConfig::makeAbsolutePath(engineConfig["library_path"].as<std::string>());
+                    if (engineConfig["library_path"]) {
+                        // Preserve the raw path for smarter resolution
+                        std::string rawLibPath = engineConfig["library_path"].as<std::string>();
+                        engine.library_path = ServerConfig::makeAbsolutePath(rawLibPath);
+
+#ifndef _WIN32
+                        // If the resolved path still does not exist AND the original path was just a filename
+                        // (common for packaged Linux installs placing libs in /usr/lib), search standard lib dirs.
+                        try {
+                            auto pathExists = std::filesystem::exists(engine.library_path);
+                            bool isSimpleName = (rawLibPath.find('/') == std::string::npos && rawLibPath.find('\\') == std::string::npos);
+                            if (!pathExists && isSimpleName) {
+                                // Candidate search directories (ordered by likelihood)
+                                std::vector<std::filesystem::path> candidates;
+
+                                // Derive prefix from executable path if possible (/usr/bin -> /usr/lib)
+                                char execPathBuf[PATH_MAX];
+#ifdef __APPLE__
+                                // Not used here (Linux specific case) but keep structure consistent
+#elif defined(__linux__)
+                                ssize_t len = readlink("/proc/self/exe", execPathBuf, sizeof(execPathBuf) - 1);
+                                if (len != -1) {
+                                    execPathBuf[len] = '\0';
+                                    std::filesystem::path exePath(execPathBuf);
+                                    auto exeDir = exePath.parent_path();
+                                    if (!exeDir.empty()) {
+                                        candidates.push_back(exeDir);                    // /usr/bin
+                                        candidates.push_back(exeDir.parent_path()/"lib"); // /usr/lib (if exeDir is /usr/bin)
+                                    }
+                                }
+#endif
+                                // Standard library locations
+                                candidates.push_back("/usr/lib");
+                                candidates.push_back("/usr/local/lib");
+                                candidates.push_back("/usr/lib64");
+                                candidates.push_back("/lib");
+                                candidates.push_back("/lib64");
+                                candidates.push_back("/opt/kolosal/lib");
+
+                                for (const auto &dir : candidates) {
+                                    if (dir.empty()) continue;
+                                    std::filesystem::path candidate = dir / rawLibPath;
+                                    if (std::filesystem::exists(candidate)) {
+                                        ServerLogger::instance().info("Resolved engine library '" + rawLibPath + "' to '" + candidate.string() + "'");
+                                        engine.library_path = candidate.string();
+                                        break;
+                                    }
+                                }
+                            }
+                        } catch (const std::exception &e) {
+                            ServerLogger::instance().info(std::string("Engine library resolution warning for '") + engine.name + "': " + e.what());
+                        }
+#endif // _WIN32
+                    }
                     if (engineConfig["version"])
                         engine.version = engineConfig["version"].as<std::string>();
                     if (engineConfig["description"])
