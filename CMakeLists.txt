@@ -1096,6 +1096,28 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
         
         # Set CMAKE_SKIP_INSTALL_RULES to TRUE for PoDoFo only
         set(CMAKE_SKIP_INSTALL_RULES TRUE)
+
+        # Ensure a 'freetype' target exists before configuring PoDoFo (PoDoFo expects target name freetype when using system libs)
+        if(NOT TARGET freetype)
+            if(FREETYPE_LIBRARIES)
+                # Choose first library if list
+                set(_FT_LIB_IMPORT "${FREETYPE_LIBRARIES}")
+                if(_FT_LIB_IMPORT MATCHES ";")
+                    list(GET FREETYPE_LIBRARIES 0 _FT_LIB_IMPORT)
+                endif()
+                add_library(freetype UNKNOWN IMPORTED GLOBAL)
+                set_target_properties(freetype PROPERTIES
+                    IMPORTED_LOCATION "${_FT_LIB_IMPORT}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
+                )
+                message(STATUS "Pre-PoDoFo: Created imported freetype target at ${_FT_LIB_IMPORT}")
+            elseif(TARGET Freetype::Freetype)
+                add_library(freetype ALIAS Freetype::Freetype)
+                message(STATUS "Pre-PoDoFo: Added alias freetype -> Freetype::Freetype")
+            else()
+                message(WARNING "Pre-PoDoFo: FREETYPE_LIBRARIES not set and Freetype::Freetype target missing; PoDoFo may fail. Install libfreetype6-dev.")
+            endif()
+        endif()
         
         add_subdirectory(external/podofo EXCLUDE_FROM_ALL)
         
