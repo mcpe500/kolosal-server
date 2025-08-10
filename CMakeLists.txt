@@ -621,6 +621,8 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
                         set(XML2_LIBRARY_LOCATION "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib/libxml2.tbd")
                         message(STATUS "DEBUG: Using system libxml2: ${XML2_LIBRARY_LOCATION}")
                     endif()
+                else()
+                    message(STATUS "LibXml2 not found via pkg-config; will try find_package")
                 endif()
             endif()
             
@@ -630,6 +632,28 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
                     message(STATUS "Found system LibXml2: ${LIBXML2_LIBRARIES}")
                     # LibXml2::LibXml2 target is usually created by find_package(LibXml2)
                 endif()
+            endif()
+
+            # Defensive: if the cached XML2 path points at a macOS SDK but we are on Linux, discard it
+            if(NOT APPLE AND XML2_LIBRARY_LOCATION MATCHES "MacOSX\.sdk")
+                message(WARNING "Discarding stale macOS XML2 library path cached in XML2_LIBRARY_LOCATION=${XML2_LIBRARY_LOCATION} on non-Apple platform. Forcing re-detection.")
+                unset(XML2_LIBRARY_LOCATION CACHE)
+            endif()
+
+            # Provide a unified imported target if none exists and we have raw libs
+            if(LIBXML2_FOUND AND NOT TARGET LibXml2::LibXml2)
+                # Some distros only give us LIBXML2_LIBRARIES as a full path list
+                add_library(LibXml2::LibXml2 UNKNOWN IMPORTED)
+                # Take the first library for IMPORTED_LOCATION if multiple
+                set(_KOLOSAL_XML2_IMPORT "${LIBXML2_LIBRARIES}")
+                if(_KOLOSAL_XML2_IMPORT MATCHES ";")
+                    list(GET _KOLOSAL_XML2_IMPORT 0 _KOLOSAL_XML2_IMPORT)
+                endif()
+                set_target_properties(LibXml2::LibXml2 PROPERTIES
+                    IMPORTED_LOCATION "${_KOLOSAL_XML2_IMPORT}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${LIBXML2_INCLUDE_DIRS}"
+                )
+                message(STATUS "Created fallback imported target LibXml2::LibXml2 -> ${_KOLOSAL_XML2_IMPORT}")
             endif()
             
             # Find Fontconfig (primarily for Linux, on macOS it might not be needed)
@@ -1275,20 +1299,18 @@ if(USE_PODOFO AND TARGET podofo_static)
         message(WARNING "OpenSSL targets not found, PoDoFo will be linked without OpenSSL")
     endif()
     message(STATUS "PoDoFo library will be linked")
-    
-    # Also explicitly link the libxml2 library path to bypass any target resolution issues
-    message(STATUS "DEBUG: XML2_LIBRARY_LOCATION = ${XML2_LIBRARY_LOCATION}")
-    if(XML2_LIBRARY_LOCATION)
-        message(STATUS "DEBUG: XML2_LIBRARY_LOCATION exists, checking file...")
-        if(EXISTS "${XML2_LIBRARY_LOCATION}")
-            list(APPEND KOLOSAL_LINK_LIBRARIES "${XML2_LIBRARY_LOCATION}")
-            message(STATUS "Added direct libxml2 library path to linking: ${XML2_LIBRARY_LOCATION}")
+        # Link libxml2 via imported target or variable instead of hardcoded path
+        if(LIBXML2_FOUND)
+            if(TARGET LibXml2::LibXml2)
+                list(APPEND KOLOSAL_LINK_LIBRARIES LibXml2::LibXml2)
+                message(STATUS "Linking PoDoFo with LibXml2::LibXml2 target")
+            elseif(LIBXML2_LIBRARIES)
+                list(APPEND KOLOSAL_LINK_LIBRARIES ${LIBXML2_LIBRARIES})
+                message(STATUS "Linking PoDoFo with raw LIBXML2_LIBRARIES: ${LIBXML2_LIBRARIES}")
+            endif()
         else()
-            message(STATUS "DEBUG: XML2_LIBRARY_LOCATION file does not exist: ${XML2_LIBRARY_LOCATION}")
+            message(WARNING "PoDoFo enabled but LibXml2 not detected; build may fail. Install libxml2-dev / libxml2-devel.")
         endif()
-    else()
-        message(STATUS "DEBUG: XML2_LIBRARY_LOCATION is empty or not set")
-    endif()
 endif()
 
 # Add cppuprofile if enabled
