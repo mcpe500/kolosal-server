@@ -463,6 +463,12 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
                     endif()
                 endif()
             endif()
+
+            # Always create a 'freetype' alias to Freetype::Freetype if the module provided it
+            if(FREETYPE_FOUND AND TARGET Freetype::Freetype AND NOT TARGET freetype)
+                add_library(freetype ALIAS Freetype::Freetype)
+                message(STATUS "Created alias target 'freetype' -> Freetype::Freetype")
+            endif()
             
             if(FREETYPE_FOUND AND NOT TARGET Freetype::Freetype)
                 add_library(Freetype::Freetype UNKNOWN IMPORTED)
