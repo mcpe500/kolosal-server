@@ -464,6 +464,23 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
                 endif()
             endif()
 
+            # If PoDoFo is enabled we must have freetype; escalate search more aggressively
+            if(USE_PODOFO AND NOT FREETYPE_FOUND)
+                message(STATUS "Freetype still not found after initial attempts; retrying REQUIRED find_package")
+                find_package(Freetype REQUIRED)
+                if(FREETYPE_FOUND)
+                    if(NOT FREETYPE_INCLUDE_DIRS AND FREETYPE_INCLUDE_DIR)
+                        set(FREETYPE_INCLUDE_DIRS ${FREETYPE_INCLUDE_DIR})
+                    endif()
+                    if(NOT FREETYPE_LIBRARIES AND FREETYPE_LIBRARY)
+                        set(FREETYPE_LIBRARIES ${FREETYPE_LIBRARY})
+                    endif()
+                    message(STATUS "Successfully located Freetype (REQUIRED): ${FREETYPE_LIBRARIES}")
+                else()
+                    message(FATAL_ERROR "PoDoFo requires Freetype but it could not be found. Install libfreetype6-dev (Ubuntu/Debian) or freetype-devel (RHEL/CentOS/Fedora).")
+                endif()
+            endif()
+
             # Always create a 'freetype' alias to Freetype::Freetype if the module provided it
             if(FREETYPE_FOUND AND TARGET Freetype::Freetype AND NOT TARGET freetype)
                 add_library(freetype ALIAS Freetype::Freetype)
