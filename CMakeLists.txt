@@ -18,28 +18,33 @@ list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/overrides")
 message(STATUS "CMAKE_MODULE_PATH (prepended overrides): ${CMAKE_MODULE_PATH}")
 
 # -----------------------------------------------------------------------------
-# Flatten output directory for single-config style inside chosen build folder.
-# When using a multi-config generator (e.g. Visual Studio) and configuring into
-# a path like build/Release, CMake normally appends an extra /Release creating
-# build/Release/Release. We override per-config output directories so that all
-# Release artifacts end up directly in the CMAKE_BINARY_DIR (the build folder
-# you specified), avoiding the redundant nested directory.
+# Output directory layout
+# Goal (per user request): place all build products for a given configuration
+# inside a subfolder named after the configuration (e.g. build/Release) while
+# avoiding a duplicated segment like build/Release/Release.
+#
+# Multi-config generators (Visual Studio, Xcode, etc.): explicitly set the
+# per-config variables to CMAKE_BINARY_DIR/<Config>.
+# Single-config generators (Ninja/Makefiles): if CMAKE_BUILD_TYPE is set, emit
+# to CMAKE_BINARY_DIR/<CMAKE_BUILD_TYPE>; otherwise leave defaults.
 # -----------------------------------------------------------------------------
 if (CMAKE_CONFIGURATION_TYPES OR CMAKE_GENERATOR MATCHES "Visual Studio")
-    set(_OUT_BASE ${CMAKE_BINARY_DIR})
     foreach(_cfg Debug Release RelWithDebInfo MinSizeRel)
         string(TOUPPER ${_cfg} _CFG_UP)
-        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${_CFG_UP} ${_OUT_BASE})
-        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${_CFG_UP} ${_OUT_BASE})
-        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${_CFG_UP} ${_OUT_BASE})
+        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${_CFG_UP} "${CMAKE_BINARY_DIR}/${_cfg}")
+        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${_CFG_UP} "${CMAKE_BINARY_DIR}/${_cfg}")
+        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${_CFG_UP} "${CMAKE_BINARY_DIR}/${_cfg}")
     endforeach()
+else()
+    # Single-config: honor CMAKE_BUILD_TYPE if provided
+    if(CMAKE_BUILD_TYPE)
+        set(_single_dir "${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE}")
+        file(MAKE_DIRECTORY "${_single_dir}")
+        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${_single_dir}")
+        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${_single_dir}")
+        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${_single_dir}")
+    endif()
 endif()
-
-# Also set the generic (non-config) output directories so single-config generators
-# or subprojects querying these inherit the flattened layout.
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # Include UCM for runtime library management
 include(${CMAKE_SOURCE_DIR}/cmake/ucm.cmake)
