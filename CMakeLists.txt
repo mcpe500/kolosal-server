@@ -73,48 +73,42 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/maddy/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/zlib)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/src)
 
-# --- Ensure freetype imported target exists early when PoDoFo support is enabled (Linux needs this) ---
+# --- Ensure a usable 'freetype' CMake target exists (PoDoFo references it) ---
 if(USE_PODOFO AND NOT TARGET freetype)
-    # Try to locate freetype via standard find_package first (quiet to avoid spam)
+    # Prefer standard find_package (may provide target Freetype::Freetype)
     find_package(Freetype QUIET)
-    if(NOT FREETYPE_FOUND)
-        # Fallback: try direct library search (covers minimal systems)
+
+    # Collect library + include dirs
+    set(_FT_INCLUDE_DIRS "${FREETYPE_INCLUDE_DIRS}")
+    set(_FT_LIBS "${FREETYPE_LIBRARIES}")
+
+    # If FREETYPE_LIBRARIES is a target-like token and not an existing path, try manual locate
+    if(NOT _FT_LIBS)
         find_library(FREETYPE_LIBRARY NAMES freetype)
         if(FREETYPE_LIBRARY)
-            set(FREETYPE_LIBRARIES ${FREETYPE_LIBRARY})
-            set(FREETYPE_FOUND TRUE)
-            # Attempt include dir heuristic if not provided
-            if(NOT FREETYPE_INCLUDE_DIRS)
-                if(EXISTS "/usr/include/freetype2")
-                    set(FREETYPE_INCLUDE_DIRS "/usr/include/freetype2")
-                elseif(EXISTS "/usr/local/include/freetype2")
-                    set(FREETYPE_INCLUDE_DIRS "/usr/local/include/freetype2")
-                endif()
-            endif()
+            set(_FT_LIBS ${FREETYPE_LIBRARY})
         endif()
     endif()
-    if(FREETYPE_FOUND AND FREETYPE_LIBRARIES)
-        # Pick a representative freetype library path
-        set(_FT_LIB_IMPORT "")
-        foreach(_lib ${FREETYPE_LIBRARIES})
-            if(_lib MATCHES "freetype")
-                set(_FT_LIB_IMPORT ${_lib})
+
+    if(NOT _FT_INCLUDE_DIRS)
+        foreach(d "/opt/homebrew/include/freetype2" "/usr/local/include/freetype2" "/usr/include/freetype2")
+            if(EXISTS "${d}/ft2build.h")
+                set(_FT_INCLUDE_DIRS "${d}")
                 break()
             endif()
         endforeach()
-        if(NOT _FT_LIB_IMPORT)
-            list(GET FREETYPE_LIBRARIES 0 _FT_LIB_IMPORT)
+    endif()
+
+    if(_FT_LIBS)
+        # Create lightweight forwarding interface target; don't assume library path string is a real file if coming from an imported target.
+        add_library(freetype INTERFACE IMPORTED GLOBAL)
+        if(_FT_INCLUDE_DIRS)
+            set_target_properties(freetype PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${_FT_INCLUDE_DIRS}")
         endif()
-        if(NOT TARGET freetype)
-            add_library(freetype UNKNOWN IMPORTED GLOBAL)
-            set_target_properties(freetype PROPERTIES
-                IMPORTED_LOCATION "${_FT_LIB_IMPORT}"
-                INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
-            )
-            message(STATUS "Global: Created imported freetype target at ${_FT_LIB_IMPORT}")
-        endif()
+        set_target_properties(freetype PROPERTIES INTERFACE_LINK_LIBRARIES "${_FT_LIBS}")
+        message(STATUS "Global: Created INTERFACE freetype target forwarding: libs='${_FT_LIBS}' includes='${_FT_INCLUDE_DIRS}'")
     else()
-        message(WARNING "Global: PoDoFo enabled but freetype library could not be located yet; will attempt later. Install libfreetype6-dev if linking fails.")
+        message(WARNING "Global: Failed to locate freetype library; PoDoFo may fail to link. Install freetype (brew install freetype or apt install libfreetype6-dev).")
     endif()
 endif()
 
