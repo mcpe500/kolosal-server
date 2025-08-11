@@ -1108,7 +1108,7 @@ if(NOT TARGET pugixml)
 endif()
 
 # Add FAISS
-option(USE_FAISS "Compile with FAISS support" OFF)
+option(USE_FAISS "Compile with FAISS support" ON)
 if(USE_FAISS AND NOT TARGET faiss)
     message(STATUS "Configuring FAISS vector database support...")
     
