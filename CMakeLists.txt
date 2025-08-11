@@ -17,6 +17,9 @@ project(KolosalServer VERSION 1.0.0 LANGUAGES C CXX)
 list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/overrides")
 message(STATUS "CMAKE_MODULE_PATH (prepended overrides): ${CMAKE_MODULE_PATH}")
 
+# -----------------------------------------------------------------------------
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # Include UCM for runtime library management
 include(${CMAKE_SOURCE_DIR}/cmake/ucm.cmake)
 
@@ -132,7 +135,6 @@ set(SOURCES
     src/download_utils.cpp
     src/download_manager.cpp
     src/qdrant_client.cpp
-    src/faiss_client.cpp
     src/node_manager.cpp
     src/inference_loader.cpp
     src/inference_interface_impl.cpp
@@ -176,6 +178,17 @@ set(SOURCES
     
     # src/completion_monitor.cpp
 )
+
+# Conditionally include FAISS client source only if headers are present
+if(USE_FAISS)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/faiss/faiss/IndexFlat.h")
+        list(APPEND SOURCES src/faiss_client.cpp)
+        message(STATUS "FAISS headers detected – including faiss_client.cpp")
+    else()
+        message(WARNING "USE_FAISS=ON but FAISS headers not found (expected external/faiss/faiss/IndexFlat.h). Disabling FAISS for this build.")
+        set(USE_FAISS OFF)
+    endif()
+endif()
 
 # Create shared library instead of static library.
 add_library(kolosal_server SHARED ${SOURCES})
