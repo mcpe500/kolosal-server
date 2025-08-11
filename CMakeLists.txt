@@ -18,6 +18,27 @@ list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/overrides")
 message(STATUS "CMAKE_MODULE_PATH (prepended overrides): ${CMAKE_MODULE_PATH}")
 
 # -----------------------------------------------------------------------------
+# Flatten output directory for single-config style inside chosen build folder.
+# When using a multi-config generator (e.g. Visual Studio) and configuring into
+# a path like build/Release, CMake normally appends an extra /Release creating
+# build/Release/Release. We override per-config output directories so that all
+# Release artifacts end up directly in the CMAKE_BINARY_DIR (the build folder
+# you specified), avoiding the redundant nested directory.
+# -----------------------------------------------------------------------------
+if (CMAKE_CONFIGURATION_TYPES OR CMAKE_GENERATOR MATCHES "Visual Studio")
+    set(_OUT_BASE ${CMAKE_BINARY_DIR})
+    foreach(_cfg Debug Release RelWithDebInfo MinSizeRel)
+        string(TOUPPER ${_cfg} _CFG_UP)
+        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${_CFG_UP} ${_OUT_BASE})
+        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${_CFG_UP} ${_OUT_BASE})
+        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${_CFG_UP} ${_OUT_BASE})
+    endforeach()
+endif()
+
+# Also set the generic (non-config) output directories so single-config generators
+# or subprojects querying these inherit the flattened layout.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # Include UCM for runtime library management
