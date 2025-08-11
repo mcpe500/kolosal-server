@@ -3,58 +3,39 @@ server:
   host: 0.0.0.0
   idle_timeout: 300
   allow_public_access: false
-  allow_internet_access: false
+  allow_internet_access: true
 logging:
   level: INFO
   file: ""
   access_log: false
   quiet_mode: false
   show_request_details: true
+database:
+  vector_database: faiss
+  faiss:
+    index_type: Flat
+    index_path: ./data/faiss_index
+    dimensions: 1536
+    normalize_vectors: true
+    metric_type: IP
+    nlist: 100
+    nprobe: 10
+    use_gpu: false
+    gpu_device: 0
 auth:
-  enabled: true
-  require_api_key: false
-  api_key_header: X-API-Key
-  api_keys:
-    - your_api_key_here
-    - sk-1234567890abcdef
-  rate_limit:
-    enabled: true
-    max_requests: 100
-    window_size: 60
-  cors:
-    enabled: true
-    allow_credentials: false
-    max_age: 86400
-    allowed_origins:
-      - "*"
-    allowed_methods:
-      - GET
-      - POST
-      - PUT
-      - DELETE
-      - OPTIONS
-      - HEAD
-      - PATCH
-    allowed_headers:
-      - Content-Type
-      - Authorization
-      - X-Requested-With
-      - Accept
-      - Origin
+  enabled: false
 search:
   enabled: true
-  searxng_url: http://localhost:8090
+  searxng_url: https://searx.stream/
   timeout: 30
   max_results: 20
-  default_engine: ""
-  api_key: ""
   enable_safe_search: true
   default_format: json
   default_language: en
   default_category: general
 models:
   - id: qwen3-0.6b
-    path: ./models\Qwen3-0.6B-UD-Q4_K_XL.gguf
+    path: https://huggingface.co/kolosal/qwen3-0.6b/resolve/main/Qwen3-0.6B-UD-Q4_K_XL.gguf
     type: llm
     load_immediately: true
     main_gpu_id: 0
@@ -71,9 +52,9 @@ models:
       n_batch: 2048
       n_ubatch: 512
   - id: qwen3-embedding-0.6b
-    path: https://huggingface.co/kolosal/qwen3-embedding-0.6b/blob/main/Qwen3-Embedding-0.6B-Q8_0.gguf
+    path: https://huggingface.co/kolosal/qwen3-embedding-0.6b/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf
     type: embedding
-    load_immediately: false
+    load_immediately: true
     main_gpu_id: 0
     inference_engine: llama-cpu
     load_params:
@@ -87,23 +68,6 @@ models:
       n_gpu_layers: 100
       n_batch: 256
       n_ubatch: 64
-  - id: text-embedding-3-small
-    path: ./models/all-MiniLM-L6-v2-Q4_K_M.gguf
-    type: embedding
-    load_immediately: true
-    main_gpu_id: 0
-    inference_engine: llama-cpu
-    load_params:
-      n_ctx: 512
-      n_keep: 0
-      use_mmap: true
-      use_mlock: false
-      n_parallel: 4
-      cont_batching: true
-      warmup: false
-      n_gpu_layers: 100
-      n_batch: 512
-      n_ubatch: 128
 inference_engines:
   - name: llama-cpu
     library_path: ./build/Release/llama-cpu.dll

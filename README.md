@@ -20,6 +20,7 @@ A high-performance inference server for large language models with OpenAI-compat
 - 🔧 **Configurable**: Flexible model loading parameters and inference settings
 - 🔒 **Authentication**: API key and rate limiting support
 - 🌐 **Cross-Platform**: Windows and Linux native builds
+- 📚 **RAG Retrieval**: Native FAISS vector store (default) with optional Qdrant backend
 
 ## Quick Start
 
@@ -92,6 +93,7 @@ cd kolosal-server
 ```bash
 git submodule update --init --recursive
 ```
+FAISS is bundled as a submodule in `external/faiss`. If you forget this step FAISS will be disabled (the build creates a stub). Re-run the submodule command then reconfigure.
 
 **3. Create Build Directory:**
 ```bash
@@ -383,6 +385,42 @@ The server will start on `http://localhost:8080` by default.
 ## Configuration
 
 Kolosal Server supports configuration through JSON and YAML files for advanced setup including authentication, logging, model preloading, and server parameters.
+
+### Vector Database (Retrieval) Backends
+
+The retrieval endpoints (`/add_documents`, `/retrieve`, `/remove_documents`, `/list_documents`, `/info_documents`) use a pluggable vector store:
+
+1. FAISS (default, in-process, zero external dependencies)
+2. Qdrant (optional external service)
+
+If `database.vector_database` is omitted, FAISS is selected automatically.
+
+```yaml
+database:
+  vector_database: faiss  # or qdrant
+  faiss:
+    index_type: Flat
+    index_path: ./data/faiss_index
+    dimensions: 1536
+    normalize_vectors: true
+    metric_type: IP  # IP + normalization approximates cosine
+  qdrant:
+    enabled: true
+    host: localhost
+    port: 6333
+    collection_name: documents
+    default_embedding_model: text-embedding-3-small
+```
+
+FAISS build notes:
+- Controlled by CMake option `USE_FAISS` (ON by default)
+- GPU acceleration toggles automatically if CUDA is found and `USE_CUDA` is enabled
+- Disable with `-DUSE_FAISS=OFF`
+
+Example build enabling CUDA + FAISS:
+```bash
+cmake -DCMAKE_BUILD_TYPE=Release -DLLAMA_CUDA=ON -DUSE_FAISS=ON ..
+```
 
 ### Quick Configuration Examples
 

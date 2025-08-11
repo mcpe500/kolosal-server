@@ -13,7 +13,23 @@ logging:
   show_request_details: false  # Hide detailed request processing logs
 
 database:
-  # Qdrant vector database configuration
+  # Select vector database backend: faiss (default) or qdrant
+  # If omitted, FAISS will be used automatically and requires no external service.
+  vector_database: "faiss"
+
+  # Native FAISS configuration (used when vector_database is faiss or unspecified)
+  faiss:
+    index_type: "Flat"          # Flat, IVF (IVFFlat), future: HNSW
+    index_path: "./data/faiss_index"  # Directory to store index & metadata
+    dimensions: 1536            # Embedding vector size (must match embedding model output)
+    normalize_vectors: true     # Normalize vectors when using Inner Product for cosine similarity
+    nlist: 100                  # IVF: number of clusters (ignored for Flat)
+    nprobe: 10                  # IVF: probes per search (higher = better recall, slower)
+    use_gpu: false              # Enable if FAISS built with GPU (CUDA) support
+    gpu_device: 0               # GPU device index
+    metric_type: "IP"           # IP (Inner Product) or L2
+
+  # Optional: Qdrant vector database configuration (only used if vector_database = qdrant)
   qdrant:
     enabled: true
     host: "localhost"

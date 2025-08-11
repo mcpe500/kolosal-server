@@ -8,6 +8,7 @@
 #include <atomic>
 #include <unordered_map>
 #include <sstream>
+#include <cmath>
 
 #ifdef USE_FAISS
 #include <faiss/IndexFlat.h>
@@ -476,8 +477,8 @@ std::future<FaissResult> FaissClient::getPoints(
 #else        
         try
         {
+            // Return an array in result field for parity with Qdrant expectations in DocumentService
             nlohmann::json response_points = nlohmann::json::array();
-            
             for (const std::string& point_id : point_ids)
             {
                 auto payload_it = pImpl->payloads_.find(point_id);
@@ -489,8 +490,7 @@ std::future<FaissResult> FaissClient::getPoints(
                     response_points.push_back(point);
                 }
             }
-            
-            result.response_data["result"]["points"] = response_points;
+            result.response_data["result"] = response_points;
             result.success = true;
         }
         catch (const std::exception& ex)
@@ -625,16 +625,13 @@ std::future<FaissResult> FaissClient::scrollPoints(
         try
         {
             nlohmann::json points = nlohmann::json::array();
-            
             size_t start_idx = 0;
             if (!offset.empty())
             {
                 start_idx = std::stoull(offset);
             }
-            
             size_t count = 0;
             size_t current_idx = 0;
-            
             for (const auto& item : pImpl->payloads_)
             {
                 if (current_idx >= start_idx && count < static_cast<size_t>(limit))
@@ -647,15 +644,12 @@ std::future<FaissResult> FaissClient::scrollPoints(
                 }
                 current_idx++;
             }
-            
-            result.response_data["result"]["points"] = points;
-            
-            // Set next page offset if there are more items
+            // Provide array directly for consistency with getPoints/search format
+            result.response_data["result"] = points;
             if (current_idx > start_idx + limit)
             {
-                result.response_data["result"]["next_page_offset"] = std::to_string(start_idx + limit);
+                result.response_data["next_page_offset"] = std::to_string(start_idx + limit);
             }
-            
             result.success = true;
         }
         catch (const std::exception& ex)

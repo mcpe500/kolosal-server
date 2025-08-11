@@ -13,6 +13,10 @@ endif()
 
 project(KolosalServer VERSION 1.0.0 LANGUAGES C CXX)
 
+# Prepend override modules (e.g., custom FindOpenSSL) so downstream add_subdirectory() picks them first
+list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/overrides")
+message(STATUS "CMAKE_MODULE_PATH (prepended overrides): ${CMAKE_MODULE_PATH}")
+
 # Include UCM for runtime library management
 include(${CMAKE_SOURCE_DIR}/cmake/ucm.cmake)
 
@@ -415,6 +419,41 @@ endif()
 
 # Add PoDoFo
 if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
+    # Provide OpenSSL imported targets early if not already defined (helps PoDoFo's find_package on Windows)
+    if(WIN32 AND NOT TARGET OpenSSL::SSL)
+        set(_PODOFO_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/extern/deps/3rdparty")
+        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+            set(_PODOFO_LIB_SUBDIR "Win64")
+        else()
+            set(_PODOFO_LIB_SUBDIR "Win32")
+        endif()
+        set(_SSL_LIB "${_PODOFO_DEPS_DIR}/openssl/lib/${_PODOFO_LIB_SUBDIR}/ssl.lib")
+        set(_CRYPTO_LIB "${_PODOFO_DEPS_DIR}/openssl/lib/${_PODOFO_LIB_SUBDIR}/crypto.lib")
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            if(EXISTS "${_PODOFO_DEPS_DIR}/openssl/lib/${_PODOFO_LIB_SUBDIR}/ssld.lib")
+                set(_SSL_LIB "${_PODOFO_DEPS_DIR}/openssl/lib/${_PODOFO_LIB_SUBDIR}/ssld.lib")
+            endif()
+            if(EXISTS "${_PODOFO_DEPS_DIR}/openssl/lib/${_PODOFO_LIB_SUBDIR}/cryptod.lib")
+                set(_CRYPTO_LIB "${_PODOFO_DEPS_DIR}/openssl/lib/${_PODOFO_LIB_SUBDIR}/cryptod.lib")
+            endif()
+        endif()
+        add_library(OpenSSL::SSL UNKNOWN IMPORTED)
+        set_target_properties(OpenSSL::SSL PROPERTIES IMPORTED_LOCATION "${_SSL_LIB}")
+        add_library(OpenSSL::Crypto UNKNOWN IMPORTED)
+        set_target_properties(OpenSSL::Crypto PROPERTIES IMPORTED_LOCATION "${_CRYPTO_LIB}")
+        set(OPENSSL_SSL_LIBRARY "${_SSL_LIB}" CACHE FILEPATH "OpenSSL SSL library" FORCE)
+        set(OPENSSL_CRYPTO_LIBRARY "${_CRYPTO_LIB}" CACHE FILEPATH "OpenSSL crypto library" FORCE)
+        set(OPENSSL_LIBRARIES "${_SSL_LIB};${_CRYPTO_LIB}" CACHE STRING "OpenSSL libraries" FORCE)
+    # Additional legacy variable names some FindOpenSSL variants inspect
+    set(OPENSSL_CRYPTO_LIBRARIES "${_CRYPTO_LIB}" CACHE STRING "OpenSSL crypto libraries" FORCE)
+    set(OPENSSL_SSL_LIBRARIES "${_SSL_LIB}" CACHE STRING "OpenSSL ssl libraries" FORCE)
+    set(OPENSSL_INCLUDE_DIR "${_PODOFO_DEPS_DIR}/openssl/include" CACHE PATH "OpenSSL include dir" FORCE)
+    set(OPENSSL_INCLUDE_DIRS "${OPENSSL_INCLUDE_DIR}" CACHE PATH "OpenSSL include dirs" FORCE)
+    set(OPENSSL_VERSION "1.1.1s" CACHE STRING "OpenSSL version" FORCE)
+    set(OPENSSL_FOUND TRUE CACHE BOOL "OpenSSL found" FORCE)
+    set(OpenSSL_FOUND TRUE CACHE BOOL "OpenSSL found (alt var)" FORCE)
+        message(STATUS "Injected OpenSSL imported targets for PoDoFo: ${OPENSSL_LIBRARIES}")
+    endif()
     message(STATUS "Configuring PoDoFo PDF support...")
     
     # Pre-configure OpenSSL variables for PoDoFo BEFORE any dependency checks
@@ -1258,6 +1297,20 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
         endif()
         
         add_subdirectory(external/podofo EXCLUDE_FROM_ALL)
+
+                # Inject OpenSSL include directory explicitly for PoDoFo private sources if target exists
+                if(TARGET podofo_private)
+                    target_include_directories(podofo_private PRIVATE
+                        "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/extern/deps/3rdparty/openssl/include"
+                    )
+                    message(STATUS "Injected OpenSSL include dir into podofo_private target")
+                endif()
+                if(TARGET podofo_static)
+                    target_include_directories(podofo_static PRIVATE
+                        "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/extern/deps/3rdparty/openssl/include"
+                    )
+                    message(STATUS "Injected OpenSSL include dir into podofo_static target")
+                endif()
         
         # Restore the original CMAKE_SKIP_INSTALL_RULES state
         set(CMAKE_SKIP_INSTALL_RULES ${SAVED_SKIP_INSTALL})
