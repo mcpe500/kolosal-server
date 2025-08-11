@@ -51,8 +51,24 @@ public:
                 vector_db_ = VectorDatabaseFactory::create(VectorDatabaseFactory::DatabaseType::FAISS, db_config);
                 ServerLogger::logInfo("DocumentService initialized with FAISS vector database");
 #else
-                ServerLogger::logError("FAISS selected but not compiled in, falling back to Qdrant");
-                // Fall back to Qdrant
+                ServerLogger::logError("FAISS selected but not compiled in, attempting fallback to Qdrant");
+                // Auto-enable Qdrant fallback if disabled
+                if (!config_.qdrant.enabled)
+                {
+                    ServerLogger::logWarning("Qdrant disabled in configuration; enabling fallback with default parameters");
+                    config_.qdrant.enabled = true;
+                    if (config_.qdrant.host.empty()) config_.qdrant.host = "localhost";
+                    if (config_.qdrant.port == 0) config_.qdrant.port = 6333;
+                    if (config_.qdrant.collectionName.empty()) config_.qdrant.collectionName = "documents";
+                    if (config_.qdrant.defaultEmbeddingModel.empty()) config_.qdrant.defaultEmbeddingModel = "text-embedding-3-small";
+                    if (config_.qdrant.timeout == 0) config_.qdrant.timeout = 30;
+                    if (config_.qdrant.maxConnections == 0) config_.qdrant.maxConnections = 10;
+                    if (config_.qdrant.connectionTimeout == 0) config_.qdrant.connectionTimeout = 5;
+                    if (config_.qdrant.embeddingBatchSize == 0) config_.qdrant.embeddingBatchSize = 5;
+                    // Adjust primary vectorDatabase to reflect active backend
+                    config_.vectorDatabase = DatabaseConfig::VectorDatabase::QDRANT;
+                }
+                // Proceed if enabled (either originally or just enabled)
                 if (config_.qdrant.enabled)
                 {
                     db_config["host"] = config_.qdrant.host;
@@ -63,11 +79,11 @@ public:
                     db_config["connectionTimeout"] = config_.qdrant.connectionTimeout;
                     
                     vector_db_ = VectorDatabaseFactory::create(VectorDatabaseFactory::DatabaseType::QDRANT, db_config);
-                    ServerLogger::logInfo("DocumentService initialized with Qdrant client (fallback)");
+                    ServerLogger::logInfo("DocumentService initialized with Qdrant client (automatic fallback)");
                 }
                 else
                 {
-                    ServerLogger::logError("No vector database available");
+                    ServerLogger::logError("No vector database available after failed FAISS fallback");
                 }
 #endif
             }
@@ -414,6 +430,24 @@ std::future<bool> DocumentService::initialize()
             {
                 ServerLogger::logInfo("DocumentService: Successfully initialized FAISS at %s", 
                                       pImpl->config_.faiss.indexPath.c_str());
+                // Auto-create default collection if it does not exist yet
+                const std::string default_collection = pImpl->config_.qdrant.collectionName.empty() ? "documents" : pImpl->config_.qdrant.collectionName;
+                try {
+                    auto exists = pImpl->vector_db_->collectionExists(default_collection).get();
+                    if (!exists.success) {
+                        ServerLogger::logInfo("FAISS default collection '%s' not found. Creating with dimension %d", 
+                                              default_collection.c_str(), pImpl->config_.faiss.dimensions);
+                        auto created = pImpl->vector_db_->createCollection(default_collection, pImpl->config_.faiss.dimensions, 
+                            pImpl->config_.faiss.metricType == "IP" ? "IP" : "L2").get();
+                        if (!created.success) {
+                            ServerLogger::logError("Failed to create FAISS collection '%s': %s", default_collection.c_str(), created.error_message.c_str());
+                            return false;
+                        }
+                    }
+                } catch (const std::exception& ex) {
+                    ServerLogger::logError("Error ensuring FAISS default collection: %s", ex.what());
+                    return false;
+                }
             }
             else
             {

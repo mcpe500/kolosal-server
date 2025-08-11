@@ -304,8 +304,19 @@ std::future<FaissResult> FaissClient::upsertPoints(
         {
             if (!pImpl->initialized_ || !pImpl->index_)
             {
-                result.error_message = "Index not initialized";
-                return result;
+                // Attempt lazy initialization using vector dimension from first point
+                if (!points.empty()) {
+                    int dims = static_cast<int>(points.front().vector.size());
+                    ServerLogger::logWarning("FAISS index not initialized. Attempting lazy initialization for collection '%s' with dimension %d", collection_name.c_str(), dims);
+                    auto init_res = pImpl->initializeIndex(collection_name, dims).get();
+                    if (!init_res.success) {
+                        result.error_message = "Lazy initialization failed: " + init_res.error_message;
+                        return result;
+                    }
+                } else {
+                    result.error_message = "Index not initialized and no points provided to infer dimensions";
+                    return result;
+                }
             }
             
             if (points.empty())
@@ -524,8 +535,13 @@ std::future<FaissResult> FaissClient::search(
         {
             if (!pImpl->initialized_ || !pImpl->index_)
             {
-                result.error_message = "Index not initialized";
-                return result;
+                // Try lazy load from disk
+                ServerLogger::logWarning("FAISS search requested but index not initialized. Attempting to load existing index '%s'", collection_name.c_str());
+                auto init_res = pImpl->initializeIndex(collection_name, static_cast<int>(query_vector.size())).get();
+                if (!init_res.success || !pImpl->index_) {
+                    result.error_message = "Index not initialized and lazy load failed";
+                    return result;
+                }
             }
             
             // Normalize query vector if needed

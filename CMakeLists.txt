@@ -205,14 +205,51 @@ set(SOURCES
     # src/completion_monitor.cpp
 )
 
-# Conditionally include FAISS client source only if headers are present
+# Conditionally include FAISS client source. Prefer vendored headers if present, otherwise allow system install.
 if(USE_FAISS)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/faiss/faiss/IndexFlat.h")
+    find_path(FAISS_INDEXFLAT_HEADER faiss/IndexFlat.h
+        HINTS
+            "${CMAKE_CURRENT_SOURCE_DIR}/external/faiss"
+            $ENV{FAISS_ROOT}/include
+    )
+    if(FAISS_INDEXFLAT_HEADER)
         list(APPEND SOURCES src/faiss_client.cpp)
-        message(STATUS "FAISS headers detected – including faiss_client.cpp")
+        message(STATUS "FAISS headers detected at ${FAISS_INDEXFLAT_HEADER} – including faiss_client.cpp")
     else()
-        message(WARNING "USE_FAISS=ON but FAISS headers not found (expected external/faiss/faiss/IndexFlat.h). Disabling FAISS for this build.")
-        set(USE_FAISS OFF)
+        message(WARNING "FAISS headers not found locally. Attempting to fetch FAISS via FetchContent (set -DFAISS_SKIP_DOWNLOAD=ON to skip).")
+    if (NOT DEFINED FAISS_SKIP_DOWNLOAD OR NOT FAISS_SKIP_DOWNLOAD)
+            # Pre-set FAISS build options to avoid pulling in GPU/OpenMP CUDA requirements on Windows
+            set(FAISS_ENABLE_GPU OFF CACHE BOOL "Disable FAISS GPU for fetched build" FORCE)
+            set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "Disable FAISS Python for fetched build" FORCE)
+            set(BUILD_TESTING OFF CACHE BOOL "Disable FAISS tests for fetched build" FORCE)
+            set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build FAISS static for fetched build" FORCE)
+            include(FetchContent)
+            FetchContent_Declare(
+                faiss_ext
+                GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
+                GIT_TAG v1.8.0
+                GIT_SHALLOW TRUE
+            )
+            FetchContent_MakeAvailable(faiss_ext)
+            # If faiss CMake later fails due to BLAS, provide clearer message
+            if (NOT TARGET faiss)
+                message(WARNING "Fetched FAISS but target 'faiss' not created yet (likely BLAS missing). You'll need to install FAISS separately or install a BLAS (e.g. OpenBLAS) and reconfigure.")
+            endif()
+            # After fetching, attempt to locate header again
+            find_path(FAISS_INDEXFLAT_HEADER_REFRESH faiss/IndexFlat.h
+                HINTS ${faiss_ext_SOURCE_DIR} ${faiss_ext_SOURCE_DIR}/faiss
+            )
+            if(FAISS_INDEXFLAT_HEADER_REFRESH)
+                message(STATUS "Fetched FAISS source; headers at ${FAISS_INDEXFLAT_HEADER_REFRESH}")
+                list(APPEND SOURCES src/faiss_client.cpp)
+                # Add include directory explicitly in case not added by faiss project before our compilation
+                include_directories(${faiss_ext_SOURCE_DIR})
+            else()
+                message(FATAL_ERROR "Failed to fetch FAISS headers. Please install FAISS manually and reconfigure.")
+            endif()
+        else()
+            message(FATAL_ERROR "FAISS requested but headers missing and download skipped. Provide FAISS headers or disable USE_FAISS.")
+        endif()
     endif()
 endif()
 
