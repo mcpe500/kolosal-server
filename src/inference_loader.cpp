@@ -30,10 +30,30 @@ namespace kolosal
 
     InferenceLoader::~InferenceLoader()
     {
-        // Unload all loaded engines
-        for (auto &[name, engine] : loaded_engines_)
-        {
-            unloadLibrary(name);
+        // Safely unload all loaded engines with proper error handling
+        if (!loaded_engines_.empty()) {
+            try {
+                // Create a copy to avoid iterator invalidation
+                auto engines_to_unload = loaded_engines_;
+                
+                for (const auto &[name, engine] : engines_to_unload)
+                {
+                    try {
+                        if (engine.handle) {
+                            CLOSE_LIBRARY(engine.handle);
+                            ServerLogger::logInfo("Unloaded inference engine: %s", name.c_str());
+                        }
+                    } catch (const std::exception& e) {
+                        ServerLogger::logError("Error unloading engine '%s': %s", name.c_str(), e.what());
+                    } catch (...) {
+                        ServerLogger::logError("Unknown error unloading engine '%s'", name.c_str());
+                    }
+                }
+                
+                loaded_engines_.clear();
+            } catch (...) {
+                // Ignore errors during destructor to prevent terminate() calls
+            }
         }
     }
 

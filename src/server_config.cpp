@@ -618,6 +618,71 @@ namespace kolosal
             }
         }
 
+        // After loading (and applying any CLI overrides), ensure config resides in a user-writable location.
+        // This migrates read-only bundle/system configs to the user's profile so subsequent saves succeed.
+        try {
+#ifdef _WIN32
+            char* userProfile = nullptr; size_t len = 0; std::string userConfigPath;
+            if (_dupenv_s(&userProfile, &len, "APPDATA") == 0 && userProfile) {
+                userConfigPath = std::string(userProfile) + "\\Kolosal\\config.yaml";
+                free(userProfile);
+            }
+#elif defined(__APPLE__)
+            const char* homeDir = getenv("HOME");
+            std::string userConfigPath = homeDir ? (std::string(homeDir) + "/Library/Application Support/Kolosal/config.yaml") : std::string();
+#else
+            const char* homeDir = getenv("HOME");
+            std::string userConfigPath = homeDir ? (std::string(homeDir) + "/.kolosal/config.yaml") : std::string();
+#endif
+            auto isWritable = [](const std::string& path) -> bool {
+                if (path.empty()) return false;
+                try {
+                    std::filesystem::path p(path);
+                    if (p.has_parent_path()) {
+                        std::filesystem::create_directories(p.parent_path());
+                    }
+                    std::ofstream ofs(path, std::ios::app);
+                    if (!ofs.is_open()) return false;
+                    ofs.close();
+                    return true;
+                } catch (...) { return false; }
+            };
+
+            bool needsMigration = false;
+            if (currentConfigFilePath.empty()) {
+                needsMigration = true;
+            } else {
+                // If existing path not writable, migrate
+                if (!isWritable(currentConfigFilePath)) {
+                    needsMigration = true;
+                }
+            }
+
+            if (needsMigration && !userConfigPath.empty()) {
+                try {
+                    std::filesystem::path userPath(userConfigPath);
+                    if (userPath.has_parent_path()) {
+                        std::filesystem::create_directories(userPath.parent_path());
+                    }
+                    if (!currentConfigFilePath.empty() && std::filesystem::exists(currentConfigFilePath)) {
+                        std::error_code ec;
+                        std::filesystem::copy_file(currentConfigFilePath, userConfigPath, std::filesystem::copy_options::overwrite_existing, ec);
+                        if (ec) {
+                            ServerLogger::instance().info("Config migration copy failed: " + ec.message());
+                        } else {
+                            ServerLogger::instance().info("Migrated config from '" + currentConfigFilePath + "' to user path '" + userConfigPath + "'");
+                        }
+                    }
+                    // Point current config path to user-writable location regardless of copy success
+                    currentConfigFilePath = userConfigPath;
+                } catch (const std::exception& e) {
+                    ServerLogger::instance().info(std::string("Config migration skipped due to error: ") + e.what());
+                }
+            }
+        } catch (const std::exception& e) {
+            ServerLogger::instance().info(std::string("Config migration wrapper error: ") + e.what());
+        }
+
         return validate();
     }
 
@@ -884,8 +949,60 @@ namespace kolosal
                     InferenceEngineConfig engine;
                     if (engineConfig["name"])
                         engine.name = engineConfig["name"].as<std::string>();
-                    if (engineConfig["library_path"])
-                        engine.library_path = ServerConfig::makeAbsolutePath(engineConfig["library_path"].as<std::string>());
+                    if (engineConfig["library_path"]) {
+                        // Preserve the raw path for smarter resolution
+                        std::string rawLibPath = engineConfig["library_path"].as<std::string>();
+                        engine.library_path = ServerConfig::makeAbsolutePath(rawLibPath);
+
+#ifndef _WIN32
+                        // If the resolved path still does not exist AND the original path was just a filename
+                        // (common for packaged Linux installs placing libs in /usr/lib), search standard lib dirs.
+                        try {
+                            auto pathExists = std::filesystem::exists(engine.library_path);
+                            bool isSimpleName = (rawLibPath.find('/') == std::string::npos && rawLibPath.find('\\') == std::string::npos);
+                            if (!pathExists && isSimpleName) {
+                                // Candidate search directories (ordered by likelihood)
+                                std::vector<std::filesystem::path> candidates;
+
+                                // Derive prefix from executable path if possible (/usr/bin -> /usr/lib)
+                                char execPathBuf[PATH_MAX];
+#ifdef __APPLE__
+                                // Not used here (Linux specific case) but keep structure consistent
+#elif defined(__linux__)
+                                ssize_t len = readlink("/proc/self/exe", execPathBuf, sizeof(execPathBuf) - 1);
+                                if (len != -1) {
+                                    execPathBuf[len] = '\0';
+                                    std::filesystem::path exePath(execPathBuf);
+                                    auto exeDir = exePath.parent_path();
+                                    if (!exeDir.empty()) {
+                                        candidates.push_back(exeDir);                    // /usr/bin
+                                        candidates.push_back(exeDir.parent_path()/"lib"); // /usr/lib (if exeDir is /usr/bin)
+                                    }
+                                }
+#endif
+                                // Standard library locations
+                                candidates.push_back("/usr/lib");
+                                candidates.push_back("/usr/local/lib");
+                                candidates.push_back("/usr/lib64");
+                                candidates.push_back("/lib");
+                                candidates.push_back("/lib64");
+                                candidates.push_back("/opt/kolosal/lib");
+
+                                for (const auto &dir : candidates) {
+                                    if (dir.empty()) continue;
+                                    std::filesystem::path candidate = dir / rawLibPath;
+                                    if (std::filesystem::exists(candidate)) {
+                                        ServerLogger::instance().info("Resolved engine library '" + rawLibPath + "' to '" + candidate.string() + "'");
+                                        engine.library_path = candidate.string();
+                                        break;
+                                    }
+                                }
+                            }
+                        } catch (const std::exception &e) {
+                            ServerLogger::instance().info(std::string("Engine library resolution warning for '") + engine.name + "': " + e.what());
+                        }
+#endif // _WIN32
+                    }
                     if (engineConfig["version"])
                         engine.version = engineConfig["version"].as<std::string>();
                     if (engineConfig["description"])

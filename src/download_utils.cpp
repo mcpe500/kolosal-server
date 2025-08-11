@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <limits.h>
 #include <mach-o/dyld.h>
+#include <pwd.h>
 #else
 #include <unistd.h>
 #include <limits.h>
@@ -208,9 +209,95 @@ namespace kolosal
 
     std::string get_executable_models_directory()
     {
+        // Allow explicit override on all platforms
+        if (const char *overrideDir = std::getenv("KOLOSAL_MODELS_DIR"))
+        {
+            if (*overrideDir)
+            {
+                try
+                {
+                    std::filesystem::path p = std::filesystem::absolute(std::filesystem::path(overrideDir));
+                    ServerLogger::logInfo("Using models directory from KOLOSAL_MODELS_DIR: %s", p.string().c_str());
+                    return p.string();
+                }
+                catch (...)
+                {
+                    ServerLogger::logWarning("Failed to use KOLOSAL_MODELS_DIR path '%s', falling back to defaults", overrideDir);
+                }
+            }
+        }
+#ifdef __APPLE__
+        // On macOS, prefer a user-writable location under Application Support.
+        // Some launcher contexts may sanitize HOME; attempt multiple strategies.
+        auto resolveHome = []() -> std::string {
+            const char *homeEnv = std::getenv("HOME");
+            if (homeEnv && *homeEnv)
+                return std::string(homeEnv);
+            // Fallback: use password database
+            struct passwd *pw = getpwuid(getuid());
+            if (pw && pw->pw_dir && *pw->pw_dir)
+                return std::string(pw->pw_dir);
+            return std::string();
+        };
+        std::string home = resolveHome();
+        if (!home.empty())
+        {
+            std::filesystem::path modelsPath = std::filesystem::path(home) /
+                                               "Library/Application Support/Kolosal/models";
+            std::error_code ec;
+            // Try to create directory eagerly to detect permission issues early.
+            std::filesystem::create_directories(modelsPath, ec);
+            if (!ec)
+            {
+                ServerLogger::logInfo("Using user Application Support models directory: %s", modelsPath.string().c_str());
+                return std::filesystem::absolute(modelsPath).string();
+            }
+            else
+            {
+                ServerLogger::logWarning("Could not create Application Support models directory (%s): %s", modelsPath.string().c_str(), ec.message().c_str());
+            }
+        }
+        // Last resort: relative models directory next to executable (may be non-writable inside .app bundle)
+        std::string executableDir = get_executable_directory();
+        std::filesystem::path fallbackPath = std::filesystem::path(executableDir) / "models";
+        std::error_code fec;
+        std::filesystem::create_directories(fallbackPath, fec);
+        if (!fec)
+        {
+            ServerLogger::logWarning("Falling back to models directory beside executable (writable): %s", fallbackPath.string().c_str());
+            return std::filesystem::absolute(fallbackPath).string();
+        }
+        ServerLogger::logWarning("Executable-adjacent models directory not writable (%s): %s", fallbackPath.string().c_str(), fec.message().c_str());
+        // Final fallback: system temp directory
+        std::filesystem::path tempPath = std::filesystem::temp_directory_path() / "Kolosal" / "models";
+        std::error_code tec;
+        std::filesystem::create_directories(tempPath, tec);
+        if (!tec)
+        {
+            ServerLogger::logWarning("Using temporary models directory: %s", tempPath.string().c_str());
+            return std::filesystem::absolute(tempPath).string();
+        }
+        ServerLogger::logError("All model directory strategies failed; last error: %s", tec.message().c_str());
+        return fallbackPath.string();
+#else
+        // Linux / other Unix: prefer user-writable directory (~/.kolosal/models) to avoid
+        // permission issues when the executable resides in /usr/bin (would otherwise try /usr/bin/models).
+        const char *homeDir = std::getenv("HOME");
+        if (homeDir && *homeDir) {
+            std::filesystem::path userModels = std::filesystem::path(homeDir) / ".kolosal" / "models";
+            std::error_code ec;
+            std::filesystem::create_directories(userModels, ec);
+            if (!ec) {
+                return std::filesystem::absolute(userModels).string();
+            } else {
+                ServerLogger::logWarning("Could not create user models directory (%s): %s", userModels.string().c_str(), ec.message().c_str());
+            }
+        }
+        // Fallback to executable-adjacent path
         std::string executableDir = get_executable_directory();
         std::filesystem::path modelsPath = std::filesystem::path(executableDir) / "models";
         return std::filesystem::absolute(modelsPath).string();
+#endif
     }
 
     std::string generate_download_path(const std::string &url, const std::string &base_dir)

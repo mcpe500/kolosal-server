@@ -59,6 +59,8 @@ namespace kolosal
                 params.randomSeed = request.seed.value();
             }
 
+            // OpenAI-style response_format handling will be parsed outside; keep hook via json extras
+
             return params;
         }
 
@@ -228,6 +230,44 @@ namespace kolosal
 
             // Build inference parameters following ModelManager pattern
             ChatCompletionParameters inferenceParams = buildChatCompletionParameters(request);
+
+            // Extend with grammar and JSON schema features
+            if (j.contains("grammar") && j["grammar"].is_string()) {
+                inferenceParams.grammar = j["grammar"].get<std::string>();
+            }
+
+            // Map OpenAI response_format to jsonSchema
+            if (j.contains("response_format") && j["response_format"].is_object()) {
+                const auto &rf = j["response_format"];
+                if (rf.contains("type") && rf["type"].is_string()) {
+                    const std::string type = rf["type"].get<std::string>();
+                    if (type == "json_object") {
+                        inferenceParams.jsonSchema = std::string("{") + "\"type\":\"object\"}";
+                    } else if (type == "json_schema") {
+                        if (rf.contains("json_schema")) {
+                            const auto &js = rf["json_schema"];
+                            if (js.is_object()) {
+                                if (js.contains("schema") && js["schema"].is_object()) {
+                                    inferenceParams.jsonSchema = js["schema"].dump();
+                                } else {
+                                    inferenceParams.jsonSchema = js.dump();
+                                }
+                            } else if (js.is_string()) {
+                                inferenceParams.jsonSchema = js.get<std::string>();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Also support custom top-level jsonSchema object/string
+            if (j.contains("jsonSchema")) {
+                if (j["jsonSchema"].is_string()) {
+                    inferenceParams.jsonSchema = j["jsonSchema"].get<std::string>();
+                } else if (j["jsonSchema"].is_object()) {
+                    inferenceParams.jsonSchema = j["jsonSchema"].dump();
+                }
+            }
 
             if (request.stream)
             {
@@ -404,6 +444,40 @@ namespace kolosal
 
             // Build inference parameters
             CompletionParameters inferenceParams = buildCompletionParameters(request);
+
+            // Extend with grammar and JSON schema features
+            if (j.contains("grammar") && j["grammar"].is_string()) {
+                inferenceParams.grammar = j["grammar"].get<std::string>();
+            }
+            if (j.contains("response_format") && j["response_format"].is_object()) {
+                const auto &rf = j["response_format"];
+                if (rf.contains("type") && rf["type"].is_string()) {
+                    const std::string type = rf["type"].get<std::string>();
+                    if (type == "json_object") {
+                        inferenceParams.jsonSchema = std::string("{") + "\"type\":\"object\"}";
+                    } else if (type == "json_schema") {
+                        if (rf.contains("json_schema")) {
+                            const auto &js = rf["json_schema"];
+                            if (js.is_object()) {
+                                if (js.contains("schema") && js["schema"].is_object()) {
+                                    inferenceParams.jsonSchema = js["schema"].dump();
+                                } else {
+                                    inferenceParams.jsonSchema = js.dump();
+                                }
+                            } else if (js.is_string()) {
+                                inferenceParams.jsonSchema = js.get<std::string>();
+                            }
+                        }
+                    }
+                }
+            }
+            if (j.contains("jsonSchema")) {
+                if (j["jsonSchema"].is_string()) {
+                    inferenceParams.jsonSchema = j["jsonSchema"].get<std::string>();
+                } else if (j["jsonSchema"].is_object()) {
+                    inferenceParams.jsonSchema = j["jsonSchema"].dump();
+                }
+            }
 
             if (request.stream)
             {

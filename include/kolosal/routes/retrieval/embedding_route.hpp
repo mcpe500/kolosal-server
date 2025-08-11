@@ -6,6 +6,7 @@
 #include <string>
 #include <memory>
 #include <future>
+#include <vector>
 #include <atomic>
 #include <mutex>
 

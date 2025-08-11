@@ -74,6 +74,51 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/zlib)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/src)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/faiss)
 
+# --- Ensure freetype imported target exists early when PoDoFo support is enabled (Linux needs this) ---
+if(USE_PODOFO AND NOT TARGET freetype)
+    # Try to locate freetype via standard find_package first (quiet to avoid spam)
+    find_package(Freetype QUIET)
+    if(NOT FREETYPE_FOUND)
+        # Fallback: try direct library search (covers minimal systems)
+        find_library(FREETYPE_LIBRARY NAMES freetype)
+        if(FREETYPE_LIBRARY)
+            set(FREETYPE_LIBRARIES ${FREETYPE_LIBRARY})
+            set(FREETYPE_FOUND TRUE)
+            # Attempt include dir heuristic if not provided
+            if(NOT FREETYPE_INCLUDE_DIRS)
+                if(EXISTS "/usr/include/freetype2")
+                    set(FREETYPE_INCLUDE_DIRS "/usr/include/freetype2")
+                elseif(EXISTS "/usr/local/include/freetype2")
+                    set(FREETYPE_INCLUDE_DIRS "/usr/local/include/freetype2")
+                endif()
+            endif()
+        endif()
+    endif()
+    if(FREETYPE_FOUND AND FREETYPE_LIBRARIES)
+        # Pick a representative freetype library path
+        set(_FT_LIB_IMPORT "")
+        foreach(_lib ${FREETYPE_LIBRARIES})
+            if(_lib MATCHES "freetype")
+                set(_FT_LIB_IMPORT ${_lib})
+                break()
+            endif()
+        endforeach()
+        if(NOT _FT_LIB_IMPORT)
+            list(GET FREETYPE_LIBRARIES 0 _FT_LIB_IMPORT)
+        endif()
+        if(NOT TARGET freetype)
+            add_library(freetype UNKNOWN IMPORTED GLOBAL)
+            set_target_properties(freetype PROPERTIES
+                IMPORTED_LOCATION "${_FT_LIB_IMPORT}"
+                INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
+            )
+            message(STATUS "Global: Created imported freetype target at ${_FT_LIB_IMPORT}")
+        endif()
+    else()
+        message(WARNING "Global: PoDoFo enabled but freetype library could not be located yet; will attempt later. Install libfreetype6-dev if linking fails.")
+    endif()
+endif()
+
 # Define source files.
 set(SOURCES
     src/server.cpp
@@ -466,6 +511,29 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
                     endif()
                 endif()
             endif()
+
+            # If PoDoFo is enabled we must have freetype; escalate search more aggressively
+            if(USE_PODOFO AND NOT FREETYPE_FOUND)
+                message(STATUS "Freetype still not found after initial attempts; retrying REQUIRED find_package")
+                find_package(Freetype REQUIRED)
+                if(FREETYPE_FOUND)
+                    if(NOT FREETYPE_INCLUDE_DIRS AND FREETYPE_INCLUDE_DIR)
+                        set(FREETYPE_INCLUDE_DIRS ${FREETYPE_INCLUDE_DIR})
+                    endif()
+                    if(NOT FREETYPE_LIBRARIES AND FREETYPE_LIBRARY)
+                        set(FREETYPE_LIBRARIES ${FREETYPE_LIBRARY})
+                    endif()
+                    message(STATUS "Successfully located Freetype (REQUIRED): ${FREETYPE_LIBRARIES}")
+                else()
+                    message(FATAL_ERROR "PoDoFo requires Freetype but it could not be found. Install libfreetype6-dev (Ubuntu/Debian) or freetype-devel (RHEL/CentOS/Fedora).")
+                endif()
+            endif()
+
+            # Always create a 'freetype' alias to Freetype::Freetype if the module provided it
+            if(FREETYPE_FOUND AND TARGET Freetype::Freetype AND NOT TARGET freetype)
+                add_library(freetype ALIAS Freetype::Freetype)
+                message(STATUS "Created alias target 'freetype' -> Freetype::Freetype")
+            endif()
             
             if(FREETYPE_FOUND AND NOT TARGET Freetype::Freetype)
                 add_library(Freetype::Freetype UNKNOWN IMPORTED)
@@ -549,6 +617,13 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
                             NO_DEFAULT_PATH
                         )
                         message(STATUS "DEBUG: XML2_LIBRARY_LOCATION found at: ${XML2_LIBRARY_LOCATION}")
+                        # If we found a concrete library path, prefer it over the bare 'xml2' name
+                        if(XML2_LIBRARY_LOCATION AND EXISTS "${XML2_LIBRARY_LOCATION}")
+                            # Override pkg-config's short name with the full path so that later
+                            # imported targets get a valid IMPORTED_LOCATION (prevent 'xml2' file lookup)
+                            set(LIBXML2_LIBRARIES "${XML2_LIBRARY_LOCATION}" CACHE STRING "Resolved libxml2 library path" FORCE)
+                            message(STATUS "DEBUG: Overriding LIBXML2_LIBRARIES with concrete path: ${LIBXML2_LIBRARIES}")
+                        endif()
                     endif()
                     
                     # If not found via pkg-config paths, use system libxml2 on macOS
@@ -556,6 +631,8 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
                         set(XML2_LIBRARY_LOCATION "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib/libxml2.tbd")
                         message(STATUS "DEBUG: Using system libxml2: ${XML2_LIBRARY_LOCATION}")
                     endif()
+                else()
+                    message(STATUS "LibXml2 not found via pkg-config; will try find_package")
                 endif()
             endif()
             
@@ -565,6 +642,40 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
                     message(STATUS "Found system LibXml2: ${LIBXML2_LIBRARIES}")
                     # LibXml2::LibXml2 target is usually created by find_package(LibXml2)
                 endif()
+            endif()
+
+            # Defensive: if the cached XML2 path points at a macOS SDK but we are on Linux, discard it
+            if(NOT APPLE AND XML2_LIBRARY_LOCATION MATCHES "MacOSX\.sdk")
+                message(WARNING "Discarding stale macOS XML2 library path cached in XML2_LIBRARY_LOCATION=${XML2_LIBRARY_LOCATION} on non-Apple platform. Forcing re-detection.")
+                unset(XML2_LIBRARY_LOCATION CACHE)
+            endif()
+
+            # Provide a unified imported target if none exists and we have raw libs
+            if(LIBXML2_FOUND AND NOT TARGET LibXml2::LibXml2)
+                # Some distros only give us LIBXML2_LIBRARIES as a full path list
+                add_library(LibXml2::LibXml2 UNKNOWN IMPORTED)
+                # Take the first library for IMPORTED_LOCATION if multiple
+                set(_KOLOSAL_XML2_IMPORT "${LIBXML2_LIBRARIES}")
+                if(_KOLOSAL_XML2_IMPORT MATCHES ";")
+                    list(GET _KOLOSAL_XML2_IMPORT 0 _KOLOSAL_XML2_IMPORT)
+                endif()
+                # If the value is a bare name like 'xml2' try to resolve an actual path now
+                if(NOT IS_ABSOLUTE "${_KOLOSAL_XML2_IMPORT}" OR NOT EXISTS "${_KOLOSAL_XML2_IMPORT}")
+                    if(XML2_LIBRARY_LOCATION AND EXISTS "${XML2_LIBRARY_LOCATION}")
+                        set(_KOLOSAL_XML2_IMPORT "${XML2_LIBRARY_LOCATION}")
+                    else()
+                        # Last resort: try a standard search (without NO_DEFAULT_PATH so system dirs are searched)
+                        find_library(_KOLOSAL_XML2_FALLBACK NAMES xml2 libxml2)
+                        if(_KOLOSAL_XML2_FALLBACK)
+                            set(_KOLOSAL_XML2_IMPORT "${_KOLOSAL_XML2_FALLBACK}")
+                        endif()
+                    endif()
+                endif()
+                set_target_properties(LibXml2::LibXml2 PROPERTIES
+                    IMPORTED_LOCATION "${_KOLOSAL_XML2_IMPORT}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${LIBXML2_INCLUDE_DIRS}"
+                )
+                message(STATUS "Created fallback imported target LibXml2::LibXml2 -> ${_KOLOSAL_XML2_IMPORT}")
             endif()
             
             # Find Fontconfig (primarily for Linux, on macOS it might not be needed)
@@ -833,6 +944,15 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
         # Create or fix the global freetype target that PoDoFo will need for linking
         # This must be done before PoDoFo's subdirectory is processed
         message(STATUS "DEBUG: FREETYPE_FOUND=${FREETYPE_FOUND}")
+        # Determine a usable freetype library path for imported/alias targets (avoid macOS-specific path on Linux)
+        set(_KOLOSAL_FT_LIB "")
+        if(APPLE)
+            # Prefer Homebrew path (original behavior); could be refined to detect actual location
+            set(_KOLOSAL_FT_LIB "/opt/homebrew/lib/libfreetype.dylib")
+        elseif(FREETYPE_LIBRARIES)
+            # Use first library from discovery
+            list(GET FREETYPE_LIBRARIES 0 _KOLOSAL_FT_LIB)
+        endif()
         if(TARGET freetype)
             message(STATUS "DEBUG: Target 'freetype' already exists")
             get_target_property(FREETYPE_TYPE freetype TYPE)
@@ -856,48 +976,103 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
                     # Fix the real target if it doesn't have proper library location
                     if(REAL_FREETYPE_LOCATION STREQUAL "freetype" OR NOT REAL_FREETYPE_LOCATION)
                         message(STATUS "DEBUG: Fixing ${FREETYPE_ALIASED} target with proper library path")
-                        set_target_properties(${FREETYPE_ALIASED} PROPERTIES
-                            IMPORTED_LOCATION "/opt/homebrew/lib/libfreetype.dylib"
-                            INTERFACE_LINK_LIBRARIES "/opt/homebrew/lib/libfreetype.dylib"
-                            INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
-                        )
+                        if(_KOLOSAL_FT_LIB)
+                            set_target_properties(${FREETYPE_ALIASED} PROPERTIES
+                                IMPORTED_LOCATION "${_KOLOSAL_FT_LIB}"
+                                INTERFACE_LINK_LIBRARIES "${_KOLOSAL_FT_LIB}"
+                                INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
+                            )
+                        endif()
                     endif()
                 endif()
             else()
                 # It's a regular target, try to update it if possible
                 if(NOT FREETYPE_TYPE STREQUAL "ALIAS")
-                    set_target_properties(freetype PROPERTIES
-                        INTERFACE_LINK_LIBRARIES "/opt/homebrew/lib/libfreetype.dylib"
-                        INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
-                        IMPORTED_LOCATION "/opt/homebrew/lib/libfreetype.dylib"
-                    )
+                    if(_KOLOSAL_FT_LIB)
+                        set_target_properties(freetype PROPERTIES
+                            INTERFACE_LINK_LIBRARIES "${_KOLOSAL_FT_LIB}"
+                            INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
+                            IMPORTED_LOCATION "${_KOLOSAL_FT_LIB}"
+                        )
+                    endif()
                 endif()
             endif()
             message(STATUS "Handled existing freetype target for PoDoFo compatibility")
         else()
             message(STATUS "DEBUG: Target 'freetype' does not exist yet")
-            add_library(freetype INTERFACE IMPORTED GLOBAL)
-            set_target_properties(freetype PROPERTIES
-                INTERFACE_LINK_LIBRARIES "/opt/homebrew/lib/libfreetype.dylib"
-                INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
-            )
+            if(_KOLOSAL_FT_LIB)
+                add_library(freetype INTERFACE IMPORTED GLOBAL)
+                set_target_properties(freetype PROPERTIES
+                    INTERFACE_LINK_LIBRARIES "${_KOLOSAL_FT_LIB}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
+                )
+            else()
+                message(WARNING "Could not determine freetype library path for imported target; relying on existing Freetype::Freetype if available")
+            endif()
         endif()
         
-        # Also fix xml2 target for LibXml2
+        # Ensure libxml2 targets expected by PoDoFo exist
         message(STATUS "DEBUG: LIBXML2_FOUND=${LIBXML2_FOUND}")
-        
-        # Create proper LibXml2::LibXml2 target if it doesn't exist
-        if(NOT TARGET LibXml2::LibXml2)
+
+        # If we found libxml2 but no imported target exists yet, create one using detected paths (avoid hardcoded macOS SDK)
+        if(LIBXML2_FOUND AND NOT TARGET LibXml2::LibXml2)
+            # Determine a concrete library file path for IMPORTED_LOCATION
+            set(_KOLOSAL_XML2_IMPORT "${LIBXML2_LIBRARIES}")
+            if(_KOLOSAL_XML2_IMPORT MATCHES ";")
+                list(GET _KOLOSAL_XML2_IMPORT 0 _KOLOSAL_XML2_IMPORT)
+            endif()
+            # Resolve to a full path if it's still a bare name
+            if(NOT IS_ABSOLUTE "${_KOLOSAL_XML2_IMPORT}" OR NOT EXISTS "${_KOLOSAL_XML2_IMPORT}")
+                if(XML2_LIBRARY_LOCATION AND EXISTS "${XML2_LIBRARY_LOCATION}")
+                    set(_KOLOSAL_XML2_IMPORT "${XML2_LIBRARY_LOCATION}")
+                else()
+                    find_library(_KOLOSAL_XML2_FALLBACK NAMES xml2 libxml2)
+                    if(_KOLOSAL_XML2_FALLBACK)
+                        set(_KOLOSAL_XML2_IMPORT "${_KOLOSAL_XML2_FALLBACK}")
+                    endif()
+                endif()
+            endif()
             add_library(LibXml2::LibXml2 UNKNOWN IMPORTED GLOBAL)
             set_target_properties(LibXml2::LibXml2 PROPERTIES
-                IMPORTED_LOCATION "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib/libxml2.tbd"
+                IMPORTED_LOCATION "${_KOLOSAL_XML2_IMPORT}"
                 INTERFACE_INCLUDE_DIRECTORIES "${LIBXML2_INCLUDE_DIRS}"
             )
-            message(STATUS "DEBUG: Created LibXml2::LibXml2 imported library target")
+            message(STATUS "DEBUG: Created LibXml2::LibXml2 imported library target at ${_KOLOSAL_XML2_IMPORT}")
         endif()
-        
-        # Do NOT create xml2 target as it conflicts with PoDoFo's expectations
-        # PoDoFo should use LibXml2::LibXml2 target instead
+
+        # Some PoDoFo builds still reference a plain 'xml2' target; provide a lightweight bridge
+        if(LIBXML2_FOUND AND NOT TARGET xml2)
+            if(TARGET LibXml2::LibXml2)
+                add_library(xml2 INTERFACE IMPORTED GLOBAL)
+                set_target_properties(xml2 PROPERTIES
+                    INTERFACE_LINK_LIBRARIES LibXml2::LibXml2
+                    INTERFACE_INCLUDE_DIRECTORIES "${LIBXML2_INCLUDE_DIRS}"
+                )
+                message(STATUS "DEBUG: Created interface xml2 target forwarding to LibXml2::LibXml2")
+            else()
+                # Fallback if only raw LIBXML2_LIBRARIES exist
+                set(_KOLOSAL_XML2_IMPORT "${LIBXML2_LIBRARIES}")
+                if(_KOLOSAL_XML2_IMPORT MATCHES ";")
+                    list(GET _KOLOSAL_XML2_IMPORT 0 _KOLOSAL_XML2_IMPORT)
+                endif()
+                if(NOT IS_ABSOLUTE "${_KOLOSAL_XML2_IMPORT}" OR NOT EXISTS "${_KOLOSAL_XML2_IMPORT}")
+                    if(XML2_LIBRARY_LOCATION AND EXISTS "${XML2_LIBRARY_LOCATION}")
+                        set(_KOLOSAL_XML2_IMPORT "${XML2_LIBRARY_LOCATION}")
+                    else()
+                        find_library(_KOLOSAL_XML2_FALLBACK NAMES xml2 libxml2)
+                        if(_KOLOSAL_XML2_FALLBACK)
+                            set(_KOLOSAL_XML2_IMPORT "${_KOLOSAL_XML2_FALLBACK}")
+                        endif()
+                    endif()
+                endif()
+                add_library(xml2 UNKNOWN IMPORTED GLOBAL)
+                set_target_properties(xml2 PROPERTIES
+                    IMPORTED_LOCATION "${_KOLOSAL_XML2_IMPORT}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${LIBXML2_INCLUDE_DIRS}"
+                )
+                message(STATUS "DEBUG: Created imported xml2 target at ${_KOLOSAL_XML2_IMPORT}")
+            endif()
+        endif()
         
         # Check if we have enough dependencies to build PoDoFo
         set(REQUIRED_DEPS_FOUND TRUE)
@@ -971,41 +1146,74 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
         
         # Create imported OpenSSL targets that PoDoFo expects
         # This bypasses the find_package(OpenSSL) call by providing the targets directly
-        if(WIN32 AND NOT TARGET OpenSSL::SSL AND NOT TARGET OpenSSL::Crypto)
-            set(PODOFO_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/extern/deps/3rdparty")
-            if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-                set(PODOFO_LIB_SUBDIR "Win64")
+        if(NOT TARGET OpenSSL::SSL AND NOT TARGET OpenSSL::Crypto)
+            if(WIN32)
+                # Windows: Use bundled OpenSSL from PoDoFo dependencies
+                set(PODOFO_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/extern/deps/3rdparty")
+                if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+                    set(PODOFO_LIB_SUBDIR "Win64")
+                else()
+                    set(PODOFO_LIB_SUBDIR "Win32")
+                endif()
+                
+                set(OPENSSL_INCLUDE_DIR "${PODOFO_DEPS_DIR}/openssl/include")
+                if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+                    set(OPENSSL_SSL_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/ssld.lib")
+                    set(OPENSSL_CRYPTO_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/cryptod.lib")
+                else()
+                    set(OPENSSL_SSL_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/ssl.lib")
+                    set(OPENSSL_CRYPTO_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/crypto.lib")
+                endif()
+                
+                # Create the imported targets that PoDoFo expects
+                add_library(OpenSSL::SSL STATIC IMPORTED GLOBAL)
+                set_target_properties(OpenSSL::SSL PROPERTIES
+                    IMPORTED_LOCATION "${OPENSSL_SSL_LIBRARY}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+                )
+                
+                add_library(OpenSSL::Crypto STATIC IMPORTED GLOBAL)
+                set_target_properties(OpenSSL::Crypto PROPERTIES
+                    IMPORTED_LOCATION "${OPENSSL_CRYPTO_LIBRARY}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+                )
+                
+                # Set the variables that PoDoFo might check
+                set(OPENSSL_FOUND TRUE)
+                set(OPENSSL_LIBRARIES "${OPENSSL_SSL_LIBRARY};${OPENSSL_CRYPTO_LIBRARY}")
+                
+                message(STATUS "Created OpenSSL imported targets for PoDoFo (Windows)")
             else()
-                set(PODOFO_LIB_SUBDIR "Win32")
+                # macOS and Linux: Use system OpenSSL
+                find_package(OpenSSL QUIET)
+                if(OPENSSL_FOUND)
+                    message(STATUS "Found system OpenSSL: ${OPENSSL_LIBRARIES}")
+                    # OpenSSL::SSL and OpenSSL::Crypto targets should be created by find_package
+                    if(NOT TARGET OpenSSL::SSL OR NOT TARGET OpenSSL::Crypto)
+                        # Create targets manually if find_package didn't create them
+                        if(NOT TARGET OpenSSL::SSL)
+                            add_library(OpenSSL::SSL UNKNOWN IMPORTED GLOBAL)
+                            set_target_properties(OpenSSL::SSL PROPERTIES
+                                IMPORTED_LOCATION "${OPENSSL_SSL_LIBRARY}"
+                                INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+                            )
+                        endif()
+                        if(NOT TARGET OpenSSL::Crypto)
+                            add_library(OpenSSL::Crypto UNKNOWN IMPORTED GLOBAL)
+                            set_target_properties(OpenSSL::Crypto PROPERTIES
+                                IMPORTED_LOCATION "${OPENSSL_CRYPTO_LIBRARY}"
+                                INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+                            )
+                        endif()
+                    endif()
+                    message(STATUS "Created OpenSSL imported targets for PoDoFo (Unix)")
+                else()
+                    message(WARNING "OpenSSL not found on system. PoDoFo may not link correctly.")
+                    # Create dummy targets to avoid linking errors
+                    add_library(OpenSSL::SSL INTERFACE IMPORTED GLOBAL)
+                    add_library(OpenSSL::Crypto INTERFACE IMPORTED GLOBAL)
+                endif()
             endif()
-            
-            set(OPENSSL_INCLUDE_DIR "${PODOFO_DEPS_DIR}/openssl/include")
-            if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-                set(OPENSSL_SSL_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/ssld.lib")
-                set(OPENSSL_CRYPTO_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/cryptod.lib")
-            else()
-                set(OPENSSL_SSL_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/ssl.lib")
-                set(OPENSSL_CRYPTO_LIBRARY "${PODOFO_DEPS_DIR}/openssl/lib/${PODOFO_LIB_SUBDIR}/crypto.lib")
-            endif()
-            
-            # Create the imported targets that PoDoFo expects
-            add_library(OpenSSL::SSL STATIC IMPORTED GLOBAL)
-            set_target_properties(OpenSSL::SSL PROPERTIES
-                IMPORTED_LOCATION "${OPENSSL_SSL_LIBRARY}"
-                INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
-            )
-            
-            add_library(OpenSSL::Crypto STATIC IMPORTED GLOBAL)
-            set_target_properties(OpenSSL::Crypto PROPERTIES
-                IMPORTED_LOCATION "${OPENSSL_CRYPTO_LIBRARY}"
-                INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
-            )
-            
-            # Set the variables that PoDoFo might check
-            set(OPENSSL_FOUND TRUE)
-            set(OPENSSL_LIBRARIES "${OPENSSL_SSL_LIBRARY};${OPENSSL_CRYPTO_LIBRARY}")
-            
-            message(STATUS "Created OpenSSL imported targets for PoDoFo")
         endif()
         
         # Temporarily override add_custom_target to ignore uninstall target
@@ -1026,6 +1234,28 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
         
         # Set CMAKE_SKIP_INSTALL_RULES to TRUE for PoDoFo only
         set(CMAKE_SKIP_INSTALL_RULES TRUE)
+
+        # Ensure a 'freetype' target exists before configuring PoDoFo (PoDoFo expects target name freetype when using system libs)
+        if(NOT TARGET freetype)
+            if(FREETYPE_LIBRARIES)
+                # Choose first library if list
+                set(_FT_LIB_IMPORT "${FREETYPE_LIBRARIES}")
+                if(_FT_LIB_IMPORT MATCHES ";")
+                    list(GET FREETYPE_LIBRARIES 0 _FT_LIB_IMPORT)
+                endif()
+                add_library(freetype UNKNOWN IMPORTED GLOBAL)
+                set_target_properties(freetype PROPERTIES
+                    IMPORTED_LOCATION "${_FT_LIB_IMPORT}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
+                )
+                message(STATUS "Pre-PoDoFo: Created imported freetype target at ${_FT_LIB_IMPORT}")
+            elseif(TARGET Freetype::Freetype)
+                add_library(freetype ALIAS Freetype::Freetype)
+                message(STATUS "Pre-PoDoFo: Added alias freetype -> Freetype::Freetype")
+            else()
+                message(WARNING "Pre-PoDoFo: FREETYPE_LIBRARIES not set and Freetype::Freetype target missing; PoDoFo may fail. Install libfreetype6-dev.")
+            endif()
+        endif()
         
         add_subdirectory(external/podofo EXCLUDE_FROM_ALL)
         
@@ -1078,10 +1308,17 @@ if(USE_PODOFO AND REQUIRED_DEPS_FOUND)
             get_target_property(REAL_FREETYPE_LOCATION ${FREETYPE_ALIASED} IMPORTED_LOCATION)
             if(REAL_FREETYPE_LOCATION STREQUAL "freetype" OR NOT REAL_FREETYPE_LOCATION)
                 message(STATUS "Post-PoDoFo: Fixing ${FREETYPE_ALIASED} target with proper library path")
-                set_target_properties(${FREETYPE_ALIASED} PROPERTIES
-                    IMPORTED_LOCATION "/opt/homebrew/lib/libfreetype.dylib"
-                    INTERFACE_LINK_LIBRARIES "/opt/homebrew/lib/libfreetype.dylib"
-                )
+                if(APPLE)
+                    set(_KOLOSAL_FT_LIB "/opt/homebrew/lib/libfreetype.dylib")
+                elseif(FREETYPE_LIBRARIES)
+                    list(GET FREETYPE_LIBRARIES 0 _KOLOSAL_FT_LIB)
+                endif()
+                if(_KOLOSAL_FT_LIB)
+                    set_target_properties(${FREETYPE_ALIASED} PROPERTIES
+                        IMPORTED_LOCATION "${_KOLOSAL_FT_LIB}"
+                        INTERFACE_LINK_LIBRARIES "${_KOLOSAL_FT_LIB}"
+                    )
+                endif()
             endif()
         endif()
     endif()
@@ -1172,28 +1409,50 @@ endif()
 # Add PoDoFo if available and enabled
 if(USE_PODOFO AND TARGET podofo_static)
     list(APPEND KOLOSAL_LINK_LIBRARIES podofo_static)
-    # Add OpenSSL libraries for PoDoFo
-    list(APPEND KOLOSAL_LINK_LIBRARIES OpenSSL::SSL OpenSSL::Crypto)
-    message(STATUS "PoDoFo library will be linked")
-    
-    # Also explicitly link the libxml2 library path to bypass any target resolution issues
-    message(STATUS "DEBUG: XML2_LIBRARY_LOCATION = ${XML2_LIBRARY_LOCATION}")
-    if(XML2_LIBRARY_LOCATION)
-        message(STATUS "DEBUG: XML2_LIBRARY_LOCATION exists, checking file...")
-        if(EXISTS "${XML2_LIBRARY_LOCATION}")
-            list(APPEND KOLOSAL_LINK_LIBRARIES "${XML2_LIBRARY_LOCATION}")
-            message(STATUS "Added direct libxml2 library path to linking: ${XML2_LIBRARY_LOCATION}")
-        else()
-            message(STATUS "DEBUG: XML2_LIBRARY_LOCATION file does not exist: ${XML2_LIBRARY_LOCATION}")
-        endif()
+    # Add OpenSSL libraries for PoDoFo only if targets exist
+    if(TARGET OpenSSL::SSL AND TARGET OpenSSL::Crypto)
+        list(APPEND KOLOSAL_LINK_LIBRARIES OpenSSL::SSL OpenSSL::Crypto)
+        message(STATUS "PoDoFo library will be linked with OpenSSL")
     else()
-        message(STATUS "DEBUG: XML2_LIBRARY_LOCATION is empty or not set")
+        message(WARNING "OpenSSL targets not found, PoDoFo will be linked without OpenSSL")
     endif()
+    message(STATUS "PoDoFo library will be linked")
+        # Link libxml2 via imported target or variable instead of hardcoded path
+        if(LIBXML2_FOUND)
+            if(TARGET LibXml2::LibXml2)
+                list(APPEND KOLOSAL_LINK_LIBRARIES LibXml2::LibXml2)
+                message(STATUS "Linking PoDoFo with LibXml2::LibXml2 target")
+            elseif(LIBXML2_LIBRARIES)
+                list(APPEND KOLOSAL_LINK_LIBRARIES ${LIBXML2_LIBRARIES})
+                message(STATUS "Linking PoDoFo with raw LIBXML2_LIBRARIES: ${LIBXML2_LIBRARIES}")
+            endif()
+        else()
+            message(WARNING "PoDoFo enabled but LibXml2 not detected; build may fail. Install libxml2-dev / libxml2-devel.")
+        endif()
 endif()
 
 # Add cppuprofile if enabled
 if(USE_CPPUPROFILE_GPU)
     list(APPEND KOLOSAL_LINK_LIBRARIES cppuprofile)
+endif()
+
+# Ensure a 'freetype' target exists if PoDoFo (or other components) expect it but only raw library paths were found
+if(USE_PODOFO AND NOT TARGET freetype)
+    if(FREETYPE_LIBRARIES)
+        add_library(freetype UNKNOWN IMPORTED)
+        # If multiple libraries listed, take first for IMPORTED_LOCATION
+        set(_FT_LIB_IMPORT "${FREETYPE_LIBRARIES}")
+        if(FREETYPE_LIBRARIES MATCHES ";")
+            list(GET FREETYPE_LIBRARIES 0 _FT_LIB_IMPORT)
+        endif()
+        set_target_properties(freetype PROPERTIES
+            IMPORTED_LOCATION "${_FT_LIB_IMPORT}"
+            INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
+        )
+        message(STATUS "Created fallback imported 'freetype' target at ${_FT_LIB_IMPORT}")
+    else()
+        message(WARNING "PoDoFo enabled but no FREETYPE_LIBRARIES found and 'freetype' target missing")
+    endif()
 endif()
 
 target_link_libraries(kolosal_server PRIVATE ${KOLOSAL_LINK_LIBRARIES})

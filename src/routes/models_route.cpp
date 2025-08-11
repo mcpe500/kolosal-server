@@ -25,16 +25,6 @@ using json = nlohmann::json;
 
 namespace kolosal
 {
-    // Helper function to get platform-specific default inference engine
-    static std::string getPlatformDefaultInferenceEngine()
-    {
-#ifdef __APPLE__
-        return "llama-metal";
-#else
-        return "llama-cpu";
-#endif
-    }
-
     ModelsRoute::ModelsRoute()
         : modelsPattern_(R"(^/(v1/)?models/?$)")
         , modelIdPattern_(R"(^/(v1/)?models/([^/]+)/?$)")
