@@ -463,6 +463,84 @@ install(TARGETS ${TARGET_NAME}
     ARCHIVE DESTINATION lib
 )
 
+# ---------------------------------------------------------------------------
+# Optional simple smoke test executable for the inference engine
+# Allows running a basic completion without starting the full server.
+# Usage after build:
+#   ./bin/inference_smoketest /path/to/model.gguf "Your prompt here"
+# ---------------------------------------------------------------------------
+option(BUILD_INFERENCE_TESTS "Build simple inference smoke test" ON)
+if(BUILD_INFERENCE_TESTS)
+    add_executable(inference_smoketest tests/test_inference.cpp)
+    target_link_libraries(inference_smoketest PRIVATE ${TARGET_NAME})
+    target_include_directories(inference_smoketest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    set_target_properties(inference_smoketest PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+    )
+    if(APPLE)
+        # Ensure the test can locate the dylib at runtime
+        set_target_properties(inference_smoketest PROPERTIES
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "@executable_path;@executable_path/../lib;@loader_path"
+        )
+    elseif(UNIX)
+        set_target_properties(inference_smoketest PROPERTIES
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../lib"
+        )
+    endif()
+    install(TARGETS inference_smoketest RUNTIME DESTINATION bin)
+
+    # Additional focused test executables
+    set(INFERENCE_TEST_SOURCES
+        tests/test_completion_basic.cpp
+        tests/test_chat.cpp
+        tests/test_session_cache.cpp
+        tests/test_parallel.cpp
+        tests/test_embedding.cpp
+        tests/test_invalid_and_cancel.cpp
+    )
+
+    foreach(test_src ${INFERENCE_TEST_SOURCES})
+        get_filename_component(test_name ${test_src} NAME_WE)
+        add_executable(${test_name} ${test_src} tests/test_common.h)
+        target_link_libraries(${test_name} PRIVATE ${TARGET_NAME})
+        target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        set_target_properties(${test_name} PROPERTIES
+            CXX_STANDARD 17
+            CXX_STANDARD_REQUIRED ON
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+        )
+        if(APPLE)
+            set_target_properties(${test_name} PROPERTIES
+                BUILD_WITH_INSTALL_RPATH TRUE
+                INSTALL_RPATH "@executable_path;@executable_path/../lib;@loader_path"
+            )
+        elseif(UNIX)
+            set_target_properties(${test_name} PROPERTIES
+                BUILD_WITH_INSTALL_RPATH TRUE
+                INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../lib"
+            )
+        endif()
+        install(TARGETS ${test_name} RUNTIME DESTINATION bin)
+    endforeach()
+
+    # Convenience aggregate target to build all inference test executables at once
+    add_custom_target(inference_tests
+        DEPENDS
+            inference_smoketest
+            test_completion_basic
+            test_chat
+            test_session_cache
+            test_parallel
+            test_embedding
+            test_invalid_and_cancel
+    )
+endif()
+
 # Install header files
 install(DIRECTORY include/
     DESTINATION include
