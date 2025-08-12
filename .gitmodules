@@ -11,5 +11,5 @@
 	path = external/podofo
 	url = https://github.com/podofo/podofo
 [submodule "external/llama.cpp"]
-	path = external/llama.cpp
+	path = inference/external/llama.cpp
 	url = https://github.com/ggerganov/llama.cpp.git

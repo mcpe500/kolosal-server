@@ -97,10 +97,18 @@ target_include_directories(${TARGET_NAME} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# Find and setup llama.cpp
-set(LLAMA_CPP_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../external/llama.cpp")
+# Find and setup llama.cpp (moved under inference/external)
+# Primary (new) location: inference/external/llama.cpp
+# Fallback (legacy) location: ../external/llama.cpp (for out-of-tree or un-migrated workspaces)
+set(LLAMA_CPP_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp")
 if(NOT EXISTS "${LLAMA_CPP_PATH}/CMakeLists.txt")
-    message(FATAL_ERROR "llama.cpp not found at ${LLAMA_CPP_PATH}. Please clone it or adjust LLAMA_CPP_PATH.")
+    set(LLAMA_CPP_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../external/llama.cpp")
+    if(EXISTS "${LLAMA_CPP_PATH}/CMakeLists.txt")
+        message(WARNING "Using legacy llama.cpp path: ${LLAMA_CPP_PATH}. Consider moving it to inference/external/llama.cpp")
+    endif()
+endif()
+if(NOT EXISTS "${LLAMA_CPP_PATH}/CMakeLists.txt")
+    message(FATAL_ERROR "llama.cpp not found. Expected at inference/external/llama.cpp or external/llama.cpp relative to inference.")
 endif()
 
 # Find CURL

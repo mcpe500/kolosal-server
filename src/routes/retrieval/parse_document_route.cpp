@@ -14,8 +14,7 @@
 #include <iomanip>
 #include <mutex>
 
-// Use the existing base64 utility from llama.cpp
-#include "../../external/llama.cpp/common/base64.hpp"
+#include "base64.hpp"
 
 using json = nlohmann::json;
 
