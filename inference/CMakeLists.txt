@@ -95,7 +95,6 @@ target_compile_definitions(${TARGET_NAME} PRIVATE INFERENCE_EXPORTS)
 # Include directories
 target_include_directories(${TARGET_NAME} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../external/nlohmann
 )
 
 # Find and setup llama.cpp
@@ -131,7 +130,6 @@ set(LLAMA_BUILD_SERVER    OFF CACHE BOOL "Disable llama.cpp server"             
 set(LLAMA_BUILD_COMMON    ON  CACHE BOOL "Enable  llama.cpp common"             FORCE)
 set(LLAMA_ALL_WARNINGS    OFF CACHE BOOL "Disable warnings in llama.cpp"        FORCE)
 set(LLAMA_CURL            ON  CACHE BOOL "Enable curl in llama.cpp"             FORCE)
-set(LLAMA_TOOLCALL        ON  CACHE BOOL "Enable llama.cpp toolcall"            FORCE)
 set(BUILD_SHARED_LIBS     OFF CACHE BOOL "Build llama.cpp as a static lib"      FORCE)
 set(GGML_STATIC_LINK      ON  CACHE BOOL "Static link ggml libraries"           FORCE)
 set(GGML_STATIC           ON  CACHE BOOL "Static link ggml libraries"           FORCE)
@@ -280,7 +278,8 @@ if(CMAKE_POSITION_INDEPENDENT_CODE)
 endif()
 
 # Link llama.cpp libraries
-set(LLAMA_LINK_LIBRARIES llama common ggml toolcall)
+# Link only the required llama.cpp libraries (toolcall disabled)
+set(LLAMA_LINK_LIBRARIES llama common ggml)
 target_link_libraries(${TARGET_NAME} PRIVATE ${LLAMA_LINK_LIBRARIES})
 
 # Link CURL libraries and include directories

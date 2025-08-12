@@ -20,11 +20,10 @@
 #include "llama.h"
 #include "common.h"
 #include "sampling.h"
-#include "json-schema-to-grammar.h"
 #include "inference.h"
 #include "chat.h"
-#include "json.hpp"
-#include "toolcall-client.h"
+// Removed direct json.hpp include (conflicts with bundled llama json)
+// Removed toolcall-client & json-schema grammar features (deprecated / conflict)
 
 class ThreadPool
 {
@@ -287,7 +286,7 @@ namespace
 		std::vector<int32_t> tokenize(const std::string &text, bool add_bos = true);
 		std::string detokenize(const std::vector<int32_t> &tokens);
 		std::string decode(const int32_t &token);
-		std::string applyTemplate(std::vector<common_chat_msg> &messages, toolcall::client::ptr tc_client = nullptr);
+		std::string applyTemplate(std::vector<common_chat_msg> &messages);
 
 		const llama_vocab *getVocab() const { return vocab; }
 		llama_model *getModel() const { return tokenizer_model; }
@@ -311,7 +310,7 @@ namespace
 		std::cout << "[INFERENCE] Initializing Tokenizer with shared model and context." << std::endl;
 #endif
 		vocab = llama_model_get_vocab(tokenizer_model);
-		add_bos = llama_add_bos_token(vocab);
+		add_bos = llama_vocab_get_add_bos(vocab);
 
 		// Only initialize chat templates for LLM models, not embedding models
 		if (!isEmbeddingModel)
@@ -362,7 +361,7 @@ namespace
 		return common_token_to_piece(tokenizer_context, token);
 	}
 
-	std::string Tokenizer::applyTemplate(std::vector<common_chat_msg> &messages, toolcall::client::ptr tc_client)
+	std::string Tokenizer::applyTemplate(std::vector<common_chat_msg> &messages)
 	{
 		// If chat_templates is null (for embedding models), return empty string
 		if (!chat_templates)
@@ -372,13 +371,6 @@ namespace
 
 		common_chat_templates_inputs inputs;
 		inputs.messages = messages;
-
-		if (tc_client)
-		{
-			inputs.tool_choice = common_chat_tool_choice_parse_oaicompat(tc_client->tool_choice());
-			inputs.tools = common_chat_tools_parse_oaicompat(tc_client->tool_list());
-		}
-
 		return common_chat_templates_apply(chat_templates.get(), inputs).prompt;
 	}
 
@@ -400,8 +392,8 @@ namespace
 	public:
 		LlamaInferenceService(std::shared_ptr<Tokenizer> tokenizer, llama_model *model, llama_context *context,
 							  common_params params, ggml_threadpool *threadpool)
-			: tokenizer(std::move(tokenizer)), model(model), context(context), g_params(params), threadpool(threadpool),
-			  n_batch(params.n_batch), n_keep(params.n_keep), n_ctx(llama_n_ctx(context)), tc_client(nullptr)
+				: tokenizer(std::move(tokenizer)), model(model), context(context), g_params(params), threadpool(threadpool),
+				  n_batch(params.n_batch), n_keep(params.n_keep), n_ctx(llama_n_ctx(context))
 		{
 #ifdef DEBUG
 			std::cout << "Initializing batch with size of: " << g_params.n_batch << std::endl;
@@ -459,15 +451,15 @@ namespace
 
 				// Cleanup llama resources in proper order
 				try {
-					if (context) {
-						llama_free(context);
-						context = nullptr;
-					}
+						if (context) {
+							llama_free(context);
+							context = nullptr;
+						}
 				} catch (...) {}
 				
 				try {
 					if (model) {
-						llama_free_model(model);
+						llama_model_free(model);
 						model = nullptr;
 					}
 				} catch (...) {}
@@ -537,10 +529,8 @@ namespace
 							common_sampler_free(job->smpl);
 							job->smpl = nullptr;
 						}
-						if (!should_terminate && context)
-						{
+						if (!should_terminate && context) {
 							llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-							llama_kv_self_update(context);
 						}
 						job->isFinished = true;
 						job->cv.notify_all();
@@ -554,10 +544,8 @@ namespace
 							common_sampler_free(job->smpl);
 							job->smpl = nullptr;
 						}
-						if (!should_terminate && context)
-						{
+						if (!should_terminate && context) {
 							llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-							llama_kv_self_update(context);
 						}
 						job->hasError = true;
 						job->isFinished = true;
@@ -581,10 +569,8 @@ namespace
 								common_sampler_free(job->smpl);
 								job->smpl = nullptr;
 							}
-							if (!should_terminate && context)
-							{
+							if (!should_terminate && context) {
 								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-								llama_kv_self_update(context);
 							}
 							job->isFinished = true;
 							job->cv.notify_all();
@@ -603,10 +589,8 @@ namespace
 								common_sampler_free(job->smpl);
 								job->smpl = nullptr;
 							}
-							if (!should_terminate && context)
-							{
+							if (!should_terminate && context) {
 								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-								llama_kv_self_update(context);
 							}
 							job->hasError = true;
 							job->isFinished = true;
@@ -622,11 +606,9 @@ namespace
 								common_sampler_free(job->smpl);
 								job->smpl = nullptr;
 							}
-							if (!should_terminate && context)
-							{
-								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-								llama_kv_self_update(context);
-							}
+								if (!should_terminate && context) {
+									llama_kv_self_seq_rm(context, job->seqId, -1, -1);
+								}
 							job->hasError = true;
 							job->isFinished = true;
 							job->errorMessage = "Failed to tokenize input";
@@ -641,11 +623,9 @@ namespace
 								common_sampler_free(job->smpl);
 								job->smpl = nullptr;
 							}
-							if (!should_terminate && context)
-							{
-								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-								llama_kv_self_update(context);
-							}
+								if (!should_terminate && context) {
+									llama_kv_self_seq_rm(context, job->seqId, -1, -1);
+								}
 							job->hasError = true;
 							job->isFinished = true;
 							job->errorMessage = "Failed to ensure input content";
@@ -703,11 +683,9 @@ namespace
 								common_sampler_free(job->smpl);
 								job->smpl = nullptr;
 							}
-							if (!should_terminate && context)
-							{
-								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-								llama_kv_self_update(context);
-							}
+								if (!should_terminate && context) {
+									llama_kv_self_seq_rm(context, job->seqId, -1, -1);
+								}
 							job->hasError = true;
 							job->isFinished = true;
 							job->errorMessage = "Context overflow even after trimming.";
@@ -847,47 +825,15 @@ namespace
 
 		CompletionParameters formatChat(const ChatCompletionParameters &params) override
 		{
-			if (!params.isValid())
-			{
+			if (!params.isValid()) {
 				throw std::runtime_error("[INFERENCE] [CHATCOMPLETE] [ERROR] Invalid chat completion parameters\n");
 			}
-
-			// Format the chat messages into a single prompt
 			std::vector<common_chat_msg> messages;
-			for (const auto &msg : params.messages)
-			{
+			messages.reserve(params.messages.size());
+			for (const auto &msg : params.messages) {
 				messages.push_back(common_chat_msg{msg.role, msg.content});
 			}
-
-			std::string formatted;
-
-			if (!params.tools.empty())
-			{
-				if (!tc_client || (tc_client && params.tools.compare(tc_client->tool_list()) != 0))
-				{
-#ifdef DEBUG
-					std::cout << "[INFERENCE] initializing tool call client" << std::endl;
-					if (tc_client)
-						std::cout << "[INFERENCE] current tools: " << tc_client->tool_list() << std::endl;
-					std::cout << "[INFERENCE] new tools: " << params.tools << std::endl;
-#endif
-					toolcall::params tc_params(params.tools, params.toolChoice);
-					tc_client = toolcall::create_client(tc_params);
-					if (!tc_client)
-					{
-						throw std::runtime_error("[INFERENCE] [CHATCOMPLETE] [ERROR] Failed to create tool call client\n");
-					}
-
-					tc_client->initialize();
-				}
-
-				formatted = tokenizer->applyTemplate(messages, tc_client);
-			}
-			else
-			{
-				formatted = tokenizer->applyTemplate(messages);
-			}
-
+			std::string formatted = tokenizer->applyTemplate(messages);
 			CompletionParameters completionParams{
 				formatted.c_str(),
 				params.randomSeed,
@@ -899,9 +845,7 @@ namespace
 				params.jsonSchema,
 				params.streaming,
 				params.kvCacheFilePath,
-				params.seqId
-			};
-
+				params.seqId};
 			return completionParams;
 		}
 
@@ -916,8 +860,7 @@ namespace
 		llama_batch batch;
 		std::vector<std::shared_ptr<Job>> jobs;
 		std::atomic<bool> should_terminate{false};
-		toolcall::client::ptr tc_client;
-		std::thread inferenceThread;
+		std::thread inferenceThread; // removed toolcall client
 
 		const int n_batch;
 		const int n_keep;
@@ -939,8 +882,8 @@ namespace
 			try
 			{
 				// Tokenize input with proper parameters for embedding models
-				std::vector<llama_token> tokens = common_tokenize(context, input,
-																  llama_add_bos_token(llama_model_get_vocab(model)), false);
+				bool add_bos_tok = llama_vocab_get_add_bos(llama_model_get_vocab(model));
+				std::vector<llama_token> tokens = common_tokenize(context, input, add_bos_tok, false);
 
 				if (tokens.empty())
 				{
@@ -969,7 +912,7 @@ namespace
 				}
 
 				// Clear the KV cache for clean embedding generation
-				llama_kv_cache_clear(context);
+				llama_kv_self_clear(context);
 
 				// Create batch for embedding generation
 				llama_batch local_batch = llama_batch_init(tokens.size(), 0, 1);
@@ -1192,23 +1135,8 @@ namespace
 			// sparams.top_k = params.topK;
 			sparams.no_perf = false;
 			
-			// Handle JSON schema conversion to grammar
-			if (!params.jsonSchema.empty()) {
-				try {
-					// Parse the JSON schema string
-					nlohmann::ordered_json schema = nlohmann::ordered_json::parse(params.jsonSchema);
-					// Convert to grammar using llama.cpp's converter
-					sparams.grammar = json_schema_to_grammar(schema);
-				} catch (const std::exception& e) {
-					std::lock_guard<std::mutex> jobLock(job->mtx);
-					job->hasError = true;
-					job->errorMessage = "Invalid JSON schema: " + std::string(e.what());
-					job->cv.notify_all();
-					return nullptr;
-				}
-			}
-			// Set grammar if provided directly (overrides JSON schema if both are provided)
-			else if (!params.grammar.empty()) {
+			// JSON schema to grammar removed (feature disabled)
+			if (!params.grammar.empty()) {
 				sparams.grammar = params.grammar;
 			}
 
@@ -1561,7 +1489,7 @@ namespace
 
 				// Remove any "future" tokens that donât match
 				// i.e. we only keep the portion that matched
-				llama_kv_self_seq_rm(context, job->seqId, n_matching_session_tokens, -1 /*up to end*/);
+						llama_kv_self_seq_rm(context, job->seqId, n_matching_session_tokens, -1 /*up to end*/);
 				job->session_tokens.resize(n_matching_session_tokens);
 
 #ifdef DEBUG
@@ -1668,7 +1596,7 @@ namespace
 				
 				try {
 					if (model) {
-						llama_free_model(model);
+						llama_model_free(model);
 						model = nullptr;
 					}
 				} catch (...) {}
@@ -1829,7 +1757,7 @@ namespace
 		{
 			// Clear batch and KV cache
 			common_batch_clear(batch);
-			llama_kv_cache_clear(context);
+			llama_kv_self_clear(context);
 
 			// Set up context for embedding generation
 			llama_set_embeddings(context, true);
@@ -1854,8 +1782,8 @@ namespace
 					}
 
 					// Tokenize input
-					std::vector<llama_token> tokens = common_tokenize(context, input,
-																	  llama_add_bos_token(llama_model_get_vocab(model)), false);
+					bool add_bos_tok = llama_vocab_get_add_bos(llama_model_get_vocab(model));
+					std::vector<llama_token> tokens = common_tokenize(context, input, add_bos_tok, false);
 
 					if (tokens.empty())
 					{
@@ -2177,7 +2105,7 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 	{
 		ggml_threadpool_free(threadpool);
 		llama_free(ctx);
-		llama_free_model(model);
+					llama_model_free(model);
 		throw std::runtime_error("[INFERENCE] [ERROR] Failed to create tokenizer.");
 	}
 	// Create the inference service
@@ -2197,8 +2125,8 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 	catch (const std::exception &e)
 	{
 		ggml_threadpool_free(threadpool);
-		llama_free(ctx);
-		llama_free_model(model);
+				llama_free(ctx);
+		llama_model_free(model);
 		throw std::runtime_error("[INFERENCE] [ERROR] Failed to create inference service: " + std::string(e.what()));
 	}
 }
