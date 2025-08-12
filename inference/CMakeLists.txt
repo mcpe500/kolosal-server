@@ -502,6 +502,7 @@ if(BUILD_INFERENCE_TESTS)
         tests/test_parallel.cpp
         tests/test_embedding.cpp
         tests/test_invalid_and_cancel.cpp
+    tests/test_json_grammar.cpp
     )
 
     foreach(test_src ${INFERENCE_TEST_SOURCES})
@@ -538,6 +539,7 @@ if(BUILD_INFERENCE_TESTS)
             test_parallel
             test_embedding
             test_invalid_and_cancel
+            test_json_grammar
     )
 endif()
 

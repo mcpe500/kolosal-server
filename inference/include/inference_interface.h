@@ -101,6 +101,7 @@ struct CompletionParameters {
     
     // JSON Schema (optional JSON schema that will be converted to grammar)
     std::string jsonSchema      = "";
+    // NOTE: If both grammar and jsonSchema are provided, grammar takes precedence
     
     // Behavior settings
     bool        streaming       = false;
@@ -147,6 +148,7 @@ struct ChatCompletionParameters {
     
     // JSON Schema (optional JSON schema that will be converted to grammar)
     std::string jsonSchema      = "";
+    // NOTE: If both grammar and jsonSchema are provided, grammar takes precedence
     
     // Behavior settings
     bool        streaming       = false;

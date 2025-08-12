@@ -23,6 +23,9 @@
 #include "sampling.h"
 #include "inference.h"
 #include "chat.h"
+// Grammar / JSON schema support
+#include "json-schema-to-grammar.h"
+#include <nlohmann/json.hpp>
 
 class ThreadPool
 {
@@ -1160,9 +1163,37 @@ public:
 			// sparams.top_k = params.topK;
 			sparams.no_perf = false;
 			
-			// JSON schema to grammar removed (feature disabled)
-			if (!params.grammar.empty()) {
-				sparams.grammar = params.grammar;
+			// Grammar sampling support:
+			// 1. If explicit grammar provided in params.grammar, use it.
+			// 2. Else if jsonSchema provided, convert JSON schema to grammar via json_schema_to_grammar.
+			// 3. If conversion fails, record job error.
+			try {
+				if (!params.grammar.empty()) {
+					// Direct grammar takes precedence over jsonSchema
+					sparams.grammar = params.grammar;
+				} else if (!params.jsonSchema.empty()) {
+					// Parse JSON schema and convert
+					// Use ordered_json to preserve key order when relevant
+					nlohmann::ordered_json schema_json = nlohmann::ordered_json::parse(params.jsonSchema);
+					std::string grammar = json_schema_to_grammar(schema_json);
+					if (!grammar.empty()) {
+						// Assign generated grammar
+						sparams.grammar = grammar;
+					} else {
+						// Empty grammar means unsupported schema or conversion issue
+						std::lock_guard<std::mutex> jobLock(job->mtx);
+						job->hasError = true;
+						job->errorMessage = "Failed to generate grammar from JSON schema (empty result)";
+						job->cv.notify_all();
+						return nullptr;
+					}
+				}
+			} catch (const std::exception &ex) {
+				std::lock_guard<std::mutex> jobLock(job->mtx);
+				job->hasError = true;
+				job->errorMessage = std::string("JSON schema to grammar error: ") + ex.what();
+				job->cv.notify_all();
+				return nullptr;
 			}
 
 			common_sampler *sampler = common_sampler_init(model, sparams);
