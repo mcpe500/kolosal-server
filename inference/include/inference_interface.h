@@ -196,6 +196,8 @@ struct LoadingParameters {
     
     // Hardware acceleration
     int  n_gpu_layers       = 100;     // Number of GPU layers
+    int  split_mode         = 1;       // llama_split_mode (0=none,1=layer,2=row)
+    std::vector<float> tensor_split;   // Optional explicit tensor split fractions (size <= 128)
     
     // Batch processing
     int  n_batch            = 2048;    // Batch size
@@ -219,7 +221,6 @@ struct LoadingParameters {
 class INFERENCE_API IInferenceEngine {
 public:
     /**
-         /**
      * @brief Virtual destructor for proper cleanup.
      */
     virtual ~IInferenceEngine() = default;

@@ -40,8 +40,10 @@ public:
         bool warmup = false;
         int n_parallel = 1;
         int n_gpu_layers = 100;
+        int split_mode = 1; // 0=none,1=layer,2=row
         int n_batch = 2048;
         int n_ubatch = 512;
+        std::vector<float> tensor_split; // optional fractions summing to <=1.0
         
         nlohmann::json to_json() const {
             return nlohmann::json {
@@ -53,8 +55,10 @@ public:
                 {"warmup", warmup},
                 {"n_parallel", n_parallel},
                 {"n_gpu_layers", n_gpu_layers},
+                {"split_mode", split_mode},
                 {"n_batch", n_batch},
-                {"n_ubatch", n_ubatch}
+                {"n_ubatch", n_ubatch},
+                {"tensor_split", tensor_split}
             };
         }
         
@@ -128,6 +132,29 @@ public:
                 }
                 n_ubatch = j["n_ubatch"].get<int>();
             }
+
+            if (j.contains("split_mode") && !j["split_mode"].is_null()) {
+                if (!j["split_mode"].is_number_integer()) {
+                    throw std::runtime_error("split_mode must be an integer");
+                }
+                split_mode = j["split_mode"].get<int>();
+            }
+
+            if (j.contains("tensor_split") && !j["tensor_split"].is_null()) {
+                if (!j["tensor_split"].is_array()) {
+                    throw std::runtime_error("tensor_split must be an array of numbers");
+                }
+                tensor_split.clear();
+                for (auto &v : j["tensor_split"]) {
+                    if (!v.is_number()) {
+                        throw std::runtime_error("tensor_split elements must be numbers");
+                    }
+                    tensor_split.push_back(v.get<float>());
+                    if (tensor_split.size() > 128) {
+                        throw std::runtime_error("tensor_split size > 128");
+                    }
+                }
+            }
         }
     } loading_parameters;
 
@@ -162,6 +189,18 @@ public:
         }
 
         if (loading_parameters.n_gpu_layers < 0 || loading_parameters.n_gpu_layers > 1000) {
+            return false;
+        }
+
+        if (loading_parameters.split_mode < 0 || loading_parameters.split_mode > 2) {
+            return false;
+        }
+
+        if (loading_parameters.tensor_split.size() > 128) {
+            return false;
+        }
+        double sum = 0.0; for (auto f: loading_parameters.tensor_split) { if (f < 0.0f) return false; sum += f; }
+        if (sum > 1.01) { // allow small float error
             return false;
         }
 

@@ -2176,6 +2176,7 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 	params.n_parallel = lParams.n_parallel;
 	params.n_batch = lParams.n_batch;
 	params.n_ubatch = lParams.n_ubatch;
+	params.split_mode = (llama_split_mode) lParams.split_mode;
 	params.webui = false;
 	params.single_turn = true;
 	params.compute_ppl = false;
@@ -2201,6 +2202,13 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 	std::cout << "[INFERENCE] Using CUDA or Vulkan" << std::endl;
 
 	params.n_gpu_layers = lParams.n_gpu_layers;
+	params.main_gpu = mainGpuId >= 0 ? mainGpuId : 0;
+	if (!lParams.tensor_split.empty()) {
+		// Copy fractions into tensor_split array (up to 128)
+		for (size_t i = 0; i < lParams.tensor_split.size() && i < 128; ++i) {
+			params.tensor_split[i] = lParams.tensor_split[i];
+		}
+	}
 #endif
 
 #ifdef DEBUG
