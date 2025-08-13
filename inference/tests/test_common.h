@@ -18,6 +18,6 @@ inline bool wait_for_completion(InferenceEngine &engine, int jobId, int timeout_
 }
 
 inline bool load_test_model(InferenceEngine &engine, const char *modelPath, int n_parallel = 1) {
-    LoadingParameters lp; lp.n_ctx = 1024; lp.n_keep = 512; lp.n_parallel = n_parallel; lp.n_batch = 256; lp.n_ubatch = 64; lp.n_gpu_layers = 0;
+    LoadingParameters lp; lp.n_ctx = 1024; lp.n_keep = 512; lp.n_parallel = n_parallel; lp.n_batch = 256; lp.n_ubatch = 64; lp.n_gpu_layers = 100;
     return engine.loadModel(modelPath, lp);
 }
