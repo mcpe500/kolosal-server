@@ -23,9 +23,8 @@
 #include "sampling.h"
 #include "inference.h"
 #include "chat.h"
-// Grammar / JSON schema support
-#include "json-schema-to-grammar.h"
 #include <nlohmann/json.hpp>
+#include "json-schema-to-grammar.h"
 
 class ThreadPool
 {
@@ -1162,36 +1161,45 @@ public:
 			sparams.seed = params.randomSeed;
 			// sparams.top_k = params.topK;
 			sparams.no_perf = false;
-			
-			// Grammar sampling support:
-			// 1. If explicit grammar provided in params.grammar, use it.
-			// 2. Else if jsonSchema provided, convert JSON schema to grammar via json_schema_to_grammar.
-			// 3. If conversion fails, record job error.
+
+			// If a JSON schema is provided and explicit grammar absent, convert schema to grammar
 			try {
-				if (!params.grammar.empty()) {
-					// Direct grammar takes precedence over jsonSchema
+				if (!params.jsonSchema.empty() && params.grammar.empty()) {
+					nlohmann::ordered_json schema = nlohmann::ordered_json::parse(params.jsonSchema);
+					sparams.grammar = json_schema_to_grammar(schema, /*force_gbnf=*/true);
+#ifdef DEBUG
+					std::cout << "[INFERENCE] Converted JSON schema to grammar, length=" << sparams.grammar.size() << std::endl;
+#endif
+				} else if (!params.grammar.empty()) {
+					// Direct grammar provided
+					// Normalize angle bracket non-terminals (<digit>) -> digit for llama.cpp parser
 					sparams.grammar = params.grammar;
-				} else if (!params.jsonSchema.empty()) {
-					// Parse JSON schema and convert
-					// Use ordered_json to preserve key order when relevant
-					nlohmann::ordered_json schema_json = nlohmann::ordered_json::parse(params.jsonSchema);
-					std::string grammar = json_schema_to_grammar(schema_json);
-					if (!grammar.empty()) {
-						// Assign generated grammar
-						sparams.grammar = grammar;
-					} else {
-						// Empty grammar means unsupported schema or conversion issue
-						std::lock_guard<std::mutex> jobLock(job->mtx);
-						job->hasError = true;
-						job->errorMessage = "Failed to generate grammar from JSON schema (empty result)";
-						job->cv.notify_all();
-						return nullptr;
+					bool modified = false;
+					std::string normalized; normalized.reserve(sparams.grammar.size());
+					for (size_t i=0;i<sparams.grammar.size();++i){
+						if (sparams.grammar[i]=='<' ) {
+							size_t j=i+1; while (j<sparams.grammar.size() && std::isalnum(static_cast<unsigned char>(sparams.grammar[j])) || sparams.grammar[j]=='_' ) j++; // name chars
+							if (j<sparams.grammar.size() && sparams.grammar[j]=='>') { // pattern <name>
+								modified = true;
+								normalized.append(sparams.grammar.substr(i+1, j-(i+1)));
+								i = j; // skip '>' consumed by loop increment
+								continue;
+							}
+						}
+						normalized.push_back(sparams.grammar[i]);
+					}
+					if (modified) {
+#ifdef DEBUG
+						std::cout << "[INFERENCE] Normalized angle-bracket grammar syntax." << std::endl;
+#endif
+						sparams.grammar.swap(normalized);
 					}
 				}
-			} catch (const std::exception &ex) {
+			} catch (const std::exception &e) {
 				std::lock_guard<std::mutex> jobLock(job->mtx);
 				job->hasError = true;
-				job->errorMessage = std::string("JSON schema to grammar error: ") + ex.what();
+				job->errorMessage = std::string("Failed to process grammar/json schema: ") + e.what();
+				job->isFinished = true; // ensure waiters unblock
 				job->cv.notify_all();
 				return nullptr;
 			}
@@ -1202,6 +1210,7 @@ public:
 				std::lock_guard<std::mutex> jobLock(job->mtx);
 				job->hasError = true;
 				job->errorMessage = "Could not initialize sampler";
+				job->isFinished = true; // unblock waiters on failure
 				job->cv.notify_all();
 				return nullptr;
 			}

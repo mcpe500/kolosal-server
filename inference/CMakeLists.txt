@@ -95,6 +95,7 @@ target_compile_definitions(${TARGET_NAME} PRIVATE INFERENCE_EXPORTS)
 # Include directories
 target_include_directories(${TARGET_NAME} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/external
 )
 
 # Find and setup llama.cpp (moved under inference/external)
@@ -324,6 +325,7 @@ target_include_directories(${TARGET_NAME} PUBLIC
     ${LLAMA_CPP_PATH}/include
     ${LLAMA_CPP_PATH}/common
     ${LLAMA_CPP_PATH}/ggml/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/external
 )
 
 # Find and link thread library
@@ -502,7 +504,8 @@ if(BUILD_INFERENCE_TESTS)
         tests/test_parallel.cpp
         tests/test_embedding.cpp
         tests/test_invalid_and_cancel.cpp
-    tests/test_json_grammar.cpp
+    tests/test_grammar.cpp
+    tests/test_json_schema.cpp
     )
 
     foreach(test_src ${INFERENCE_TEST_SOURCES})
@@ -539,7 +542,6 @@ if(BUILD_INFERENCE_TESTS)
             test_parallel
             test_embedding
             test_invalid_and_cancel
-            test_json_grammar
     )
 endif()
 
