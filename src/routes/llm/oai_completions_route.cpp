@@ -310,6 +310,7 @@ namespace kolosal
                 // Poll for results and stream them
                 bool jobComplete = false;
                 std::string allText;
+                size_t lastTokenCount = 0;
 
                 while (!jobComplete)
                 {
@@ -341,6 +342,7 @@ namespace kolosal
                         send(sock, chunkData.c_str(), static_cast<int>(chunkData.length()), 0);
                         
                         allText = result.text;
+                        lastTokenCount = result.tokens.size();
                     }
 
                     if (engine->isJobFinished(jobId))
@@ -414,6 +416,9 @@ namespace kolosal
                 choice.finish_reason = "stop";
 
                 response.choices.push_back(choice);
+
+                // Compute usage from actual token counts
+                updateChatUsageStats(response, result, result.prompt_token_count);
 
                 // Send response
                 json jResponse = response.to_json();
@@ -522,6 +527,7 @@ namespace kolosal
                 // Poll for results and stream them
                 bool jobComplete = false;
                 std::string allText;
+                size_t lastTokenCount = 0;
 
                 while (!jobComplete)
                 {
@@ -553,6 +559,7 @@ namespace kolosal
                         send(sock, chunkData.c_str(), static_cast<int>(chunkData.length()), 0);
                         
                         allText = result.text;
+                        lastTokenCount = result.tokens.size();
                     }
 
                     if (engine->isJobFinished(jobId))
@@ -625,6 +632,9 @@ namespace kolosal
                 choice.finish_reason = "stop";
 
                 response.choices.push_back(choice);
+
+                // Compute usage from actual token counts
+                updateCompletionUsageStats(response, result, result.prompt_token_count);
 
                 // Send response
                 json jResponse = response.to_json();

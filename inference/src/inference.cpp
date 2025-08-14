@@ -2469,6 +2469,7 @@ CompletionResult InferenceEngine::Impl::getJobResult(int job_id)
 	result.text = job->generatedText;
 	result.tps = job->tps;
 	result.ttft = job->ttft;
+	result.prompt_token_count = job->n_prompt;
 	return result;
 }
 

@@ -362,7 +362,9 @@ namespace kolosal
 			inet_ntop(client_addr.ss_family,
 					  client_addr.ss_family == AF_INET ? (void *)&(((struct sockaddr_in *)&client_addr)->sin_addr) : (void *)&(((struct sockaddr_in6 *)&client_addr)->sin6_addr),
 					  clientIP, sizeof(clientIP));
-#endif			ServerLogger::logDebug("New client connection from %s", clientIP);			// Spawn a thread to handle this client
+#endif
+			ServerLogger::logDebug("New client connection from %s", clientIP);
+			// Spawn a thread to handle this client
 			std::thread([this, client_sock, clientIP]()
 						{
 							ServerLogger::logDebug("[Thread %d] Processing request from %s",

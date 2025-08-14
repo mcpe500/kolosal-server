@@ -241,6 +241,9 @@ namespace kolosal
             response["text"] = result.text;
             response["tps"] = result.tps;
             response["ttft"] = result.ttft;
+            response["prompt_tokens"] = result.prompt_token_count;
+            response["completion_tokens"] = static_cast<int>(result.tokens.size());
+            response["total_tokens"] = response["prompt_tokens"].get<int>() + response["completion_tokens"].get<int>();
             
             return response;
         }
@@ -361,6 +364,7 @@ namespace kolosal
 
                 bool firstTokenRecorded = false;
                 std::string previousText = "";
+                size_t lastTokenCount = 0;
 
                 // Poll for results until job is finished
                 while (!engine->isJobFinished(jobId))
@@ -398,22 +402,17 @@ namespace kolosal
 
                         std::string newContent = result.text.substr(previousText.length());
 
-                        // Record output tokens (approximate by character count)
-                        int newTokens = static_cast<int>(newContent.length() / 4); // Rough approximation
-                        for (int i = 0; i < newTokens; ++i)
-                        {
-                        }
-
                         // Create partial result for streaming
                         CompletionResult partialResult;
                         partialResult.text = newContent;
                         partialResult.tps = result.tps;
                         partialResult.ttft = result.ttft;
-                        // Only include new tokens since last update
-                        if (result.tokens.size() > static_cast<size_t>(previousText.length() / 4)) {
-                            auto startIt = result.tokens.begin() + static_cast<int>(previousText.length() / 4);
+                        // Only include new tokens since last update based on token vector growth
+                        if (result.tokens.size() > lastTokenCount) {
+                            auto startIt = result.tokens.begin() + static_cast<long>(lastTokenCount);
                             partialResult.tokens.assign(startIt, result.tokens.end());
                         }
+                        partialResult.prompt_token_count = result.prompt_token_count;
 
                         json streamResponse = completionResultToJson(partialResult);
                         streamResponse["partial"] = true;
@@ -423,6 +422,7 @@ namespace kolosal
                         send_stream_chunk(sock, StreamChunk(sseData, false));
 
                         previousText = result.text;
+                        lastTokenCount = result.tokens.size();
                     }
 
                     // Brief sleep to avoid busy waiting
@@ -471,16 +471,6 @@ namespace kolosal
 
                 // Get the final result
                 CompletionResult result = engine->getJobResult(jobId);
-
-                // Record first token and output tokens for non-streaming
-                if (result.text.length() > 0)
-                {
-                    // Record output tokens based on token count
-                    int outputTokens = static_cast<int>(result.tokens.size());
-                    for (int i = 0; i < outputTokens; ++i)
-                    {
-                    }
-                }
 
                 // Convert result to JSON and send response
                 json response = completionResultToJson(result);
@@ -562,6 +552,7 @@ namespace kolosal
 
                 bool firstTokenRecorded = false;
                 std::string previousText = "";
+                size_t lastTokenCount = 0;
 
                 // Poll for results until job is finished
                 while (!engine->isJobFinished(jobId))
@@ -599,22 +590,17 @@ namespace kolosal
 
                         std::string newContent = result.text.substr(previousText.length());
 
-                        // Record output tokens (approximate by character count)
-                        int newTokens = static_cast<int>(newContent.length() / 4); // Rough approximation
-                        for (int i = 0; i < newTokens; ++i)
-                        {
-                        }
-
                         // Create partial result for streaming
                         CompletionResult partialResult;
                         partialResult.text = newContent;
                         partialResult.tps = result.tps;
                         partialResult.ttft = result.ttft;
-                        // Only include new tokens since last update
-                        if (result.tokens.size() > static_cast<size_t>(previousText.length() / 4)) {
-                            auto startIt = result.tokens.begin() + static_cast<int>(previousText.length() / 4);
+                        // Only include new tokens since last update based on token vector growth
+                        if (result.tokens.size() > lastTokenCount) {
+                            auto startIt = result.tokens.begin() + static_cast<long>(lastTokenCount);
                             partialResult.tokens.assign(startIt, result.tokens.end());
                         }
+                        partialResult.prompt_token_count = result.prompt_token_count;
 
                         json streamResponse = completionResultToJson(partialResult);
                         streamResponse["partial"] = true;
@@ -624,6 +610,7 @@ namespace kolosal
                         send_stream_chunk(sock, StreamChunk(sseData, false));
 
                         previousText = result.text;
+                        lastTokenCount = result.tokens.size();
                     }
 
                     // Brief sleep to avoid busy waiting
@@ -672,16 +659,6 @@ namespace kolosal
 
                 // Get the final result
                 CompletionResult result = engine->getJobResult(jobId);
-
-                // Record first token and output tokens for non-streaming
-                if (result.text.length() > 0)
-                {
-                    // Record output tokens based on token count
-                    int outputTokens = static_cast<int>(result.tokens.size());
-                    for (int i = 0; i < outputTokens; ++i)
-                    {
-                    }
-                }
 
                 // Convert result to JSON and send response
                 json response = completionResultToJson(result);

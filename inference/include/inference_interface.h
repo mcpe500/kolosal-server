@@ -170,11 +170,12 @@ struct CompletionResult {
     std::string          text;      // Generated text
     float                tps;       // Tokens per second
     float                ttft;      // Time to first token (milliseconds)
+    int                  prompt_token_count; // Number of prompt tokens processed
     
     /**
      * @brief Default constructor.
      */
-    CompletionResult() : tps(0.0f), ttft(0.0f) {}
+    CompletionResult() : tps(0.0f), ttft(0.0f), prompt_token_count(0) {}
 };
 
 /**

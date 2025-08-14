@@ -79,7 +79,10 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/pugixml/src)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/zlib/contrib/minizip)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/maddy/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/zlib)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/src)
+# Only include PoDoFo headers when PDF support is enabled
+if(USE_PODOFO)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/src)
+endif()
 
 # --- Ensure a usable 'freetype' CMake target exists (PoDoFo references it) ---
 if(USE_PODOFO AND NOT TARGET freetype)
@@ -156,7 +159,7 @@ set(SOURCES
     src/retrieval/retrieve_types.cpp
     src/retrieval/document_service.cpp
     src/retrieval/parse_docx.cpp
-    src/retrieval/parse_pdf.cpp
+    # PDF parsing implementation is selected below depending on USE_PODOFO
     src/retrieval/parse_html.cpp
     src/retrieval/chunking_types.cpp
     
@@ -172,6 +175,14 @@ set(SOURCES
     
     # src/completion_monitor.cpp
 )
+
+# Add PDF parser implementation based on USE_PODOFO
+if(USE_PODOFO)
+    list(APPEND SOURCES src/retrieval/parse_pdf.cpp)
+else()
+    message(STATUS "PoDoFo support disabled - using stub PDF parser")
+    list(APPEND SOURCES src/retrieval/parse_pdf_stub.cpp)
+endif()
 
 # Create shared library instead of static library.
 add_library(kolosal_server SHARED ${SOURCES})
