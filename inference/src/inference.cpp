@@ -722,6 +722,26 @@ public:
 				{
 					if (llama_decode(context, batch))
 					{
+						// Dump batch info to help diagnose decode failures
+						try {
+							std::cerr << "[INFERENCE] llama_decode failed. Dumping batch info" << std::endl;
+							std::cerr << "  n_tokens = " << batch.n_tokens << std::endl;
+							for (int i = 0; i < batch.n_tokens; ++i) {
+								std::cerr << "  [" << i << "]"
+										  << " token=" << batch.token[i]
+										  << " pos=" << batch.pos[i]
+										  << " logits=" << (batch.logits[i] ? "true" : "false")
+										  << " n_seq_id=" << batch.n_seq_id[i]
+										  << " seq_ids=[";
+								for (int j = 0; j < batch.n_seq_id[i]; ++j) {
+									std::cerr << batch.seq_id[i][j];
+									if (j + 1 < batch.n_seq_id[i]) std::cerr << ",";
+								}
+								std::cerr << "]" << std::endl;
+							}
+						} catch (...) {
+							// Swallow any logging errors to avoid masking the original failure path
+						}
 						for (auto job : current_jobs)
 						{
 							std::lock_guard<std::mutex> jobLock(job->mtx);
@@ -886,7 +906,7 @@ public:
 		llama_batch batch;
 		std::vector<std::shared_ptr<Job>> jobs;
 		std::atomic<bool> should_terminate{false};
-		std::thread inferenceThread; // removed toolcall client
+		std::thread inferenceThread;
 
 		const int n_batch;
 		const int n_keep;
