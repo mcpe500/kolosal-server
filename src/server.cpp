@@ -493,6 +493,9 @@ namespace kolosal
 								}
 							}
 
+							// Set default headers for all subsequent responses on this thread
+							kolosal::http_internal::set_default_response_headers(responseHeaders);
+
 							// Check if request is blocked by authentication
 							if (!authResult.allowed)
 							{
@@ -509,6 +512,7 @@ namespace kolosal
 #else
 								close(client_sock);
 #endif
+								kolosal::http_internal::clear_default_response_headers();
 								return;
 							}
 
@@ -523,6 +527,7 @@ namespace kolosal
 #else
 								close(client_sock);
 #endif
+								kolosal::http_internal::clear_default_response_headers();
 								return;
 							}							// Find Content-Length header (case-insensitive)
 							int contentLength = 0;
@@ -610,14 +615,17 @@ namespace kolosal
 
 								nlohmann::json jError = {{"error", {{"message", "Not found"}, {"type", "invalid_request_error"}, {"param", nullptr}, {"code", nullptr}}}};
 								send_response(client_sock, 404, jError.dump(), responseHeaders);
-							}							ServerLogger::logDebug("[Thread %d] Completed request for %s",
-												  std::this_thread::get_id(), path.c_str());
+							}							
+							
+							ServerLogger::logDebug("[Thread %d] Completed request for %s",
+							std::this_thread::get_id(), path.c_str());
 
 #ifdef _WIN32
 							closesocket(client_sock);
 #else
 							close(client_sock);
 #endif
+							kolosal::http_internal::clear_default_response_headers();
 						})
 				.detach(); // Detach the thread to handle the request independently
 		}
