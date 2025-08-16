@@ -341,9 +341,9 @@ namespace
 	{
 	}
 
-	std::vector<int32_t> Tokenizer::tokenize(const std::string &text, bool /*add_bos_token*/)
+	std::vector<int32_t> Tokenizer::tokenize(const std::string &text, bool add_bos_token)
 	{
-		std::vector<llama_token> tokens = common_tokenize(tokenizer_context, text.c_str(), true, true);
+		std::vector<llama_token> tokens = common_tokenize(tokenizer_context, text.c_str(), add_bos_token, true);
 		return std::vector<int32_t>(tokens.begin(), tokens.end());
 	}
 
@@ -524,6 +524,9 @@ public:
 				if (should_terminate)
 					break;
 
+				// Always start with a clean batch before building the next decode step
+				common_batch_clear(batch);
+
 				bool batch_has_tokens = false;
 
 				for (auto job : current_jobs)
@@ -673,7 +676,8 @@ public:
 						for (int i = 0; i < tokens_to_process; ++i)
 						{
 							llama_token token = job->embd_inp[job->i_prompt];
-							common_batch_add(batch, token, job->i_prompt, {job->seqId}, false);
+							// use absolute position (n_past) instead of i_prompt to avoid ordering issues
+							common_batch_add(batch, token, job->n_past, {job->seqId}, false);
 							if (job->i_prompt == job->n_prompt - 1)
 							{
 								batch.logits[batch.n_tokens - 1] = true;
@@ -715,6 +719,11 @@ public:
 							job->cv.notify_all();
 							continue;
 						}
+					}
+					// If we only support a single sequence, do not mix tokens from multiple jobs in one batch
+					if (g_params.n_parallel <= 1 && batch_has_tokens)
+					{
+						break;
 					}
 				}
 
@@ -809,6 +818,11 @@ public:
 			job->n_remain = params.maxNewTokens;
 			job->isDecodingPrompt = true;
 			job->isFinished = false;
+			job->i_prompt = 0;
+			job->n_prompt = 0;
+			job->n_past = 0;
+			job->batch_pos = -1;
+			job->session_tokens.clear();
 
 			{
 				std::lock_guard<std::mutex> lock(mtx);
@@ -1198,7 +1212,7 @@ public:
 					std::string normalized; normalized.reserve(sparams.grammar.size());
 					for (size_t i=0;i<sparams.grammar.size();++i){
 						if (sparams.grammar[i]=='<' ) {
-							size_t j=i+1; while (j<sparams.grammar.size() && std::isalnum(static_cast<unsigned char>(sparams.grammar[j])) || sparams.grammar[j]=='_' ) j++; // name chars
+							size_t j=i+1; while (j<sparams.grammar.size() && (std::isalnum(static_cast<unsigned char>(sparams.grammar[j])) || sparams.grammar[j]=='_') ) j++; // name chars
 							if (j<sparams.grammar.size() && sparams.grammar[j]=='>') { // pattern <name>
 								modified = true;
 								normalized.append(sparams.grammar.substr(i+1, j-(i+1)));
@@ -1253,7 +1267,15 @@ public:
 		{
 			if (job->session_tokens.empty() || !job->params.prompt.empty())
 			{
-				job->embd_inp = tokenizer->tokenize(job->params.prompt, tokenizer->shouldAddBos());
+				bool add_bos_tok = tokenizer->shouldAddBos();
+				const std::string &p = job->params.prompt;
+				if (!p.empty()) {
+					// Heuristic: if prompt already starts with a known BOS marker from chat templates, do not add BOS
+					if (p.rfind("<|begin_of_text|>", 0) == 0 || p.rfind("<s>", 0) == 0 || p.rfind("[BOS]", 0) == 0) {
+						add_bos_tok = false;
+					}
+				}
+				job->embd_inp = tokenizer->tokenize(p, add_bos_tok);
 			}
 			else
 			{
@@ -1350,7 +1372,9 @@ public:
 			// Defensive check; acquireSequenceForPath already assigned a valid seqId
 			if (g_params.n_parallel <= 1) job->seqId = 0; else if (job->seqId >= g_params.n_parallel) job->seqId %= g_params.n_parallel;
 
-			llama_token id = common_sampler_sample(job->smpl, context, job->batch_pos);
+			int sample_pos = job->batch_pos;
+			if (sample_pos < 0) sample_pos = -1;
+			llama_token id = common_sampler_sample(job->smpl, context, sample_pos);
 			common_sampler_accept(job->smpl, id, true);
 
 			// Add token to batch before EOG check
