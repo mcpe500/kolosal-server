@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <queue>
+#include <set>
 #include <cstdint>
 #include <thread>
 #include <condition_variable>
@@ -313,6 +314,38 @@ bool EmbeddingParameters::isValid() const
 // Anonymous namespace to encapsulate internal classes
 namespace
 {
+	// Manages KV sequence IDs (slots) for llama context
+	class SlotManager {
+	public:
+		SlotManager(llama_context * ctx, int n_parallel)
+			: ctx(ctx), max_slots(n_parallel) {
+			for (int i = 0; i < max_slots; ++i) free_slots.push(i);
+		}
+		int allocate() {
+			std::unique_lock<std::mutex> lock(mtx);
+			cv.wait(lock, [&]{ return !free_slots.empty() || terminated; });
+			if (terminated) return -1;
+			int id = free_slots.front(); free_slots.pop(); in_use.insert(id); return id;
+		}
+		void release(int id) {
+			if (id < 0) return;
+			if (ctx) {
+				// remove all KV entries for this sequence id
+				auto * mem = llama_get_memory(ctx);
+				llama_memory_seq_rm(mem, id, -1, -1);
+			}
+			std::lock_guard<std::mutex> lock(mtx);
+			if (in_use.erase(id)) { free_slots.push(id); cv.notify_one(); }
+		}
+		void shutdown() { std::lock_guard<std::mutex> lock(mtx); terminated = true; cv.notify_all(); }
+		int capacity() const { return max_slots; }
+	private:
+		llama_context * ctx;
+		int max_slots;
+		std::queue<int> free_slots;
+		std::set<int>   in_use;
+		std::mutex mtx; std::condition_variable cv; bool terminated=false;
+	};
 
 	static void llama_log_callback_null(ggml_log_level level, const char* text, void* user_data)
 	{
@@ -422,16 +455,13 @@ namespace
 		LlamaInferenceService(std::shared_ptr<Tokenizer> tokenizer, llama_model* model, llama_context* context, 
 			common_params params, ggml_threadpool* threadpool)
 			: tokenizer(std::move(tokenizer)), model(model), context(context), g_params(params), threadpool(threadpool),
-			n_batch(params.n_batch), n_keep(params.n_keep), n_ctx(llama_n_ctx(context))
+			n_batch(params.n_batch), n_keep(params.n_keep), n_ctx(llama_n_ctx(context)), slotManager(context, params.n_parallel)
 		{
 #ifdef DEBUG
 			std::cout << "Initializing batch with size of: " << g_params.n_batch << std::endl;
 #endif
-
-			// Set batch.n_seq_max to match concurrency to avoid seq_id out-of-range
-			const int seq_max = std::max(1, params.n_parallel);
-			batch = llama_batch_init(params.n_ctx, 0, seq_max);
-			seq_in_use.assign(seq_max, false);
+			// initialize for multi-sequence decoding
+			batch = llama_batch_init(params.n_ctx, 0, params.n_parallel);
 
 			inferenceThread = std::thread(&LlamaInferenceService::start, this);
 		}
@@ -439,6 +469,7 @@ namespace
 		~LlamaInferenceService()
 		{
 			stop();
+			slotManager.shutdown();
 
 			// Wait for the inference thread to finish before cleaning up resources
 			if (inferenceThread.joinable()) {
@@ -455,9 +486,9 @@ namespace
 							job->hasError = true;
 							job->errorMessage = "Service is shutting down";
 							job->isFinished = true;
-								job->cv.notify_all();
-								release_seq_id(job->seqId);
-							}
+							job->cv.notify_all();
+						}
+						if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 						if (job->smpl) {
 							common_sampler_free(job->smpl);
 							job->smpl = nullptr;
@@ -533,11 +564,7 @@ namespace
 							common_sampler_free(job->smpl);
 							job->smpl = nullptr;
 						}
-						if (!should_terminate && context) {
-							llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-							llama_kv_self_update(context);
-							release_seq_id(job->seqId);
-						}
+						if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 						job->isFinished = true;
 						job->cv.notify_all();
 						continue;
@@ -549,11 +576,7 @@ namespace
 							common_sampler_free(job->smpl);
 							job->smpl = nullptr;
 						}
-						if (!should_terminate && context) {
-							llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-							llama_kv_self_update(context);
-							release_seq_id(job->seqId);
-						}
+						if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 						job->hasError = true;
 						job->isFinished = true;
 						job->errorMessage = "Context overflow even after trimming.";
@@ -572,11 +595,7 @@ namespace
 								common_sampler_free(job->smpl);
 								job->smpl = nullptr;
 							}
-							if (!should_terminate && context) {
-								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-								llama_kv_self_update(context);
-								release_seq_id(job->seqId);
-							}
+							if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 							job->isFinished = true;
 							job->cv.notify_all();
 							continue;
@@ -591,11 +610,7 @@ namespace
 								common_sampler_free(job->smpl);
 								job->smpl = nullptr;
 							}
-							if (!should_terminate && context) {
-								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-								llama_kv_self_update(context);
-								release_seq_id(job->seqId);
-							}
+							if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 							job->hasError = true;
 							job->isFinished = true;
 							job->errorMessage = "Failed to load sessions";
@@ -608,11 +623,7 @@ namespace
 								common_sampler_free(job->smpl);
 								job->smpl = nullptr;
 							}
-							if (!should_terminate && context) {
-								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-								llama_kv_self_update(context);
-								release_seq_id(job->seqId);
-							}
+							if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 							job->hasError = true;
 							job->isFinished = true;
 							job->errorMessage = "Failed to tokenize input";
@@ -625,11 +636,7 @@ namespace
 								common_sampler_free(job->smpl);
 								job->smpl = nullptr;
 							}
-							if (!should_terminate && context) {
-								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-								llama_kv_self_update(context);
-								release_seq_id(job->seqId);
-							}
+							if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 							job->hasError = true;
 							job->isFinished = true;
 							job->errorMessage = "Failed to ensure input content";
@@ -680,11 +687,7 @@ namespace
 								common_sampler_free(job->smpl);
 								job->smpl = nullptr;
 							}
-							if (!should_terminate && context) {
-								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-								llama_kv_self_update(context);
-								release_seq_id(job->seqId);
-							}
+							if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 							job->hasError = true;
 							job->isFinished = true;
 							job->errorMessage = "Context overflow even after trimming.";
@@ -698,13 +701,14 @@ namespace
 				{
 					if (llama_decode(context, batch))
 					{
-						for (auto job : current_jobs)
+			for (auto job : current_jobs)
 						{
 							std::lock_guard<std::mutex> jobLock(job->mtx);
 							if (!job->isFinished) {
 								job->hasError = true;
 								job->errorMessage = "Could not decode next token";
 								job->isFinished = true;
+				if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 								job->cv.notify_all();
 								release_seq_id(job->seqId);
 							}
@@ -724,6 +728,7 @@ namespace
 						job->hasError = true;
 						job->errorMessage = "Service is shutting down";
 						job->isFinished = true;
+						if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 						job->cv.notify_all();
 							if (context) {
 								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
@@ -772,6 +777,16 @@ namespace
 				job->generatedText.clear();
 			}
 
+			// Acquire a managed seq slot; block if busy
+			const int slot_id = slotManager.allocate();
+			if (slot_id < 0) {
+				std::lock_guard<std::mutex> jobLock(job->mtx);
+				job->hasError = true;
+				job->errorMessage = "Service is shutting down";
+				job->cv.notify_all();
+				return;
+			}
+			job->seqId = slot_id;
 			job->path_session				= params.kvCacheFilePath;
 			job->n_remain					= params.maxNewTokens;
 			job->isDecodingPrompt			= true;
@@ -890,28 +905,8 @@ namespace
 		const int n_batch;
 		const int n_keep;
 		const int n_ctx;
-
-		// Sequence ID allocator for concurrent requests
-		std::vector<bool> seq_in_use;
-
-		int allocate_seq_id() {
-			std::lock_guard<std::mutex> lock(mtx);
-			for (size_t i = 0; i < seq_in_use.size(); ++i) {
-				if (!seq_in_use[i]) {
-					seq_in_use[i] = true;
-					return static_cast<int>(i);
-				}
-			}
-			return -1;
-		}
-
-		void release_seq_id(int sid) {
-			if (sid < 0) return;
-			std::lock_guard<std::mutex> lock(mtx);
-			if (sid < static_cast<int>(seq_in_use.size())) {
-				seq_in_use[sid] = false;
-			}
-		}
+		SlotManager slotManager;
+		
 		/**
 		 * @brief Generates embeddings for the given input text
 		 * @param input The input text to generate embeddings for
@@ -943,7 +938,8 @@ namespace
 				}
 
 				// Clear the KV cache for clean embedding generation
-				llama_kv_self_clear(context);
+				auto * mem = llama_get_memory(context);
+				llama_memory_clear(mem, /*data=*/true);
 
 				// Create batch for embedding generation
 				llama_batch local_batch = llama_batch_init(static_cast<int32_t>(tokens.size()), 0, 1);
@@ -1179,7 +1175,9 @@ namespace
 
 		bool loadSession(std::shared_ptr<Job> job) {
 			if (!job->path_session.empty()) {
-				if (!load_kv_cache(job->path_session, job->session_tokens, job->seqId)) {
+				// Use the logical session id from params for file-backed sessions
+				const int session_seq = job->params.seqId;
+				if (!load_kv_cache(job->path_session, job->session_tokens, session_seq)) {
 					return false;
 				}
 			}
@@ -1224,7 +1222,9 @@ namespace
 
 		void saveSession(std::shared_ptr<Job> job) {
 			if (!job->path_session.empty()) {
-				llama_state_seq_save_file(context, job->path_session.c_str(), job->seqId, job->session_tokens.data(), job->session_tokens.size());
+				// Use the logical session id from params for file-backed sessions
+				const int session_seq = job->params.seqId;
+				llama_state_seq_save_file(context, job->path_session.c_str(), session_seq, job->session_tokens.data(), job->session_tokens.size());
 			}
 		}
 
@@ -1428,9 +1428,10 @@ namespace
 				printf("[INFERENCE] [KV] removed %d tokens from the cache\n", (int)(job->session_tokens.size() - n_matching_session_tokens));
 #endif
 
-				// Remove any "future" tokens that donât match
+				// Remove any "future" tokens that don’t match
 				// i.e. we only keep the portion that matched
-				llama_kv_self_seq_rm(context, job->seqId, static_cast<llama_pos>(n_matching_session_tokens), -1 /*up to end*/);
+				auto * mem = llama_get_memory(context);
+				llama_memory_seq_rm(mem, job->seqId, static_cast<llama_pos>(n_matching_session_tokens), -1 /*up to end*/);
 				job->session_tokens.resize(n_matching_session_tokens);
 
 #ifdef DEBUG
@@ -1459,8 +1460,9 @@ namespace
 				<< ", n_discard = " << n_discard << std::endl << std::endl;
 #endif
 
-			llama_kv_self_seq_rm(context, id, n_keep, n_keep + n_discard);
-			llama_kv_self_seq_add(context, id, n_keep + n_discard, n_past, -n_discard);
+			auto * mem = llama_get_memory(context);
+			llama_memory_seq_rm(mem, id, n_keep, n_keep + n_discard);
+			llama_memory_seq_add(mem, id, n_keep + n_discard, n_past, -n_discard);
 
 			n_past -= n_discard;
 
@@ -1659,7 +1661,8 @@ namespace
 		{
 			// Clear batch and KV cache
 			common_batch_clear(batch);
-			llama_kv_self_clear(context);
+			auto * mem = llama_get_memory(context);
+			llama_memory_clear(mem, /*data=*/true);
 
 			std::vector<std::vector<llama_token>> all_tokens;
 			std::vector<int> job_indices;
