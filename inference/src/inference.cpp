@@ -13,6 +13,8 @@
 #include <cstring>
 #include <chrono>
 #include <map>
+#include <vector>
+#include <deque>
 #ifdef USE_VULKAN
 #include <vulkan/vulkan.h>
 #endif
@@ -205,11 +207,7 @@ bool CompletionParameters::isValid() const
 		return false;
 	}
 
-	if (!kvCacheFilePath.empty() && seqId < 0)
-	{
-		std::cerr << "[INFERENCE] [ERROR] seqId needs to be set when kvCacheFilePath is provided" << std::endl;
-		return false;
-	}
+	// If kvCacheFilePath is provided but seqId < 0, we will auto-assign seqId per job
 
 	// Grammar / JSON Schema validation
 	if (!grammar.empty() && !jsonSchema.empty())
@@ -271,11 +269,7 @@ bool ChatCompletionParameters::isValid() const
 		return false;
 	}
 
-	if (!kvCacheFilePath.empty() && seqId < 0)
-	{
-		std::cerr << "[INFERENCE] [ERROR] seqId needs to be set when kvCacheFilePath is provided" << std::endl;
-		return false;
-	}
+	// If kvCacheFilePath is provided but seqId < 0, we will auto-assign seqId per job
 
 	// Grammar / JSON Schema validation
 	if (!grammar.empty() && !jsonSchema.empty())
@@ -434,7 +428,10 @@ namespace
 			std::cout << "Initializing batch with size of: " << g_params.n_batch << std::endl;
 #endif
 
-			batch = llama_batch_init(params.n_ctx, 0, 1);
+			// Set batch.n_seq_max to match concurrency to avoid seq_id out-of-range
+			const int seq_max = std::max(1, params.n_parallel);
+			batch = llama_batch_init(params.n_ctx, 0, seq_max);
+			seq_in_use.assign(seq_max, false);
 
 			inferenceThread = std::thread(&LlamaInferenceService::start, this);
 		}
@@ -458,8 +455,9 @@ namespace
 							job->hasError = true;
 							job->errorMessage = "Service is shutting down";
 							job->isFinished = true;
-							job->cv.notify_all();
-						}
+								job->cv.notify_all();
+								release_seq_id(job->seqId);
+							}
 						if (job->smpl) {
 							common_sampler_free(job->smpl);
 							job->smpl = nullptr;
@@ -471,6 +469,13 @@ namespace
 
 			// Safe cleanup of llama resources
 			if (context) {
+				// Extra KV cleanup per sequence
+				for (size_t sid = 0; sid < seq_in_use.size(); ++sid) {
+					if (seq_in_use[sid]) {
+						llama_kv_self_seq_rm(context, static_cast<int>(sid), -1, -1);
+					}
+				}
+				llama_kv_self_update(context);
 				llama_free(context);
 				context = nullptr;
 			}
@@ -531,6 +536,7 @@ namespace
 						if (!should_terminate && context) {
 							llama_kv_self_seq_rm(context, job->seqId, -1, -1);
 							llama_kv_self_update(context);
+							release_seq_id(job->seqId);
 						}
 						job->isFinished = true;
 						job->cv.notify_all();
@@ -546,6 +552,7 @@ namespace
 						if (!should_terminate && context) {
 							llama_kv_self_seq_rm(context, job->seqId, -1, -1);
 							llama_kv_self_update(context);
+							release_seq_id(job->seqId);
 						}
 						job->hasError = true;
 						job->isFinished = true;
@@ -568,6 +575,7 @@ namespace
 							if (!should_terminate && context) {
 								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
 								llama_kv_self_update(context);
+								release_seq_id(job->seqId);
 							}
 							job->isFinished = true;
 							job->cv.notify_all();
@@ -586,6 +594,7 @@ namespace
 							if (!should_terminate && context) {
 								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
 								llama_kv_self_update(context);
+								release_seq_id(job->seqId);
 							}
 							job->hasError = true;
 							job->isFinished = true;
@@ -602,6 +611,7 @@ namespace
 							if (!should_terminate && context) {
 								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
 								llama_kv_self_update(context);
+								release_seq_id(job->seqId);
 							}
 							job->hasError = true;
 							job->isFinished = true;
@@ -618,6 +628,7 @@ namespace
 							if (!should_terminate && context) {
 								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
 								llama_kv_self_update(context);
+								release_seq_id(job->seqId);
 							}
 							job->hasError = true;
 							job->isFinished = true;
@@ -672,6 +683,7 @@ namespace
 							if (!should_terminate && context) {
 								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
 								llama_kv_self_update(context);
+								release_seq_id(job->seqId);
 							}
 							job->hasError = true;
 							job->isFinished = true;
@@ -694,6 +706,7 @@ namespace
 								job->errorMessage = "Could not decode next token";
 								job->isFinished = true;
 								job->cv.notify_all();
+								release_seq_id(job->seqId);
 							}
 						}
 					}
@@ -707,11 +720,15 @@ namespace
 				std::lock_guard<std::mutex> lock(mtx);
 				for (auto& job : jobs) {
 					std::lock_guard<std::mutex> jobLock(job->mtx);
-					if (!job->isFinished) {
+						if (!job->isFinished) {
 						job->hasError = true;
 						job->errorMessage = "Service is shutting down";
 						job->isFinished = true;
 						job->cv.notify_all();
+							if (context) {
+								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
+							}
+							release_seq_id(job->seqId);
 					}
 				}
 			}
@@ -728,6 +745,21 @@ namespace
 			}
 
 			job->params = params;
+
+			// Assign sequence ID if not provided (params.seqId < 0)
+			if (job->params.seqId < 0) {
+				int sid = allocate_seq_id();
+				if (sid < 0) {
+					std::lock_guard<std::mutex> jobLock(job->mtx);
+					job->hasError = true;
+					job->errorMessage = "No free sequence slot available. Consider increasing n_parallel.";
+					job->cv.notify_all();
+					return;
+				}
+				job->seqId = sid;
+			} else {
+				job->seqId = job->params.seqId;
+			}
 
 			job->smpl = initializeSampler(params, job);
 			if (!job->smpl) {
@@ -765,7 +797,9 @@ namespace
 				std::unique_lock<std::mutex> lock(job->mtx);
 				job->cv.wait(lock, [&job] { return job->isFinished; });
 			}
-		}		void embed(const EmbeddingParameters &params, std::shared_ptr<Job> job) override
+		}		
+		
+		void embed(const EmbeddingParameters &params, std::shared_ptr<Job> job) override
 		{
 #ifdef DEBUG
 			std::cout << "[INFERENCE] Submitting embedding job" << std::endl;
@@ -856,6 +890,28 @@ namespace
 		const int n_batch;
 		const int n_keep;
 		const int n_ctx;
+
+		// Sequence ID allocator for concurrent requests
+		std::vector<bool> seq_in_use;
+
+		int allocate_seq_id() {
+			std::lock_guard<std::mutex> lock(mtx);
+			for (size_t i = 0; i < seq_in_use.size(); ++i) {
+				if (!seq_in_use[i]) {
+					seq_in_use[i] = true;
+					return static_cast<int>(i);
+				}
+			}
+			return -1;
+		}
+
+		void release_seq_id(int sid) {
+			if (sid < 0) return;
+			std::lock_guard<std::mutex> lock(mtx);
+			if (sid < static_cast<int>(seq_in_use.size())) {
+				seq_in_use[sid] = false;
+			}
+		}
 		/**
 		 * @brief Generates embeddings for the given input text
 		 * @param input The input text to generate embeddings for
@@ -1454,6 +1510,8 @@ namespace
 
 			// Clean up in proper order
 			llama_detach_threadpool(context);
+			// Ensure KV is cleared
+			llama_kv_self_clear(context);
 			llama_batch_free(batch);
 			llama_free(context);
 			llama_model_free(model);

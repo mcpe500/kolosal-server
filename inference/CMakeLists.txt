@@ -507,6 +507,7 @@ if(BUILD_INFERENCE_TESTS)
         tests/test_grammar.cpp
         tests/test_json_schema.cpp
         tests/test_multi_gpu.cpp
+        tests/test_auto_seq.cpp
     )
 
     foreach(test_src ${INFERENCE_TEST_SOURCES})
