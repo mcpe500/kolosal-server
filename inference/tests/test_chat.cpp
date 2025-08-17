@@ -11,12 +11,42 @@ int main(int argc, char **argv) {
 
     int job = engine.submitChatCompletionsJob(chat);
     if (job < 0) { std::cerr << "[TEST] submit failed\n"; return 66; }
-    if (!wait_for_completion(engine, job)) { std::cerr << "[TEST] job failed: " << engine.getJobError(job) << "\n"; return 67; }
+
+    // Stream output: print incremental tokens as they arrive
+    size_t printed = 0;
+    auto start = std::chrono::steady_clock::now();
+    const int timeout_ms = 20000; // safety timeout for tests
+    while (!engine.isJobFinished(job)) {
+        if (engine.hasJobError(job)) {
+            std::cerr << "[TEST] job failed: " << engine.getJobError(job) << "\n";
+            return 67;
+        }
+        auto partial = engine.getJobResult(job);
+        if (partial.text.size() > printed) {
+            std::cout << partial.text.substr(printed);
+            std::cout.flush();
+            printed = partial.text.size();
+        }
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() > timeout_ms) {
+            std::cerr << "\n[TEST] Timeout waiting for streaming result" << std::endl;
+            return 67;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    }
+
+    // Print any final tail and newline
     auto r = engine.getJobResult(job);
+    if (r.text.size() > printed) {
+        std::cout << r.text.substr(printed);
+        std::cout.flush();
+    }
+    std::cout << "\n";
+
     if (r.text.find("53")==std::string::npos) {
         std::cerr << "[TEST] expected prime not found in response: " << r.text << "\n"; // heuristic
         return 68;
     }
     std::cout << "[TEST] OK chat completion length=" << r.text.size() << "\n";
+    std::cout << "[TEST] Result: " << r.text << "\n";
     return 0;
 }

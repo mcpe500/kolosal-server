@@ -64,7 +64,7 @@ struct EmbeddingParameters {
     
     // Cache and session management
     std::string kvCacheFilePath = "";
-    int         seqId           = -1;
+    int         seqId           = 0;
 
     bool isValid() const;
 };
@@ -107,7 +107,7 @@ struct CompletionParameters {
     
     // Cache and session management
     std::string kvCacheFilePath = "";
-    int         seqId           = -1;
+    int         seqId           = 0;
 
     bool isValid() const;
 };
@@ -153,7 +153,7 @@ struct ChatCompletionParameters {
     
     // Cache and session management
     std::string kvCacheFilePath = "";
-    int         seqId           = -1;
+    int         seqId           = 0;
     
     // Tool usage parameters
     std::string tools           = "";

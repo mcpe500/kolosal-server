@@ -331,6 +331,9 @@ namespace kolosal
             // Parse the chat completion parameters (includes structured output precedence & logging)
             ChatCompletionParameters params = parseChatCompletionParameters(j);
 
+            ServerLogger::logInfo("[Thread %u] Processing chat completion for model '%s' with seqId: %d", 
+                                      std::this_thread::get_id(), modelName.c_str(), params.seqId);
+
             if (!params.isValid())
             {
                 throw std::invalid_argument("Invalid chat completion parameters");
