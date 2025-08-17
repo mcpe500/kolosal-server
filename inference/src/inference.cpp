@@ -14,8 +14,6 @@
 #include <cstring>
 #include <chrono>
 #include <map>
-#include <vector>
-#include <deque>
 #ifdef USE_VULKAN
 #include <vulkan/vulkan.h>
 #endif
@@ -208,7 +206,11 @@ bool CompletionParameters::isValid() const
 		return false;
 	}
 
-	// If kvCacheFilePath is provided but seqId < 0, we will auto-assign seqId per job
+	if (!kvCacheFilePath.empty() && seqId < 0)
+	{
+		std::cerr << "[INFERENCE] [ERROR] seqId needs to be set when kvCacheFilePath is provided" << std::endl;
+		return false;
+	}
 
 	// Grammar / JSON Schema validation
 	if (!grammar.empty() && !jsonSchema.empty())
@@ -270,7 +272,11 @@ bool ChatCompletionParameters::isValid() const
 		return false;
 	}
 
-	// If kvCacheFilePath is provided but seqId < 0, we will auto-assign seqId per job
+	if (!kvCacheFilePath.empty() && seqId < 0)
+	{
+		std::cerr << "[INFERENCE] [ERROR] seqId needs to be set when kvCacheFilePath is provided" << std::endl;
+		return false;
+	}
 
 	// Grammar / JSON Schema validation
 	if (!grammar.empty() && !jsonSchema.empty())
@@ -500,13 +506,6 @@ namespace
 
 			// Safe cleanup of llama resources
 			if (context) {
-				// Extra KV cleanup per sequence
-				for (size_t sid = 0; sid < seq_in_use.size(); ++sid) {
-					if (seq_in_use[sid]) {
-						llama_kv_self_seq_rm(context, static_cast<int>(sid), -1, -1);
-					}
-				}
-				llama_kv_self_update(context);
 				llama_free(context);
 				context = nullptr;
 			}
@@ -710,7 +709,6 @@ namespace
 								job->isFinished = true;
 				if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 								job->cv.notify_all();
-								release_seq_id(job->seqId);
 							}
 						}
 					}
@@ -724,16 +722,12 @@ namespace
 				std::lock_guard<std::mutex> lock(mtx);
 				for (auto& job : jobs) {
 					std::lock_guard<std::mutex> jobLock(job->mtx);
-						if (!job->isFinished) {
+					if (!job->isFinished) {
 						job->hasError = true;
 						job->errorMessage = "Service is shutting down";
 						job->isFinished = true;
 						if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 						job->cv.notify_all();
-							if (context) {
-								llama_kv_self_seq_rm(context, job->seqId, -1, -1);
-							}
-							release_seq_id(job->seqId);
 					}
 				}
 			}
@@ -750,21 +744,6 @@ namespace
 			}
 
 			job->params = params;
-
-			// Assign sequence ID if not provided (params.seqId < 0)
-			if (job->params.seqId < 0) {
-				int sid = allocate_seq_id();
-				if (sid < 0) {
-					std::lock_guard<std::mutex> jobLock(job->mtx);
-					job->hasError = true;
-					job->errorMessage = "No free sequence slot available. Consider increasing n_parallel.";
-					job->cv.notify_all();
-					return;
-				}
-				job->seqId = sid;
-			} else {
-				job->seqId = job->params.seqId;
-			}
 
 			job->smpl = initializeSampler(params, job);
 			if (!job->smpl) {
@@ -906,7 +885,7 @@ namespace
 		const int n_keep;
 		const int n_ctx;
 		SlotManager slotManager;
-		
+
 		/**
 		 * @brief Generates embeddings for the given input text
 		 * @param input The input text to generate embeddings for
@@ -1512,8 +1491,6 @@ namespace
 
 			// Clean up in proper order
 			llama_detach_threadpool(context);
-			// Ensure KV is cleared
-			llama_kv_self_clear(context);
 			llama_batch_free(batch);
 			llama_free(context);
 			llama_model_free(model);
