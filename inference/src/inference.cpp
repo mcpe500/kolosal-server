@@ -2025,10 +2025,15 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 	params.single_turn					= true;
 	params.compute_ppl					= false;
 	params.use_jinja					= true;
+	params.swa_full						= true;
 #if defined(USE_CUDA) || defined(USE_VULKAN)
 	std::cout << "[INFERENCE] Using CUDA or Vulkan" << std::endl;
 
 	params.n_gpu_layers = lParams.n_gpu_layers;
+#endif
+
+#ifndef USE_VULKAN
+	params.flash_attn = true;
 #endif
 
 #ifdef DEBUG
@@ -2122,12 +2127,6 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 		throw std::runtime_error("[INFERENCE] [ERROR] Failed to create inference service: " + std::string(e.what()));
 	}
 }
-
-
-
-
-
-
 
 void InferenceEngine::Impl::stopJob(int job_id)
 {
