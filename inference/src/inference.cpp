@@ -707,7 +707,7 @@ namespace
 								job->hasError = true;
 								job->errorMessage = "Could not decode next token";
 								job->isFinished = true;
-				if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
+								if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 								job->cv.notify_all();
 							}
 						}
@@ -2005,7 +2005,7 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 	params.n_batch						= lParams.n_batch;
 	params.n_ubatch                     = lParams.n_ubatch;
 	params.webui						= false;
-	params.single_turn					= true;
+	params.single_turn					= false;
 	params.compute_ppl					= false;
 	params.use_jinja					= true;
 #if defined(USE_CUDA) || defined(USE_VULKAN)
