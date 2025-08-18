@@ -182,13 +182,13 @@ bool CompletionParameters::isValid() const
 		return false;
 	}
 
-	if (maxNewTokens < 0 || maxNewTokens > 4096)
+	if (maxNewTokens < 0)
 	{
 		std::cerr << "[INFERENCE] [ERROR] maxNewTokens is out of range: " << maxNewTokens << std::endl;
 		return false;
 	}
 
-	if (minLength < 0 || minLength > 4096)
+	if (minLength < 0)
 	{
 		std::cerr << "[INFERENCE] [ERROR] minLength is out of range: " << minLength << std::endl;
 		return false;
@@ -248,13 +248,13 @@ bool ChatCompletionParameters::isValid() const
 		return false;
 	}
 
-	if (maxNewTokens < 0 || maxNewTokens > 4096)
+	if (maxNewTokens < 0)
 	{
 		std::cerr << "[INFERENCE] [ERROR] maxNewTokens is out of range: " << maxNewTokens << std::endl;
 		return false;
 	}
 
-	if (minLength < 0 || minLength > 4096)
+	if (minLength < 0)
 	{
 		std::cerr << "[INFERENCE] [ERROR] minLength is out of range: " << minLength << std::endl;
 		return false;
@@ -548,6 +548,17 @@ namespace
 
 				bool batch_has_tokens = false;
 
+				// determine fair per-job prompt quota for this decode step
+				int active_jobs = 0;
+				for (auto &job : current_jobs) {
+					std::lock_guard<std::mutex> jl(job->mtx);
+					if (!job->isFinished && !job->hasError) {
+						active_jobs++;
+					}
+				}
+				// avoid divide-by-zero; ensure at least 1 token per job
+				const int per_job_quota = std::max(1, g_params.n_batch / std::max(1, active_jobs));
+
 				for (auto job : current_jobs)
 				{
 					// Check for shutdown in the job processing loop
@@ -585,7 +596,9 @@ namespace
 					}
 
 					if (!job->isDecodingPrompt) {
-						if (batch.n_tokens >= g_params.n_batch) {
+						// respect overall batch limit and internal capacity
+						int capacity_remaining = n_ctx - batch.n_tokens;
+						if (capacity_remaining <= 0 || batch.n_tokens >= g_params.n_batch) {
 							break;
 						}
 
@@ -650,13 +663,16 @@ namespace
 						job->n_prompt = static_cast<int>(job->embd_inp.size());
 
 						int remaining_prompt_tokens = job->n_prompt - job->i_prompt;
-						int available_batch_space = g_params.n_batch - batch.n_tokens;
+						// respect overall batch limit and internal capacity
+						int capacity_remaining = n_ctx - batch.n_tokens;
+						int available_batch_space = std::min(g_params.n_batch - batch.n_tokens, capacity_remaining);
 
 						if (available_batch_space <= 0) {
 							break;
 						}
 
-						int tokens_to_process = std::min(remaining_prompt_tokens, available_batch_space);
+						// fair-share: each job contributes up to per_job_quota tokens per decode step
+						int tokens_to_process = std::min({ remaining_prompt_tokens, available_batch_space, per_job_quota });
 
 						for (int i = 0; i < tokens_to_process; ++i) {
 							llama_token token = job->embd_inp[job->i_prompt];
@@ -678,10 +694,7 @@ namespace
 							job->isDecodingPrompt = false;
 						}
 
-						if (job->isDecodingPrompt) {
-							break;
-						}
-
+						// ensure capacity even during prompt ingestion
 						if (!ensureContextCapacity(job)) {
 							if (job->smpl) {
 								common_sampler_free(job->smpl);
@@ -701,14 +714,14 @@ namespace
 				{
 					if (llama_decode(context, batch))
 					{
-			for (auto job : current_jobs)
+						for (auto job : current_jobs)
 						{
 							std::lock_guard<std::mutex> jobLock(job->mtx);
 							if (!job->isFinished) {
 								job->hasError = true;
 								job->errorMessage = "Could not decode next token";
 								job->isFinished = true;
-				if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
+								if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 								job->cv.notify_all();
 							}
 						}
@@ -887,8 +900,9 @@ namespace
 
 		const int n_batch;
 		const int n_keep;
-	const int n_ctx;
-	SlotManager slotManager;
+		const int n_ctx;
+		SlotManager slotManager;
+
 		/**
 		 * @brief Generates embeddings for the given input text
 		 * @param input The input text to generate embeddings for
