@@ -338,7 +338,8 @@ namespace
 			if (ctx) {
 				// remove all KV entries for this sequence id
 				auto * mem = llama_get_memory(ctx);
-				llama_memory_seq_rm(mem, id, -1, -1);
+				// use range [0, -1) to ensure full wipe across backends (CUDA may no-op on [-1, -1])
+				llama_memory_seq_rm(mem, id, /*p0=*/0, /*p1=*/-1);
 			}
 			std::lock_guard<std::mutex> lock(mtx);
 			if (in_use.erase(id)) { free_slots.push(id); cv.notify_one(); }
@@ -707,7 +708,7 @@ namespace
 								job->hasError = true;
 								job->errorMessage = "Could not decode next token";
 								job->isFinished = true;
-								if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
+				if (job->seqId >= 0) { slotManager.release(job->seqId); job->seqId = -1; }
 								job->cv.notify_all();
 							}
 						}
@@ -766,6 +767,11 @@ namespace
 				return;
 			}
 			job->seqId = slot_id;
+			// defensive: ensure the slot's KV is empty before use (CUDA can be strict)
+			if (context) {
+				auto * mem = llama_get_memory(context);
+				llama_memory_seq_rm(mem, job->seqId, /*p0=*/0, /*p1=*/-1);
+			}
 			job->path_session				= params.kvCacheFilePath;
 			job->n_remain					= params.maxNewTokens;
 			job->isDecodingPrompt			= true;
@@ -791,9 +797,7 @@ namespace
 				std::unique_lock<std::mutex> lock(job->mtx);
 				job->cv.wait(lock, [&job] { return job->isFinished; });
 			}
-		}		
-		
-		void embed(const EmbeddingParameters &params, std::shared_ptr<Job> job) override
+		}		void embed(const EmbeddingParameters &params, std::shared_ptr<Job> job) override
 		{
 #ifdef DEBUG
 			std::cout << "[INFERENCE] Submitting embedding job" << std::endl;
@@ -883,9 +887,8 @@ namespace
 
 		const int n_batch;
 		const int n_keep;
-		const int n_ctx;
-		SlotManager slotManager;
-
+	const int n_ctx;
+	SlotManager slotManager;
 		/**
 		 * @brief Generates embeddings for the given input text
 		 * @param input The input text to generate embeddings for
@@ -2005,7 +2008,7 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 	params.n_batch						= lParams.n_batch;
 	params.n_ubatch                     = lParams.n_ubatch;
 	params.webui						= false;
-	params.single_turn					= false;
+	params.single_turn					= true;
 	params.compute_ppl					= false;
 	params.use_jinja					= true;
 #if defined(USE_CUDA) || defined(USE_VULKAN)
