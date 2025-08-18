@@ -825,6 +825,10 @@ namespace kolosal
             if (config["database"])
             {
                 auto databaseConfig = config["database"];
+                // Retrieval embedding model ID (applies to both backends)
+                if (databaseConfig["retrieval_embedding_model"]) {
+                    database.retrievalEmbeddingModelId = databaseConfig["retrieval_embedding_model"].as<std::string>();
+                }
                 
                 // Vector database selection
                 if (databaseConfig["vector_database"])
@@ -1132,6 +1136,8 @@ namespace kolosal
 
             // Database configuration
             config["database"]["vector_database"] = (database.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS) ? "faiss" : "qdrant";
+            // Persist the retrieval embedding model ID for both backends
+            config["database"]["retrieval_embedding_model"] = database.retrievalEmbeddingModelId;
             
             config["database"]["qdrant"]["enabled"] = database.qdrant.enabled;
             config["database"]["qdrant"]["host"] = database.qdrant.host;

@@ -71,6 +71,12 @@ struct DatabaseConfig {
     };
     
     VectorDatabase vectorDatabase = VectorDatabase::FAISS; // Default to FAISS
+    // Default embedding model ID to use for retrieval (RAG) if not specified per-request
+    // Applies to both FAISS and Qdrant backends. Can be overridden by backend-specific settings.
+#pragma warning(push)
+#pragma warning(disable: 4251)
+    std::string retrievalEmbeddingModelId = "text-embedding-3-small";
+#pragma warning(pop)
     
     struct QdrantConfig {
         bool enabled = false;

@@ -17,6 +17,15 @@ project(KolosalServer VERSION 1.0.0 LANGUAGES C CXX)
 list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/overrides")
 message(STATUS "CMAKE_MODULE_PATH (prepended overrides): ${CMAKE_MODULE_PATH}")
 
+# On Windows, make vcpkg's applocal step optional and ensure it can use Windows PowerShell
+if(WIN32)
+    # Disable vcpkg's automatic applocal dependency copying to avoid requiring pwsh.exe.
+    # Our CMake already copies the needed runtime (e.g., libcurl.dll) explicitly.
+    set(VCPKG_APPLOCAL_DEPS OFF CACHE BOOL "Disable vcpkg applocal dependency copying" FORCE)
+    # If applocal is enabled elsewhere, ensure it uses Windows PowerShell instead of pwsh.
+    set(VCPKG_PWSH_PATH "powershell.exe" CACHE STRING "Path to PowerShell for vcpkg applocal step" FORCE)
+endif()
+
 # -----------------------------------------------------------------------------
 # Output directory layout
 # Goal (per user request): place all build products for a given configuration
@@ -97,9 +106,6 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/nlohmann)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/yaml-cpp/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/cppuprofile/lib)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/inference/include)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp/include)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp/common)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp/ggml/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/pugixml/src)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/zlib/contrib/minizip)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/maddy/include)
@@ -1477,7 +1483,7 @@ endif()
 option(USE_FAISS "Compile with FAISS support" ON)
 if(USE_FAISS AND NOT TARGET faiss)
     message(STATUS "Configuring FAISS vector database support...")
-    
+
     # Try to use system FAISS first
     find_package(faiss QUIET)
     if(faiss_FOUND)
@@ -1488,13 +1494,73 @@ if(USE_FAISS AND NOT TARGET faiss)
         # Check if we have FAISS source code
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/faiss/CMakeLists.txt")
             message(STATUS "Building FAISS from source...")
-            
+
             # Configure FAISS build options
             set(FAISS_ENABLE_GPU OFF CACHE BOOL "Disable FAISS GPU support by default")
             set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "Disable FAISS Python bindings")
-            set(BUILD_TESTING OFF CACHE BOOL "Disable FAISS tests")
-            set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build FAISS as static library")
-            
+            set(BUILD_TESTING OFF CACHE BOOL "Disable FAISS tests" FORCE)
+            set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build FAISS as static library" FORCE)
+
+            # Ensure BLAS/LAPACK are available for FAISS; if not, fetch OpenBLAS (pure CMake)
+            set(KOLOSAL_FETCH_OPENBLAS ON CACHE BOOL "Automatically fetch/build OpenBLAS if BLAS/LAPACK are missing" FORCE)
+            if(KOLOSAL_FETCH_OPENBLAS)
+                # First try to detect BLAS/LAPACK quickly
+                set(BLA_VENDOR "OpenBLAS" CACHE STRING "BLAS vendor preference")
+                find_package(BLAS QUIET)
+                find_package(LAPACK QUIET)
+                # Determine if our BLAS/LAPACK discovery is actually usable
+                set(_blas_usable FALSE)
+                if(BLAS_FOUND AND LAPACK_FOUND)
+                    if(TARGET OpenBLAS::OpenBLAS OR TARGET openblas)
+                        set(_blas_usable TRUE)
+                    elseif(DEFINED BLAS_LIBRARIES)
+                        # BLAS_LIBRARIES may be a bare name like 'openblas' on Windows; ensure it's a path or target
+                        if(NOT BLAS_LIBRARIES STREQUAL "openblas" AND NOT BLAS_LIBRARIES STREQUAL "")
+                            set(_blas_usable TRUE)
+                        endif()
+                    endif()
+                endif()
+                if(NOT _blas_usable)
+                    message(STATUS "BLAS/LAPACK usable libraries not found; fetching OpenBLAS via CMake FetchContent...")
+                    # Some third-party projects (like OpenBLAS) may declare very old CMake minimums.
+                    # Newer CMake requires setting a policy minimum to allow configuring such projects.
+                    # Apply the recommendation globally so subprojects can configure cleanly.
+                    set(CMAKE_POLICY_VERSION_MINIMUM "3.5" CACHE STRING "Minimum CMake policy version for third-party subprojects" FORCE)
+                    include(FetchContent)
+                    FetchContent_Declare(
+                        openblas_ext
+                        GIT_REPOSITORY https://github.com/xianyi/OpenBLAS.git
+                        GIT_TAG v0.3.26
+                        GIT_SHALLOW TRUE
+                    )
+                    # OpenBLAS CMake supports BUILD_SHARED_LIBS; prefer static to simplify linking
+                    set(OPENBLAS_BUILD_SHARED_LIBS OFF CACHE BOOL "Build OpenBLAS static" FORCE)
+                    # Prefer building with LAPACK enabled if supported by OpenBLAS CMake
+                    set(BUILD_WITHOUT_LAPACK OFF CACHE BOOL "Build OpenBLAS with LAPACK if available" FORCE)
+                    FetchContent_MakeAvailable(openblas_ext)
+
+                    # OpenBLAS exports target OpenBLAS::OpenBLAS in newer CMake builds
+                    if(TARGET OpenBLAS::OpenBLAS)
+                        set(BLAS_LIBRARIES OpenBLAS::OpenBLAS CACHE STRING "BLAS libraries" FORCE)
+                        set(LAPACK_LIBRARIES OpenBLAS::OpenBLAS CACHE STRING "LAPACK libraries (provided by OpenBLAS)" FORCE)
+                        set(BLAS_FOUND TRUE CACHE BOOL "BLAS found via OpenBLAS" FORCE)
+                        set(LAPACK_FOUND TRUE CACHE BOOL "LAPACK found via OpenBLAS" FORCE)
+                        message(STATUS "Configured BLAS/LAPACK via OpenBLAS target: OpenBLAS::OpenBLAS")
+                    else()
+                        # Fallback: try to locate produced library variable
+                        if(DEFINED OPENBLAS_LIBRARIES)
+                            set(BLAS_LIBRARIES ${OPENBLAS_LIBRARIES} CACHE STRING "BLAS libraries" FORCE)
+                            set(LAPACK_LIBRARIES ${OPENBLAS_LIBRARIES} CACHE STRING "LAPACK libraries (OpenBLAS)" FORCE)
+                            set(BLAS_FOUND TRUE CACHE BOOL "BLAS found via OpenBLAS libs" FORCE)
+                            set(LAPACK_FOUND TRUE CACHE BOOL "LAPACK found via OpenBLAS libs" FORCE)
+                            message(STATUS "Configured BLAS/LAPACK via OpenBLAS libraries: ${OPENBLAS_LIBRARIES}")
+                        endif()
+                    endif()
+                else()
+                    message(STATUS "Found usable system BLAS/LAPACK; no need to fetch OpenBLAS")
+                endif()
+            endif()
+
             # Enable GPU support if CUDA is available and requested
             if(USE_CUDA)
                 find_package(CUDA QUIET)
@@ -1503,7 +1569,8 @@ if(USE_FAISS AND NOT TARGET faiss)
                     message(STATUS "FAISS GPU support enabled with CUDA")
                 endif()
             endif()
-            
+
+            # Add FAISS after BLAS/LAPACK are prepared
             add_subdirectory(external/faiss EXCLUDE_FROM_ALL)
             set(FAISS_LIBRARIES faiss)
         else()
@@ -1585,6 +1652,11 @@ if(USE_PODOFO AND NOT TARGET freetype)
 endif()
 
 target_link_libraries(kolosal_server PRIVATE ${KOLOSAL_LINK_LIBRARIES})
+# Ensure consumers (e.g., kolosal_server_exe) see the inference engine's public headers
+# because some public headers (e.g., inference.h) include llama.cpp headers.
+if(TARGET ${INFERENCE_TARGET})
+    target_link_libraries(kolosal_server PUBLIC ${INFERENCE_TARGET})
+endif()
 
 # Link CURL libraries and include directories
 if(CURL_LIBRARY)

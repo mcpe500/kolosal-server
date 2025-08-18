@@ -2,6 +2,7 @@
 #include "kolosal/retrieval/remove_document_types.hpp"
 #include "kolosal/vector_database.hpp"
 #include "kolosal/server_api.hpp"
+#include "kolosal/server_config.hpp"
 #include "kolosal/node_manager.h"
 #include "kolosal/logger.hpp"
 #include "inference_interface.h"
@@ -113,6 +114,38 @@ public:
         }
     }
     
+    // Decide which embedding model to use when none is explicitly provided
+    std::string chooseEmbeddingModelId(const std::string& requested) const {
+        if (!requested.empty()) {
+            return requested;
+        }
+        try {
+            // If user set a cross-backend retrieval model in config, prefer it
+            if (!config_.retrievalEmbeddingModelId.empty()) {
+                return config_.retrievalEmbeddingModelId;
+            }
+            if (config_.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS) {
+                // Prefer an embedding model configured in ServerConfig models list
+                const auto& cfg = ServerConfig::getInstance();
+                for (const auto& model : cfg.models) {
+                    if (!model.type.empty() && model.type == "embedding" && !model.id.empty()) {
+                        return model.id;
+                    }
+                }
+                // Fallback if none configured
+                return std::string("text-embedding-3-small");
+            } else {
+                // Qdrant specific default if set
+                if (!config_.qdrant.defaultEmbeddingModel.empty()) {
+                    return config_.qdrant.defaultEmbeddingModel;
+                }
+                return std::string("text-embedding-3-small");
+            }
+        } catch (...) {
+            return std::string("text-embedding-3-small");
+        }
+    }
+    
     std::string generateDocumentId()
     {
         static thread_local std::random_device rd;
@@ -145,12 +178,10 @@ public:
     
     std::future<std::vector<float>> generateEmbedding(const std::string& text, const std::string& model_id)
     {
-        return std::async(std::launch::async, [this, text, model_id]() -> std::vector<float> {
+    return std::async(std::launch::async, [this, text, model_id]() -> std::vector<float> {
             try
             {
-                std::string effective_model_id = model_id.empty() ? 
-                    (config_.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS ? 
-                     "text-embedding-3-small" : config_.qdrant.defaultEmbeddingModel) : model_id;
+        std::string effective_model_id = chooseEmbeddingModelId(model_id);
                 
                 ServerLogger::logDebug("Generating embedding for text (length: %zu) using model: %s", 
                                        text.length(), effective_model_id.c_str());
@@ -231,7 +262,7 @@ public:
     std::future<std::vector<std::pair<size_t, std::vector<float>>>> generateEmbeddingsBatch(
         const std::vector<std::pair<size_t, std::string>>& texts, const std::string& model_id)
     {
-        return std::async(std::launch::async, [this, texts, model_id]() -> std::vector<std::pair<size_t, std::vector<float>>> {
+    return std::async(std::launch::async, [this, texts, model_id]() -> std::vector<std::pair<size_t, std::vector<float>>> {
             std::vector<std::pair<size_t, std::vector<float>>> results;
             
             if (texts.empty()) {
@@ -239,9 +270,7 @@ public:
             }
             
             try {
-                std::string effective_model_id = model_id.empty() ? 
-                    (config_.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS ? 
-                     "text-embedding-3-small" : config_.qdrant.defaultEmbeddingModel) : model_id;
+                std::string effective_model_id = chooseEmbeddingModelId(model_id);
                 
                 ServerLogger::logInfo("Generating embeddings for batch of %zu texts using model: %s", 
                                      texts.size(), effective_model_id.c_str());
