@@ -500,6 +500,7 @@ if(BUILD_INFERENCE_TESTS)
     set(INFERENCE_TEST_SOURCES
         tests/test_completion_basic.cpp
         tests/test_chat.cpp
+        tests/test_chat_multiturn.cpp
         tests/test_session_cache.cpp
         tests/test_parallel.cpp
         tests/test_embedding.cpp
