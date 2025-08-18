@@ -302,7 +302,7 @@ std::future<FaissResult> FaissClient::upsertPoints(
     const std::vector<FaissPoint>& points)
 {
     return std::async(std::launch::async, [this, collection_name, points]() -> FaissResult {
-        std::lock_guard<std::mutex> lock(pImpl->mutex_);
+    std::unique_lock<std::mutex> lock(pImpl->mutex_);
         
         FaissResult result;
         result.success = false;
@@ -319,7 +319,11 @@ std::future<FaissResult> FaissClient::upsertPoints(
                 if (!points.empty()) {
                     int dims = static_cast<int>(points.front().vector.size());
                     ServerLogger::logWarning("FAISS index not initialized. Attempting lazy initialization for collection '%s' with dimension %d", collection_name.c_str(), dims);
+                    // Release lock before calling initializeIndex to avoid deadlock
+                    lock.unlock();
                     auto init_res = pImpl->initializeIndex(collection_name, dims).get();
+                    // Reacquire lock for subsequent modifications
+                    lock.lock();
                     if (!init_res.success) {
                         result.error_message = "Lazy initialization failed: " + init_res.error_message;
                         return result;
@@ -390,8 +394,10 @@ std::future<FaissResult> FaissClient::upsertPoints(
             // Add vectors to index
             pImpl->index_->add_with_ids(points.size(), vectors.data(), ids.data());
             
-            // Save index after updates
+            // Save index after updates (release lock to avoid deadlock)
+            lock.unlock();
             auto save_result = pImpl->saveIndex().get();
+            // no need to re-lock; we are done modifying shared state
             if (!save_result.success)
             {
                 ServerLogger::logWarning("Failed to save index after upsert: %s", save_result.error_message.c_str());
@@ -416,7 +422,7 @@ std::future<FaissResult> FaissClient::deletePoints(
     const std::vector<std::string>& point_ids)
 {
     return std::async(std::launch::async, [this, collection_name, point_ids]() -> FaissResult {
-        std::lock_guard<std::mutex> lock(pImpl->mutex_);
+    std::unique_lock<std::mutex> lock(pImpl->mutex_);
         
         FaissResult result;
         result.success = false;
@@ -461,8 +467,10 @@ std::future<FaissResult> FaissClient::deletePoints(
             {
                 pImpl->index_->remove_ids(faiss::IDSelectorArray(ids_to_remove.size(), ids_to_remove.data()));
                 
-                // Save index after deletion
+                // Save index after deletion (release lock to avoid deadlock)
+                lock.unlock();
                 auto save_result = pImpl->saveIndex().get();
+                // no need to re-lock; function is exiting
                 if (!save_result.success)
                 {
                     ServerLogger::logWarning("Failed to save index after delete: %s", save_result.error_message.c_str());
@@ -533,7 +541,7 @@ std::future<FaissResult> FaissClient::search(
     float score_threshold)
 {
     return std::async(std::launch::async, [this, collection_name, query_vector, limit, score_threshold]() -> FaissResult {
-        std::lock_guard<std::mutex> lock(pImpl->mutex_);
+        std::unique_lock<std::mutex> lock(pImpl->mutex_);
         
         FaissResult result;
         result.success = false;
@@ -548,7 +556,11 @@ std::future<FaissResult> FaissClient::search(
             {
                 // Try lazy load from disk
                 ServerLogger::logWarning("FAISS search requested but index not initialized. Attempting to load existing index '%s'", collection_name.c_str());
+                // Release lock to avoid deadlock
+                lock.unlock();
                 auto init_res = pImpl->initializeIndex(collection_name, static_cast<int>(query_vector.size())).get();
+                // Reacquire lock to continue safely
+                lock.lock();
                 if (!init_res.success || !pImpl->index_) {
                     result.error_message = "Index not initialized and lazy load failed";
                     return result;
