@@ -14,6 +14,7 @@
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexIVFFlat.h>
 #include <faiss/IndexHNSW.h>
+#include <faiss/IndexIDMap.h>
 #include <faiss/index_io.h>
 #include <faiss/impl/io.h>
 #ifdef FAISS_ENABLE_GPU
@@ -94,6 +95,12 @@ public:
                 if (std::filesystem::exists(index_file))
                 {
                     index_ = faiss::read_index(index_file.string().c_str());
+                    // Ensure the index supports add_with_ids by wrapping with ID map if needed
+                    if (dynamic_cast<faiss::IndexIDMap*>(index_) == nullptr &&
+                        dynamic_cast<faiss::IndexIDMap2*>(index_) == nullptr)
+                    {
+                        index_ = new faiss::IndexIDMap2(index_);
+                    }
                     
                     // Load metadata
                     if (std::filesystem::exists(metadata_file))
@@ -145,6 +152,8 @@ public:
                         {
                             index_ = new faiss::IndexFlatIP(dimensions);
                         }
+                        // Wrap with ID map to support add_with_ids
+                        index_ = new faiss::IndexIDMap2(index_);
                     }
                     else if (config_.indexType == "IVF")
                     {
@@ -159,6 +168,8 @@ public:
                             quantizer = new faiss::IndexFlatIP(dimensions);
                             index_ = new faiss::IndexIVFFlat(quantizer, dimensions, config_.nlist, faiss::METRIC_INNER_PRODUCT);
                         }
+                        // Wrap with ID map to support add_with_ids
+                        index_ = new faiss::IndexIDMap2(index_);
                     }
                     else
                     {
