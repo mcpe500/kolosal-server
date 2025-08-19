@@ -174,6 +174,7 @@ set(SOURCES
     src/logger.cpp
     src/download_utils.cpp
     src/download_manager.cpp
+    src/faiss_client.cpp
     src/qdrant_client.cpp
     src/node_manager.cpp
     src/inference_loader.cpp
@@ -1468,6 +1469,9 @@ if(USE_FAISS AND NOT TARGET faiss)
             set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "Disable FAISS Python bindings")
             set(BUILD_TESTING OFF CACHE BOOL "Disable FAISS tests" FORCE)
             set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build FAISS as static library" FORCE)
+            # FAISS can operate with just BLAS; on MSVC we avoid LAPACK by disabling it in OpenBLAS.
+            # In newer FAISS, this is controlled via FAISS_REQUIRE_LAPACK.
+            set(FAISS_REQUIRE_LAPACK OFF CACHE BOOL "Do not require LAPACK when building FAISS" FORCE)
 
             # Ensure BLAS/LAPACK are available for FAISS; if not, fetch OpenBLAS (pure CMake)
             set(KOLOSAL_FETCH_OPENBLAS ON CACHE BOOL "Automatically fetch/build OpenBLAS if BLAS/LAPACK are missing" FORCE)
@@ -1494,6 +1498,13 @@ if(USE_FAISS AND NOT TARGET faiss)
                     # Newer CMake requires setting a policy minimum to allow configuring such projects.
                     # Apply the recommendation globally so subprojects can configure cleanly.
                     set(CMAKE_POLICY_VERSION_MINIMUM "3.5" CACHE STRING "Minimum CMake policy version for third-party subprojects" FORCE)
+                    # IMPORTANT: Our top-level include_directories() adds many paths (e.g. inference/common)
+                    # that can shadow OpenBLAS headers such as "common.h" when compiling C sources.
+                    # MSVC then tries to consume a C++ header in C mode, causing STL1003 from yvals_core.h.
+                    # To prevent this, temporarily clear inherited include dirs while configuring OpenBLAS,
+                    # then restore them afterwards.
+                    get_property(_kolosal_saved_inc_dirs DIRECTORY PROPERTY INCLUDE_DIRECTORIES)
+                    set_property(DIRECTORY PROPERTY INCLUDE_DIRECTORIES "")
                     include(FetchContent)
                     FetchContent_Declare(
                         openblas_ext
@@ -1503,24 +1514,45 @@ if(USE_FAISS AND NOT TARGET faiss)
                     )
                     # OpenBLAS CMake supports BUILD_SHARED_LIBS; prefer static to simplify linking
                     set(OPENBLAS_BUILD_SHARED_LIBS OFF CACHE BOOL "Build OpenBLAS static" FORCE)
-                    # Prefer building with LAPACK enabled if supported by OpenBLAS CMake
-                    set(BUILD_WITHOUT_LAPACK OFF CACHE BOOL "Build OpenBLAS with LAPACK if available" FORCE)
+                    # On MSVC there is no C99 <complex.h>, which LAPACK's C sources rely on.
+                    # Building OpenBLAS with LAPACK under MSVC can fail with
+                    #   yvals_core.h: STL1003: Unexpected compiler, expected C++ compiler
+                    # due to accidental inclusion of C++-only headers in C mode when LAPACK pulls complex.h.
+                    # Avoid this by disabling LAPACK when using MSVC. FAISS and ggml only require BLAS.
+                    if(MSVC)
+                        set(BUILD_WITHOUT_LAPACK ON CACHE BOOL "Build OpenBLAS without LAPACK on MSVC to avoid C99 complex issues" FORCE)
+                    else()
+                        set(BUILD_WITHOUT_LAPACK OFF CACHE BOOL "Build OpenBLAS with LAPACK if available" FORCE)
+                    endif()
                     FetchContent_MakeAvailable(openblas_ext)
+                    # Restore the original include directories for the rest of the project
+                    set_property(DIRECTORY PROPERTY INCLUDE_DIRECTORIES "${_kolosal_saved_inc_dirs}")
 
                     # OpenBLAS exports target OpenBLAS::OpenBLAS in newer CMake builds
                     if(TARGET OpenBLAS::OpenBLAS)
                         set(BLAS_LIBRARIES OpenBLAS::OpenBLAS CACHE STRING "BLAS libraries" FORCE)
-                        set(LAPACK_LIBRARIES OpenBLAS::OpenBLAS CACHE STRING "LAPACK libraries (provided by OpenBLAS)" FORCE)
+                        # LAPACK may not be built on MSVC; expose only BLAS when LAPACK is absent.
+                        if(NOT BUILD_WITHOUT_LAPACK)
+                            set(LAPACK_LIBRARIES OpenBLAS::OpenBLAS CACHE STRING "LAPACK libraries (provided by OpenBLAS)" FORCE)
+                            set(LAPACK_FOUND TRUE CACHE BOOL "LAPACK found via OpenBLAS" FORCE)
+                        else()
+                            unset(LAPACK_LIBRARIES CACHE)
+                            set(LAPACK_FOUND FALSE CACHE BOOL "LAPACK not provided on MSVC build" FORCE)
+                        endif()
                         set(BLAS_FOUND TRUE CACHE BOOL "BLAS found via OpenBLAS" FORCE)
-                        set(LAPACK_FOUND TRUE CACHE BOOL "LAPACK found via OpenBLAS" FORCE)
                         message(STATUS "Configured BLAS/LAPACK via OpenBLAS target: OpenBLAS::OpenBLAS")
                     else()
                         # Fallback: try to locate produced library variable
                         if(DEFINED OPENBLAS_LIBRARIES)
                             set(BLAS_LIBRARIES ${OPENBLAS_LIBRARIES} CACHE STRING "BLAS libraries" FORCE)
-                            set(LAPACK_LIBRARIES ${OPENBLAS_LIBRARIES} CACHE STRING "LAPACK libraries (OpenBLAS)" FORCE)
+                            if(NOT BUILD_WITHOUT_LAPACK)
+                                set(LAPACK_LIBRARIES ${OPENBLAS_LIBRARIES} CACHE STRING "LAPACK libraries (OpenBLAS)" FORCE)
+                                set(LAPACK_FOUND TRUE CACHE BOOL "LAPACK found via OpenBLAS libs" FORCE)
+                            else()
+                                unset(LAPACK_LIBRARIES CACHE)
+                                set(LAPACK_FOUND FALSE CACHE BOOL "LAPACK not provided on MSVC build" FORCE)
+                            endif()
                             set(BLAS_FOUND TRUE CACHE BOOL "BLAS found via OpenBLAS libs" FORCE)
-                            set(LAPACK_FOUND TRUE CACHE BOOL "LAPACK found via OpenBLAS libs" FORCE)
                             message(STATUS "Configured BLAS/LAPACK via OpenBLAS libraries: ${OPENBLAS_LIBRARIES}")
                         endif()
                     endif()
@@ -1539,8 +1571,20 @@ if(USE_FAISS AND NOT TARGET faiss)
             endif()
 
             # Add FAISS after BLAS/LAPACK are prepared
-            add_subdirectory(external/faiss EXCLUDE_FROM_ALL)
-            set(FAISS_LIBRARIES faiss)
+            # On MSVC, FAISS requires LAPACK (via MKL or a LAPACK-enabled BLAS). If not available, disable FAISS.
+            # Try to detect MKL using FAISS' own FindMKL if available.
+            list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/faiss/cmake")
+            find_package(MKL QUIET)
+            if(MSVC AND NOT MKL_FOUND AND NOT LAPACK_FOUND)
+                message(WARNING "LAPACK/MKL not available on MSVC; disabling FAISS to complete the build. Install Intel oneMKL or provide LAPACK to enable FAISS.")
+                # Create a stub target to prevent build errors
+                add_library(faiss INTERFACE)
+                set(FAISS_LIBRARIES faiss)
+                set(USE_FAISS OFF)
+            else()
+                add_subdirectory(external/faiss EXCLUDE_FROM_ALL)
+                set(FAISS_LIBRARIES faiss)
+            endif()
         else()
             message(WARNING "FAISS source not found. Creating stub target.")
             # Create a stub target to prevent build errors
@@ -1561,6 +1605,18 @@ endif()
 
 # Link libraries - use the determined inference target
 set(KOLOSAL_LINK_LIBRARIES yaml-cpp ${INFERENCE_TARGET} minizip_static pugixml)
+
+# If FAISS ended up disabled, ensure the macro is undefined for this target (the earlier
+# generator expression may have defined it before we toggled the option off).
+if(NOT USE_FAISS)
+    if(TARGET kolosal_server)
+        target_compile_options(kolosal_server PRIVATE
+            $<$<CXX_COMPILER_ID:MSVC>:/UUSE_FAISS>
+            $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-UUSE_FAISS>
+        )
+        message(STATUS "FAISS support disabled; forcing USE_FAISS to be undefined for kolosal_server")
+    endif()
+endif()
 
 # Add FAISS if enabled
 if(USE_FAISS AND FAISS_LIBRARIES)
@@ -1624,6 +1680,17 @@ target_link_libraries(kolosal_server PRIVATE ${KOLOSAL_LINK_LIBRARIES})
 # because some public headers (e.g., inference.h) include llama.cpp headers.
 if(TARGET ${INFERENCE_TARGET})
     target_link_libraries(kolosal_server PUBLIC ${INFERENCE_TARGET})
+endif()
+
+# Also link directly against the core llama static library to satisfy direct
+# references from server code (e.g., llama_max_devices used in models_route.cpp)
+if(TARGET llama)
+    if(MSVC)
+        # Ensure the MSVC linker pulls in all needed symbols from llama.lib
+        target_link_options(kolosal_server PRIVATE 
+            $<$<STREQUAL:$<TARGET_PROPERTY:llama,TYPE>,STATIC_LIBRARY>:/WHOLEARCHIVE:$<TARGET_FILE:llama>>)
+    endif()
+    target_link_libraries(kolosal_server PRIVATE llama)
 endif()
 
 # Link CURL libraries and include directories
