@@ -27,6 +27,18 @@ namespace kolosal
 {
     namespace
     {
+        template <typename P>
+        void finalizeStructuredOutput(P &params, const char *context) {
+            if (!params.grammar.empty()) {
+                if (!params.jsonSchema.empty()) {
+                    ServerLogger::logInfo("[oai-%s] Both grammar & jsonSchema provided; grammar takes precedence", context);
+                } else {
+                    ServerLogger::logInfo("[oai-%s] Using provided grammar (chars=%zu)", context, params.grammar.size());
+                }
+            } else if (!params.jsonSchema.empty()) {
+                ServerLogger::logInfo("[oai-%s] Using provided JSON schema (chars=%zu)", context, params.jsonSchema.size());
+            }
+        }
         /**
          * @brief Builds ChatCompletionParameters from a ChatCompletionRequest
          * Following the ModelManager pattern from the example
@@ -107,12 +119,6 @@ namespace kolosal
             {
                 params.randomSeed = request.seed.value();
             }
-
-            // Set unique sequence ID based on timestamp
-            auto now = std::chrono::system_clock::now();
-            auto timestamp = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-            static int seqCounter = 0;
-            params.seqId = static_cast<int>(timestamp * 1000 + seqCounter++);
 
             return params;
         }
@@ -269,6 +275,8 @@ namespace kolosal
                 }
             }
 
+            finalizeStructuredOutput(inferenceParams, "chat");
+
             if (request.stream)
             {
                 // Handle streaming response
@@ -296,6 +304,7 @@ namespace kolosal
                 // Poll for results and stream them
                 bool jobComplete = false;
                 std::string allText;
+                size_t lastTokenCount = 0;
 
                 while (!jobComplete)
                 {
@@ -327,6 +336,7 @@ namespace kolosal
                         send(sock, chunkData.c_str(), static_cast<int>(chunkData.length()), 0);
                         
                         allText = result.text;
+                        lastTokenCount = result.tokens.size();
                     }
 
                     if (engine->isJobFinished(jobId))
@@ -400,6 +410,9 @@ namespace kolosal
                 choice.finish_reason = "stop";
 
                 response.choices.push_back(choice);
+
+                // Compute usage from actual token counts
+                updateChatUsageStats(response, result, result.prompt_token_count);
 
                 // Send response
                 json jResponse = response.to_json();
@@ -479,6 +492,8 @@ namespace kolosal
                 }
             }
 
+            finalizeStructuredOutput(inferenceParams, "completion");
+
             if (request.stream)
             {
                 // Handle streaming response
@@ -506,6 +521,7 @@ namespace kolosal
                 // Poll for results and stream them
                 bool jobComplete = false;
                 std::string allText;
+                size_t lastTokenCount = 0;
 
                 while (!jobComplete)
                 {
@@ -537,6 +553,7 @@ namespace kolosal
                         send(sock, chunkData.c_str(), static_cast<int>(chunkData.length()), 0);
                         
                         allText = result.text;
+                        lastTokenCount = result.tokens.size();
                     }
 
                     if (engine->isJobFinished(jobId))
@@ -609,6 +626,9 @@ namespace kolosal
                 choice.finish_reason = "stop";
 
                 response.choices.push_back(choice);
+
+                // Compute usage from actual token counts
+                updateCompletionUsageStats(response, result, result.prompt_token_count);
 
                 // Send response
                 json jResponse = response.to_json();

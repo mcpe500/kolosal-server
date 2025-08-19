@@ -95,13 +95,21 @@ target_compile_definitions(${TARGET_NAME} PRIVATE INFERENCE_EXPORTS)
 # Include directories
 target_include_directories(${TARGET_NAME} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../external/nlohmann
+    ${CMAKE_CURRENT_SOURCE_DIR}/external
 )
 
-# Find and setup llama.cpp
-set(LLAMA_CPP_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../external/llama.cpp")
+# Find and setup llama.cpp (moved under inference/external)
+# Primary (new) location: inference/external/llama.cpp
+# Fallback (legacy) location: ../external/llama.cpp (for out-of-tree or un-migrated workspaces)
+set(LLAMA_CPP_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp")
 if(NOT EXISTS "${LLAMA_CPP_PATH}/CMakeLists.txt")
-    message(FATAL_ERROR "llama.cpp not found at ${LLAMA_CPP_PATH}. Please clone it or adjust LLAMA_CPP_PATH.")
+    set(LLAMA_CPP_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../external/llama.cpp")
+    if(EXISTS "${LLAMA_CPP_PATH}/CMakeLists.txt")
+        message(WARNING "Using legacy llama.cpp path: ${LLAMA_CPP_PATH}. Consider moving it to inference/external/llama.cpp")
+    endif()
+endif()
+if(NOT EXISTS "${LLAMA_CPP_PATH}/CMakeLists.txt")
+    message(FATAL_ERROR "llama.cpp not found. Expected at inference/external/llama.cpp or external/llama.cpp relative to inference.")
 endif()
 
 # Find CURL
@@ -131,7 +139,6 @@ set(LLAMA_BUILD_SERVER    OFF CACHE BOOL "Disable llama.cpp server"             
 set(LLAMA_BUILD_COMMON    ON  CACHE BOOL "Enable  llama.cpp common"             FORCE)
 set(LLAMA_ALL_WARNINGS    OFF CACHE BOOL "Disable warnings in llama.cpp"        FORCE)
 set(LLAMA_CURL            ON  CACHE BOOL "Enable curl in llama.cpp"             FORCE)
-set(LLAMA_TOOLCALL        ON  CACHE BOOL "Enable llama.cpp toolcall"            FORCE)
 set(BUILD_SHARED_LIBS     OFF CACHE BOOL "Build llama.cpp as a static lib"      FORCE)
 set(GGML_STATIC_LINK      ON  CACHE BOOL "Static link ggml libraries"           FORCE)
 set(GGML_STATIC           ON  CACHE BOOL "Static link ggml libraries"           FORCE)
@@ -280,7 +287,8 @@ if(CMAKE_POSITION_INDEPENDENT_CODE)
 endif()
 
 # Link llama.cpp libraries
-set(LLAMA_LINK_LIBRARIES llama common ggml toolcall)
+# Link only the required llama.cpp libraries (toolcall disabled)
+set(LLAMA_LINK_LIBRARIES llama common ggml)
 target_link_libraries(${TARGET_NAME} PRIVATE ${LLAMA_LINK_LIBRARIES})
 
 # Link CURL libraries and include directories
@@ -317,6 +325,7 @@ target_include_directories(${TARGET_NAME} PUBLIC
     ${LLAMA_CPP_PATH}/include
     ${LLAMA_CPP_PATH}/common
     ${LLAMA_CPP_PATH}/ggml/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/external
 )
 
 # Find and link thread library
@@ -455,6 +464,90 @@ install(TARGETS ${TARGET_NAME}
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
 )
+
+# ---------------------------------------------------------------------------
+# Optional simple smoke test executable for the inference engine
+# Allows running a basic completion without starting the full server.
+# Usage after build:
+#   ./bin/inference_smoketest /path/to/model.gguf "Your prompt here"
+# ---------------------------------------------------------------------------
+option(BUILD_INFERENCE_TESTS "Build simple inference smoke test" ON)
+if(BUILD_INFERENCE_TESTS)
+    add_executable(inference_smoketest tests/test_inference.cpp)
+    target_link_libraries(inference_smoketest PRIVATE ${TARGET_NAME})
+    target_include_directories(inference_smoketest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    set_target_properties(inference_smoketest PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+    )
+    if(APPLE)
+        # Ensure the test can locate the dylib at runtime
+        set_target_properties(inference_smoketest PROPERTIES
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "@executable_path;@executable_path/../lib;@loader_path"
+        )
+    elseif(UNIX)
+        set_target_properties(inference_smoketest PROPERTIES
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../lib"
+        )
+    endif()
+    install(TARGETS inference_smoketest RUNTIME DESTINATION bin)
+
+    # Additional focused test executables
+    set(INFERENCE_TEST_SOURCES
+        tests/test_completion_basic.cpp
+        tests/test_chat.cpp
+        tests/test_chat_multiturn.cpp
+        tests/test_session_cache.cpp
+        tests/test_parallel.cpp
+        tests/test_embedding.cpp
+        tests/test_invalid_and_cancel.cpp
+        tests/test_grammar.cpp
+        tests/test_json_schema.cpp
+        tests/test_multi_gpu.cpp
+        tests/test_auto_seq.cpp
+    )
+
+    foreach(test_src ${INFERENCE_TEST_SOURCES})
+        get_filename_component(test_name ${test_src} NAME_WE)
+        add_executable(${test_name} ${test_src} tests/test_common.h)
+        target_link_libraries(${test_name} PRIVATE ${TARGET_NAME})
+        target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        set_target_properties(${test_name} PROPERTIES
+            CXX_STANDARD 17
+            CXX_STANDARD_REQUIRED ON
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+        )
+        if(APPLE)
+            set_target_properties(${test_name} PROPERTIES
+                BUILD_WITH_INSTALL_RPATH TRUE
+                INSTALL_RPATH "@executable_path;@executable_path/../lib;@loader_path"
+            )
+        elseif(UNIX)
+            set_target_properties(${test_name} PROPERTIES
+                BUILD_WITH_INSTALL_RPATH TRUE
+                INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../lib"
+            )
+        endif()
+        install(TARGETS ${test_name} RUNTIME DESTINATION bin)
+    endforeach()
+
+    # Convenience aggregate target to build all inference test executables at once
+    add_custom_target(inference_tests
+        DEPENDS
+            inference_smoketest
+            test_completion_basic
+            test_chat
+            test_session_cache
+            test_parallel
+            test_embedding
+            test_invalid_and_cancel
+            test_multi_gpu
+    )
+endif()
 
 # Install header files
 install(DIRECTORY include/

@@ -13,6 +13,7 @@
 #include "kolosal/download_utils.hpp"
 #include "kolosal/download_manager.hpp"
 #include "inference_interface.h"
+#include "llama.h" 
 #include <json.hpp>
 #include <iostream>
 #include <thread>
@@ -305,10 +306,37 @@ namespace kolosal
             loadParams.n_ubatch = request.loading_parameters.n_ubatch;
             loadParams.n_parallel = request.loading_parameters.n_parallel;
             loadParams.n_gpu_layers = request.loading_parameters.n_gpu_layers;
+            loadParams.split_mode = request.loading_parameters.split_mode;
             loadParams.use_mmap = request.loading_parameters.use_mmap;
             loadParams.use_mlock = request.loading_parameters.use_mlock;
             loadParams.cont_batching = request.loading_parameters.cont_batching;
             loadParams.warmup = request.loading_parameters.warmup;
+            loadParams.tensor_split = request.loading_parameters.tensor_split;
+
+            // ---------------------------------------------------------------------
+            // Automatic multi-GPU utilization
+            // If caller did not specify an explicit tensor_split and n_gpu_layers > 0,
+            // attempt to distribute work evenly across all detected devices.
+            // A split_mode value of -1 (sentinel from CLI) or 0 with empty tensor_split
+            // triggers auto mode. We set layer split (1) for simplicity.
+            // ---------------------------------------------------------------------
+            try {
+                bool wants_auto = (loadParams.tensor_split.empty() && loadParams.n_gpu_layers > 0 && (loadParams.split_mode <= 0));
+                if (wants_auto) {
+                    size_t dev_count = 1;
+                    try { dev_count = (size_t) llama_max_devices(); } catch (...) { dev_count = 1; }
+                    if (dev_count > 1) {
+                        loadParams.split_mode = 1; // layer split
+                        loadParams.tensor_split.assign(dev_count, 1.0f / static_cast<float>(dev_count));
+                        // Adjust last element to fix any floating point drift
+                        float sum = 0.0f; for (size_t i = 0; i < dev_count - 1; ++i) sum += loadParams.tensor_split[i];
+                        loadParams.tensor_split.back() = 1.0f - sum;
+                        ServerLogger::logInfo("[Thread %u] Auto multi-GPU enabled: %zu devices (split_mode=1)", std::this_thread::get_id(), dev_count);
+                    }
+                }
+            } catch (const std::exception &e) {
+                ServerLogger::logWarning("[Thread %u] Auto multi-GPU setup failed: %s", std::this_thread::get_id(), e.what());
+            }
 
             std::string errorMessage;
             std::string errorType;

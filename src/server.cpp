@@ -362,7 +362,9 @@ namespace kolosal
 			inet_ntop(client_addr.ss_family,
 					  client_addr.ss_family == AF_INET ? (void *)&(((struct sockaddr_in *)&client_addr)->sin_addr) : (void *)&(((struct sockaddr_in6 *)&client_addr)->sin6_addr),
 					  clientIP, sizeof(clientIP));
-#endif			ServerLogger::logDebug("New client connection from %s", clientIP);			// Spawn a thread to handle this client
+#endif
+			ServerLogger::logDebug("New client connection from %s", clientIP);
+			// Spawn a thread to handle this client
 			std::thread([this, client_sock, clientIP]()
 						{
 							ServerLogger::logDebug("[Thread %d] Processing request from %s",
@@ -463,17 +465,36 @@ namespace kolosal
 												  authResult.reason.c_str());							// Add OpenAI-compatible response headers
 							std::map<std::string, std::string> responseHeaders = {
 								{"Content-Type", "application/json"},
-								{"Access-Control-Allow-Origin", "*"},
-								{"Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS"},
-								{"Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-API-Key"},
 								{"X-Content-Type-Options", "nosniff"},
 								{"X-Frame-Options", "DENY"},
 								{"X-XSS-Protection", "1; mode=block"},
 								{"Referrer-Policy", "strict-origin-when-cross-origin"}
 							};
-							
-							// Merge authentication response headers
-							responseHeaders.insert(authResult.headers.begin(), authResult.headers.end());
+
+							// Overwrite merge to ensure dynamic CORS headers replace defaults
+							for (const auto &kv : authResult.headers) {
+								responseHeaders[kv.first] = kv.second;
+							}
+
+							// Ensure Access-Control-Allow-Origin not containing repeated comma '*'
+							auto acaoIt = responseHeaders.find("Access-Control-Allow-Origin");
+							if (acaoIt != responseHeaders.end()) {
+								if (acaoIt->second.find(",") != std::string::npos) {
+									// Simplify: if any '*' present reduce to single '*', else take first token
+									if (acaoIt->second.find("*") != std::string::npos) {
+										acaoIt->second = "*";
+									} else {
+										auto commaPos = acaoIt->second.find(',');
+										acaoIt->second = acaoIt->second.substr(0, commaPos);
+										// trim
+										while (!acaoIt->second.empty() && (acaoIt->second.front()==' '||acaoIt->second.front()=='\t')) acaoIt->second.erase(acaoIt->second.begin());
+										while (!acaoIt->second.empty() && (acaoIt->second.back()==' '||acaoIt->second.back()=='\t')) acaoIt->second.pop_back();
+									}
+								}
+							}
+
+							// Set default headers for all subsequent responses on this thread
+							kolosal::http_internal::set_default_response_headers(responseHeaders);
 
 							// Check if request is blocked by authentication
 							if (!authResult.allowed)
@@ -491,6 +512,7 @@ namespace kolosal
 #else
 								close(client_sock);
 #endif
+								kolosal::http_internal::clear_default_response_headers();
 								return;
 							}
 
@@ -505,6 +527,7 @@ namespace kolosal
 #else
 								close(client_sock);
 #endif
+								kolosal::http_internal::clear_default_response_headers();
 								return;
 							}							// Find Content-Length header (case-insensitive)
 							int contentLength = 0;
@@ -592,14 +615,17 @@ namespace kolosal
 
 								nlohmann::json jError = {{"error", {{"message", "Not found"}, {"type", "invalid_request_error"}, {"param", nullptr}, {"code", nullptr}}}};
 								send_response(client_sock, 404, jError.dump(), responseHeaders);
-							}							ServerLogger::logDebug("[Thread %d] Completed request for %s",
-												  std::this_thread::get_id(), path.c_str());
+							}							
+							
+							ServerLogger::logDebug("[Thread %d] Completed request for %s",
+							std::this_thread::get_id(), path.c_str());
 
 #ifdef _WIN32
 							closesocket(client_sock);
 #else
 							close(client_sock);
 #endif
+							kolosal::http_internal::clear_default_response_headers();
 						})
 				.detach(); // Detach the thread to handle the request independently
 		}

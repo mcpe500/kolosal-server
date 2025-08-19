@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <map>
 #include <cstring>
+#include <map>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -50,6 +51,21 @@ inline std::string get_status_text(int status_code) {
     }
 }
 
+// Thread-local default headers to apply to all responses within a request handling thread
+namespace kolosal {
+namespace http_internal {
+    inline thread_local std::map<std::string, std::string> g_default_response_headers;
+
+    inline void set_default_response_headers(const std::map<std::string, std::string>& headers) {
+        g_default_response_headers = headers; // replace per request
+    }
+
+    inline void clear_default_response_headers() {
+        g_default_response_headers.clear();
+    }
+}
+}
+
 // Regular response helper with support for custom headers
 inline KOLOSAL_SERVER_API void send_response(
     SocketType sock,
@@ -62,8 +78,14 @@ inline KOLOSAL_SERVER_API void send_response(
     response << "Content-Length: " << body.size() << "\r\n";
     response << "Connection: close\r\n";
 
-    // Add all custom headers
+    // Merge thread-local defaults with provided headers (provided overrides defaults)
+    std::map<std::string, std::string> merged = kolosal::http_internal::g_default_response_headers;
     for (const auto& [name, value] : headers) {
+        merged[name] = value;
+    }
+
+    // Add all headers
+    for (const auto& [name, value] : merged) {
         response << name << ": " << value << "\r\n";
     }
 
@@ -88,9 +110,22 @@ inline KOLOSAL_SERVER_API void begin_streaming_response(
     headerStream << "Transfer-Encoding: chunked\r\n";
     headerStream << "Connection: keep-alive\r\n";
     headerStream << "Cache-Control: no-cache\r\n";
-    headerStream << "Access-Control-Allow-Origin: *\r\n";
-    headerStream << "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n";
-    headerStream << "Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-API-Key\r\n";
+    // Merge thread-local defaults with provided headers (provided overrides defaults)
+    std::map<std::string, std::string> merged = kolosal::http_internal::g_default_response_headers;
+    for (const auto& kv : headers) {
+        merged[kv.first] = kv.second;
+    }
+
+    // CORS headers: only add permissive defaults if caller did not supply any CORS header
+    bool hasOrigin = false;
+    for (const auto &kv : merged) {
+        if (kv.first == "Access-Control-Allow-Origin" || kv.first == "access-control-allow-origin") { hasOrigin = true; break; }
+    }
+    if (!hasOrigin) {
+        headerStream << "Access-Control-Allow-Origin: *\r\n";
+        headerStream << "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n";
+        headerStream << "Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-API-Key\r\n";
+    }
     headerStream << "X-Content-Type-Options: nosniff\r\n";
     headerStream << "X-Frame-Options: DENY\r\n";
     headerStream << "X-XSS-Protection: 1; mode=block\r\n";
@@ -98,8 +133,8 @@ inline KOLOSAL_SERVER_API void begin_streaming_response(
     // Add SSE headers if not present in custom headers
     bool hasContentType = false;
 
-    // Add all custom headers
-    for (const auto& [name, value] : headers) {
+    // Add all headers
+    for (const auto& [name, value] : merged) {
         headerStream << name << ": " << value << "\r\n";
         if (name == "Content-Type" || name == "content-type") {
             hasContentType = true;

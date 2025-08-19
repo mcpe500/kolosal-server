@@ -106,55 +106,63 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/nlohmann)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/yaml-cpp/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/cppuprofile/lib)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/inference/include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/common)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/inference/external/llama.cpp/include")
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/inference/external/llama.cpp/include)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/inference/external/llama.cpp/common)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/inference/external/llama.cpp/ggml/include)
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp/include")
+    message(WARNING "Using legacy llama.cpp include path under kolosal-server/external/. Please migrate to inference/external/llama.cpp")
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp/include)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp/common)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp/ggml/include)
+endif()
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/pugixml/src)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/zlib/contrib/minizip)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/maddy/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/zlib)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/src)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/faiss)
+# Only include PoDoFo headers when PDF support is enabled
+if(USE_PODOFO)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/src)
+endif()
 
-# --- Ensure freetype imported target exists early when PoDoFo support is enabled (Linux needs this) ---
+# --- Ensure a usable 'freetype' CMake target exists (PoDoFo references it) ---
 if(USE_PODOFO AND NOT TARGET freetype)
-    # Try to locate freetype via standard find_package first (quiet to avoid spam)
+    # Prefer standard find_package (may provide target Freetype::Freetype)
     find_package(Freetype QUIET)
-    if(NOT FREETYPE_FOUND)
-        # Fallback: try direct library search (covers minimal systems)
+
+    # Collect library + include dirs
+    set(_FT_INCLUDE_DIRS "${FREETYPE_INCLUDE_DIRS}")
+    set(_FT_LIBS "${FREETYPE_LIBRARIES}")
+
+    # If FREETYPE_LIBRARIES is a target-like token and not an existing path, try manual locate
+    if(NOT _FT_LIBS)
         find_library(FREETYPE_LIBRARY NAMES freetype)
         if(FREETYPE_LIBRARY)
-            set(FREETYPE_LIBRARIES ${FREETYPE_LIBRARY})
-            set(FREETYPE_FOUND TRUE)
-            # Attempt include dir heuristic if not provided
-            if(NOT FREETYPE_INCLUDE_DIRS)
-                if(EXISTS "/usr/include/freetype2")
-                    set(FREETYPE_INCLUDE_DIRS "/usr/include/freetype2")
-                elseif(EXISTS "/usr/local/include/freetype2")
-                    set(FREETYPE_INCLUDE_DIRS "/usr/local/include/freetype2")
-                endif()
-            endif()
+            set(_FT_LIBS ${FREETYPE_LIBRARY})
         endif()
     endif()
-    if(FREETYPE_FOUND AND FREETYPE_LIBRARIES)
-        # Pick a representative freetype library path
-        set(_FT_LIB_IMPORT "")
-        foreach(_lib ${FREETYPE_LIBRARIES})
-            if(_lib MATCHES "freetype")
-                set(_FT_LIB_IMPORT ${_lib})
+
+    if(NOT _FT_INCLUDE_DIRS)
+        foreach(d "/opt/homebrew/include/freetype2" "/usr/local/include/freetype2" "/usr/include/freetype2")
+            if(EXISTS "${d}/ft2build.h")
+                set(_FT_INCLUDE_DIRS "${d}")
                 break()
             endif()
         endforeach()
-        if(NOT _FT_LIB_IMPORT)
-            list(GET FREETYPE_LIBRARIES 0 _FT_LIB_IMPORT)
+    endif()
+
+    if(_FT_LIBS)
+        # Create lightweight forwarding interface target; don't assume library path string is a real file if coming from an imported target.
+        add_library(freetype INTERFACE IMPORTED GLOBAL)
+        if(_FT_INCLUDE_DIRS)
+            set_target_properties(freetype PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${_FT_INCLUDE_DIRS}")
         endif()
-        if(NOT TARGET freetype)
-            add_library(freetype UNKNOWN IMPORTED GLOBAL)
-            set_target_properties(freetype PROPERTIES
-                IMPORTED_LOCATION "${_FT_LIB_IMPORT}"
-                INTERFACE_INCLUDE_DIRECTORIES "${FREETYPE_INCLUDE_DIRS}"
-            )
-            message(STATUS "Global: Created imported freetype target at ${_FT_LIB_IMPORT}")
-        endif()
+        set_target_properties(freetype PROPERTIES INTERFACE_LINK_LIBRARIES "${_FT_LIBS}")
+        message(STATUS "Global: Created INTERFACE freetype target forwarding: libs='${_FT_LIBS}' includes='${_FT_INCLUDE_DIRS}'")
     else()
-        message(WARNING "Global: PoDoFo enabled but freetype library could not be located yet; will attempt later. Install libfreetype6-dev if linking fails.")
+        message(WARNING "Global: Failed to locate freetype library; PoDoFo may fail to link. Install freetype (brew install freetype or apt install libfreetype6-dev).")
     endif()
 endif()
 
@@ -194,7 +202,7 @@ set(SOURCES
     src/retrieval/retrieve_types.cpp
     src/retrieval/document_service.cpp
     src/retrieval/parse_docx.cpp
-    src/retrieval/parse_pdf.cpp
+    # PDF parsing implementation is selected below depending on USE_PODOFO
     src/retrieval/parse_html.cpp
     src/retrieval/chunking_types.cpp
     
@@ -211,52 +219,12 @@ set(SOURCES
     # src/completion_monitor.cpp
 )
 
-# Conditionally include FAISS client source. Prefer vendored headers if present, otherwise allow system install.
-if(USE_FAISS)
-    find_path(FAISS_INDEXFLAT_HEADER faiss/IndexFlat.h
-        HINTS
-            "${CMAKE_CURRENT_SOURCE_DIR}/external/faiss"
-            $ENV{FAISS_ROOT}/include
-    )
-    if(FAISS_INDEXFLAT_HEADER)
-        list(APPEND SOURCES src/faiss_client.cpp)
-        message(STATUS "FAISS headers detected at ${FAISS_INDEXFLAT_HEADER} – including faiss_client.cpp")
-    else()
-        message(WARNING "FAISS headers not found locally. Attempting to fetch FAISS via FetchContent (set -DFAISS_SKIP_DOWNLOAD=ON to skip).")
-    if (NOT DEFINED FAISS_SKIP_DOWNLOAD OR NOT FAISS_SKIP_DOWNLOAD)
-            # Pre-set FAISS build options to avoid pulling in GPU/OpenMP CUDA requirements on Windows
-            set(FAISS_ENABLE_GPU OFF CACHE BOOL "Disable FAISS GPU for fetched build" FORCE)
-            set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "Disable FAISS Python for fetched build" FORCE)
-            set(BUILD_TESTING OFF CACHE BOOL "Disable FAISS tests for fetched build" FORCE)
-            set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build FAISS static for fetched build" FORCE)
-            include(FetchContent)
-            FetchContent_Declare(
-                faiss_ext
-                GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
-                GIT_TAG v1.8.0
-                GIT_SHALLOW TRUE
-            )
-            FetchContent_MakeAvailable(faiss_ext)
-            # If faiss CMake later fails due to BLAS, provide clearer message
-            if (NOT TARGET faiss)
-                message(WARNING "Fetched FAISS but target 'faiss' not created yet (likely BLAS missing). You'll need to install FAISS separately or install a BLAS (e.g. OpenBLAS) and reconfigure.")
-            endif()
-            # After fetching, attempt to locate header again
-            find_path(FAISS_INDEXFLAT_HEADER_REFRESH faiss/IndexFlat.h
-                HINTS ${faiss_ext_SOURCE_DIR} ${faiss_ext_SOURCE_DIR}/faiss
-            )
-            if(FAISS_INDEXFLAT_HEADER_REFRESH)
-                message(STATUS "Fetched FAISS source; headers at ${FAISS_INDEXFLAT_HEADER_REFRESH}")
-                list(APPEND SOURCES src/faiss_client.cpp)
-                # Add include directory explicitly in case not added by faiss project before our compilation
-                include_directories(${faiss_ext_SOURCE_DIR})
-            else()
-                message(FATAL_ERROR "Failed to fetch FAISS headers. Please install FAISS manually and reconfigure.")
-            endif()
-        else()
-            message(FATAL_ERROR "FAISS requested but headers missing and download skipped. Provide FAISS headers or disable USE_FAISS.")
-        endif()
-    endif()
+# Add PDF parser implementation based on USE_PODOFO
+if(USE_PODOFO)
+    list(APPEND SOURCES src/retrieval/parse_pdf.cpp)
+else()
+    message(STATUS "PoDoFo support disabled - using stub PDF parser")
+    list(APPEND SOURCES src/retrieval/parse_pdf_stub.cpp)
 endif()
 
 # Create shared library instead of static library.
