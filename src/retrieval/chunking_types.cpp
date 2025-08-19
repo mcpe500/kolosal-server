@@ -208,58 +208,67 @@ std::future<std::vector<float>> ChunkingService::computeEmbedding(
             // Serialize embedding requests to avoid concurrency issues
             std::lock_guard<std::mutex> lock(embedding_mutex_);
             
-            // Get the NodeManager and inference engine
+            // Get the NodeManager and build candidate engine list (requested first)
             auto& nodeManager = ServerAPI::instance().getNodeManager();
-            auto engine = nodeManager.getEngine(model_name);
-            
-            if (!engine)
+            std::vector<std::string> candidates;
+            if (!model_name.empty()) candidates.push_back(model_name);
+            for (const auto& id : nodeManager.listEngineIds())
             {
-                throw std::runtime_error("Model '" + model_name + "' not found or could not be loaded");
+                if (id != model_name) candidates.push_back(id);
             }
-            
-            // Create embedding parameters
-            EmbeddingParameters params;
-            params.input = text;
-            params.normalize = true;
-            params.seqId = static_cast<int>(std::hash<std::string>{}(text + model_name) % 10000);
-            
-            if (!params.isValid())
+
+            std::string usedModel;
+            for (const auto& id : candidates)
             {
-                throw std::runtime_error("Invalid embedding parameters for text: " + text.substr(0, 100));
+                auto engine = nodeManager.getEngine(id);
+                if (!engine)
+                {
+                    continue;
+                }
+
+                // Create embedding parameters
+                EmbeddingParameters params;
+                params.input = text;
+                params.normalize = true;
+                params.seqId = static_cast<int>(std::hash<std::string>{}(text + id) % 10000);
+
+                if (!params.isValid())
+                {
+                    ServerLogger::logWarning("Invalid embedding parameters; skipping engine '%s'", id.c_str());
+                    continue;
+                }
+
+                int jobId = engine->submitEmbeddingJob(params);
+                if (jobId < 0)
+                {
+                    ServerLogger::logWarning("Engine '%s' rejected embedding job; trying next engine", id.c_str());
+                    continue;
+                }
+
+                ServerLogger::logDebug("Submitted embedding job %d for model '%s', text length: %zu", jobId, id.c_str(), text.length());
+
+                engine->waitForJob(jobId);
+
+                if (engine->hasJobError(jobId))
+                {
+                    std::string error = engine->getJobError(jobId);
+                    ServerLogger::logWarning("Embedding job %d on model '%s' failed: %s", jobId, id.c_str(), error.c_str());
+                    continue;
+                }
+
+                EmbeddingResult result = engine->getEmbeddingResult(jobId);
+                if (result.embedding.empty())
+                {
+                    ServerLogger::logWarning("Model '%s' returned empty embedding; trying next engine", id.c_str());
+                    continue;
+                }
+
+                usedModel = id;
+                ServerLogger::logInfo("Completed embedding: using model '%s' with %zu dimensions", usedModel.c_str(), result.embedding.size());
+                return result.embedding;
             }
-            
-            // Submit embedding job
-            int jobId = engine->submitEmbeddingJob(params);
-            if (jobId < 0)
-            {
-                throw std::runtime_error("Failed to submit embedding job to inference engine");
-            }
-            
-            ServerLogger::logDebug("Submitted embedding job %d for model '%s', text length: %zu", 
-                                   jobId, model_name.c_str(), text.length());
-            
-            // Wait for job completion
-            engine->waitForJob(jobId);
-            
-            // Check for errors
-            if (engine->hasJobError(jobId))
-            {
-                std::string error = engine->getJobError(jobId);
-                ServerLogger::logError("Embedding job %d failed: %s", jobId, error.c_str());
-                throw std::runtime_error("Inference error: " + error);
-            }
-            
-            // Get the embedding result
-            EmbeddingResult result = engine->getEmbeddingResult(jobId);
-            
-            if (result.embedding.empty())
-            {
-                throw std::runtime_error("Empty embedding result returned");
-            }
-            
-            ServerLogger::logDebug("Completed embedding job %d: %zu dimensions", jobId, result.embedding.size());
-            
-            return result.embedding;
+
+            throw std::runtime_error("No available engine could compute embeddings");
         }
         catch (const std::exception& ex)
         {

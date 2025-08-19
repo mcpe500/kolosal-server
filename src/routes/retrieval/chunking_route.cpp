@@ -93,11 +93,35 @@ void ChunkingRoute::handle(SocketType sock, const std::string& body)
             return;
         }
 
-        // Validate the model
-        if (!validateChunkingModel(request.model_name))
+        // Validate or choose model only when embeddings are needed (semantic)
+        if (request.method == "semantic")
         {
-            sendErrorResponse(sock, 404, "Model '" + request.model_name + "' not found or could not be loaded", "model_not_found", "model_name");
-            return;
+            std::string chosenModel = request.model_name;
+            if (!validateChunkingModel(chosenModel))
+            {
+                // attempt to select any available model for embeddings as a fallback
+                auto& nodeManager = ServerAPI::instance().getNodeManager();
+                auto allModels = nodeManager.listEngineIds();
+                bool found = false;
+                for (const auto& id : allModels)
+                {
+                    auto eng = nodeManager.getEngine(id);
+                    if (eng)
+                    {
+                        chosenModel = id;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    sendErrorResponse(sock, 404, "No available embedding model found for semantic chunking", "model_not_found", "model_name");
+                    return;
+                }
+            }
+            // Use possibly updated model name
+            request.model_name = chosenModel;
         }
 
         // Generate unique request ID
@@ -109,7 +133,7 @@ void ChunkingRoute::handle(SocketType sock, const std::string& body)
         // Process the request based on the method
         std::future<std::vector<std::string>> chunks_future;
 
-        if (request.method == "regular")
+    if (request.method == "regular")
         {
             chunks_future = processRegularChunking(
                 request.text,

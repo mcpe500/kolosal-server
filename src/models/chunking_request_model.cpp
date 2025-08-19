@@ -7,17 +7,19 @@ namespace kolosal
 
 bool ChunkingRequest::validate() const
 {
-    if (model_name.empty())
-    {
-        ServerLogger::logDebug("Validation failed: model_name is empty");
-        return false;
-    }
-    
     if (text.empty())
     {
         ServerLogger::logDebug("Validation failed: text is empty");
         return false;
     }
+
+    if (method != "regular" && method != "semantic")
+    {
+        ServerLogger::logDebug("Validation failed: method must be 'regular' or 'semantic', got '%s'", method.c_str());
+        return false;
+    }
+
+    // model_name can be empty; server will choose a fallback embedding model if needed
     
     if (chunk_size <= 0 || chunk_size > 2048)
     {
@@ -43,12 +45,6 @@ bool ChunkingRequest::validate() const
         return false;
     }
     
-    if (method != "regular" && method != "semantic")
-    {
-        ServerLogger::logDebug("Validation failed: method must be 'regular' or 'semantic', got '%s'", method.c_str());
-        return false;
-    }
-    
     return true;
 }
 
@@ -67,12 +63,27 @@ nlohmann::json ChunkingRequest::to_json() const
 
 void ChunkingRequest::from_json(const nlohmann::json& j)
 {
-    if (!j.contains("model_name") || !j["model_name"].is_string())
+    // Parse method first to know whether model_name is required
+    if (j.contains("method"))
     {
-        throw std::runtime_error("Missing or invalid 'model_name' field - must be a string");
+        if (!j["method"].is_string())
+        {
+            throw std::runtime_error("Field 'method' must be a string");
+        }
+        method = j["method"].get<std::string>();
     }
-    model_name = j["model_name"].get<std::string>();
-    
+
+    // model_name is optional for regular chunking, required for semantic
+    if (j.contains("model_name"))
+    {
+        if (!j["model_name"].is_string())
+        {
+            throw std::runtime_error("Field 'model_name' must be a string");
+        }
+        model_name = j["model_name"].get<std::string>();
+    }
+    // If model_name is missing, we'll attempt to pick a fallback later in the route handler
+
     if (!j.contains("text") || !j["text"].is_string())
     {
         throw std::runtime_error("Missing or invalid 'text' field - must be a string");
@@ -115,14 +126,7 @@ void ChunkingRequest::from_json(const nlohmann::json& j)
         similarity_threshold = j["similarity_threshold"].get<float>();
     }
     
-    if (j.contains("method"))
-    {
-        if (!j["method"].is_string())
-        {
-            throw std::runtime_error("Field 'method' must be a string");
-        }
-        method = j["method"].get<std::string>();
-    }
+    // method already handled above
 }
 
 } // namespace kolosal
