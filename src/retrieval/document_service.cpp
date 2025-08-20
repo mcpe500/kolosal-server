@@ -1,6 +1,8 @@
 #include "kolosal/retrieval/document_service.hpp"
 #include "kolosal/retrieval/remove_document_types.hpp"
+#include "kolosal/vector_database.hpp"
 #include "kolosal/server_api.hpp"
+#include "kolosal/server_config.hpp"
 #include "kolosal/node_manager.h"
 #include "kolosal/logger.hpp"
 #include "inference_interface.h"
@@ -11,7 +13,8 @@
 #include <random>
 #include <set>
 #include <algorithm>
-#include <algorithm>
+#include <numeric>
+#include <cstdint>
 
 namespace kolosal
 {
@@ -22,29 +25,124 @@ class DocumentService::Impl
 {
 public:
     DatabaseConfig config_;
-    std::unique_ptr<QdrantClient> qdrant_client_;
+    std::unique_ptr<IVectorDatabase> vector_db_;
     bool initialized_ = false;
     std::mutex mutex_;
     
     Impl(const DatabaseConfig& config) : config_(config)
     {
-        if (config_.qdrant.enabled)
+        // Create vector database based on configuration
+        try
         {
-            QdrantClient::Config client_config;
-            client_config.host = config_.qdrant.host;
-            client_config.port = config_.qdrant.port;
-            client_config.apiKey = config_.qdrant.apiKey;
-            client_config.timeout = config_.qdrant.timeout;
-            client_config.maxConnections = config_.qdrant.maxConnections;
-            client_config.connectionTimeout = config_.qdrant.connectionTimeout;
+            nlohmann::json db_config;
             
-            qdrant_client_ = std::make_unique<QdrantClient>(client_config);
-            
-            ServerLogger::logInfo("DocumentService initialized with Qdrant client");
+            if (config_.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS)
+            {
+#ifdef USE_FAISS
+                db_config["indexType"] = config_.faiss.indexType;
+                db_config["indexPath"] = config_.faiss.indexPath;
+                db_config["dimensions"] = config_.faiss.dimensions;
+                db_config["normalizeVectors"] = config_.faiss.normalizeVectors;
+                db_config["nlist"] = config_.faiss.nlist;
+                db_config["nprobe"] = config_.faiss.nprobe;
+                db_config["useGPU"] = config_.faiss.useGPU;
+                db_config["gpuDevice"] = config_.faiss.gpuDevice;
+                db_config["metricType"] = config_.faiss.metricType;
+                
+                vector_db_ = VectorDatabaseFactory::create(VectorDatabaseFactory::DatabaseType::FAISS, db_config);
+                ServerLogger::logInfo("DocumentService initialized with FAISS vector database");
+#else
+                ServerLogger::logError("FAISS selected but not compiled in, attempting fallback to Qdrant");
+                // Auto-enable Qdrant fallback if disabled
+                if (!config_.qdrant.enabled)
+                {
+                    ServerLogger::logWarning("Qdrant disabled in configuration; enabling fallback with default parameters");
+                    config_.qdrant.enabled = true;
+                    if (config_.qdrant.host.empty()) config_.qdrant.host = "localhost";
+                    if (config_.qdrant.port == 0) config_.qdrant.port = 6333;
+                    if (config_.qdrant.collectionName.empty()) config_.qdrant.collectionName = "documents";
+                    if (config_.qdrant.defaultEmbeddingModel.empty()) config_.qdrant.defaultEmbeddingModel = "text-embedding-3-small";
+                    if (config_.qdrant.timeout == 0) config_.qdrant.timeout = 30;
+                    if (config_.qdrant.maxConnections == 0) config_.qdrant.maxConnections = 10;
+                    if (config_.qdrant.connectionTimeout == 0) config_.qdrant.connectionTimeout = 5;
+                    if (config_.qdrant.embeddingBatchSize == 0) config_.qdrant.embeddingBatchSize = 5;
+                    // Adjust primary vectorDatabase to reflect active backend
+                    config_.vectorDatabase = DatabaseConfig::VectorDatabase::QDRANT;
+                }
+                // Proceed if enabled (either originally or just enabled)
+                if (config_.qdrant.enabled)
+                {
+                    db_config["host"] = config_.qdrant.host;
+                    db_config["port"] = config_.qdrant.port;
+                    db_config["apiKey"] = config_.qdrant.apiKey;
+                    db_config["timeout"] = config_.qdrant.timeout;
+                    db_config["maxConnections"] = config_.qdrant.maxConnections;
+                    db_config["connectionTimeout"] = config_.qdrant.connectionTimeout;
+                    
+                    vector_db_ = VectorDatabaseFactory::create(VectorDatabaseFactory::DatabaseType::QDRANT, db_config);
+                    ServerLogger::logInfo("DocumentService initialized with Qdrant client (automatic fallback)");
+                }
+                else
+                {
+                    ServerLogger::logError("No vector database available after failed FAISS fallback");
+                }
+#endif
+            }
+            else // QDRANT
+            {
+                if (config_.qdrant.enabled)
+                {
+                    db_config["host"] = config_.qdrant.host;
+                    db_config["port"] = config_.qdrant.port;
+                    db_config["apiKey"] = config_.qdrant.apiKey;
+                    db_config["timeout"] = config_.qdrant.timeout;
+                    db_config["maxConnections"] = config_.qdrant.maxConnections;
+                    db_config["connectionTimeout"] = config_.qdrant.connectionTimeout;
+                    
+                    vector_db_ = VectorDatabaseFactory::create(VectorDatabaseFactory::DatabaseType::QDRANT, db_config);
+                    ServerLogger::logInfo("DocumentService initialized with Qdrant client");
+                }
+                else
+                {
+                    ServerLogger::logWarning("DocumentService initialized but Qdrant is disabled in configuration");
+                }
+            }
         }
-        else
+        catch (const std::exception& ex)
         {
-            ServerLogger::logWarning("DocumentService initialized but Qdrant is disabled in configuration");
+            ServerLogger::logError("Failed to initialize vector database: %s", ex.what());
+        }
+    }
+    
+    // Decide which embedding model to use when none is explicitly provided
+    std::string chooseEmbeddingModelId(const std::string& requested) const {
+        if (!requested.empty()) {
+            return requested;
+        }
+        try {
+            // If user set a cross-backend retrieval model in config, prefer it
+            if (!config_.retrievalEmbeddingModelId.empty()) {
+                return config_.retrievalEmbeddingModelId;
+            }
+            if (config_.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS) {
+                // Prefer an embedding model configured in ServerConfig models list
+                const auto& cfg = ServerConfig::getInstance();
+                for (const auto& model : cfg.models) {
+                    if (!model.type.empty() && model.type == "embedding" && !model.id.empty()) {
+                        return model.id;
+                    }
+                }
+                // Fallback if none configured
+                return std::string("text-embedding-3-small");
+            } else {
+                // Qdrant specific default if set
+                if (!config_.qdrant.defaultEmbeddingModel.empty()) {
+                    return config_.qdrant.defaultEmbeddingModel;
+                }
+                return std::string("text-embedding-3-small");
+            }
+        } catch (...) {
+            return std::string("text-embedding-3-small");
         }
     }
     
@@ -80,10 +178,10 @@ public:
     
     std::future<std::vector<float>> generateEmbedding(const std::string& text, const std::string& model_id)
     {
-        return std::async(std::launch::async, [this, text, model_id]() -> std::vector<float> {
+    return std::async(std::launch::async, [this, text, model_id]() -> std::vector<float> {
             try
             {
-                std::string effective_model_id = model_id.empty() ? config_.qdrant.defaultEmbeddingModel : model_id;
+        std::string effective_model_id = chooseEmbeddingModelId(model_id);
                 
                 ServerLogger::logDebug("Generating embedding for text (length: %zu) using model: %s", 
                                        text.length(), effective_model_id.c_str());
@@ -164,7 +262,7 @@ public:
     std::future<std::vector<std::pair<size_t, std::vector<float>>>> generateEmbeddingsBatch(
         const std::vector<std::pair<size_t, std::string>>& texts, const std::string& model_id)
     {
-        return std::async(std::launch::async, [this, texts, model_id]() -> std::vector<std::pair<size_t, std::vector<float>>> {
+    return std::async(std::launch::async, [this, texts, model_id]() -> std::vector<std::pair<size_t, std::vector<float>>> {
             std::vector<std::pair<size_t, std::vector<float>>> results;
             
             if (texts.empty()) {
@@ -172,7 +270,7 @@ public:
             }
             
             try {
-                std::string effective_model_id = model_id.empty() ? config_.qdrant.defaultEmbeddingModel : model_id;
+                std::string effective_model_id = chooseEmbeddingModelId(model_id);
                 
                 ServerLogger::logInfo("Generating embeddings for batch of %zu texts using model: %s", 
                                      texts.size(), effective_model_id.c_str());
@@ -276,8 +374,14 @@ public:
         return std::async(std::launch::async, [this, collection_name, vector_size]() -> bool {
             try
             {
+                if (!vector_db_)
+                {
+                    ServerLogger::logError("Vector database not initialized");
+                    return false;
+                }
+                
                 // Check if collection exists
-                auto exists_result = qdrant_client_->collectionExists(collection_name).get();
+                auto exists_result = vector_db_->collectionExists(collection_name).get();
                 
                 if (exists_result.success)
                 {
@@ -287,7 +391,9 @@ public:
                 
                 // Create collection
                 ServerLogger::logInfo("Creating collection '%s' with vector size %d", collection_name.c_str(), vector_size);
-                auto create_result = qdrant_client_->createCollection(collection_name, vector_size, "Cosine").get();
+                std::string distance_metric = (config_.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS && 
+                                                config_.faiss.metricType == "IP") ? "IP" : "Cosine";
+                auto create_result = vector_db_->createCollection(collection_name, vector_size, distance_metric).get();
                 
                 if (!create_result.success)
                 {
@@ -329,34 +435,54 @@ std::future<bool> DocumentService::initialize()
             return true;
         }
         
-        if (!pImpl->config_.qdrant.enabled)
+        if (!pImpl->vector_db_)
         {
-            ServerLogger::logWarning("DocumentService: Qdrant is disabled, skipping initialization");
-            pImpl->initialized_ = true;
-            return true;
-        }
-        
-        if (!pImpl->qdrant_client_)
-        {
-            ServerLogger::logError("DocumentService: Qdrant client not initialized");
+            ServerLogger::logError("DocumentService: Vector database not initialized");
             return false;
         }
         
         try
         {
             // Test connection
-            ServerLogger::logInfo("DocumentService: Testing Qdrant connection...");
-            auto connection_result = pImpl->qdrant_client_->testConnection().get();
+            std::string db_type = (pImpl->config_.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS) ? "FAISS" : "Qdrant";
+            ServerLogger::logInfo("DocumentService: Testing %s connection...", db_type.c_str());
+            auto connection_result = pImpl->vector_db_->testConnection().get();
             
             if (!connection_result.success)
             {
-                ServerLogger::logError("DocumentService: Failed to connect to Qdrant: %s", 
-                                       connection_result.error_message.c_str());
+                ServerLogger::logError("DocumentService: Failed to connect to %s: %s", 
+                                       db_type.c_str(), connection_result.error_message.c_str());
                 return false;
             }
             
-            ServerLogger::logInfo("DocumentService: Successfully connected to Qdrant at %s:%d",
-                                  pImpl->config_.qdrant.host.c_str(), pImpl->config_.qdrant.port);
+            if (pImpl->config_.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS)
+            {
+                ServerLogger::logInfo("DocumentService: Successfully initialized FAISS at %s", 
+                                      pImpl->config_.faiss.indexPath.c_str());
+                // Auto-create default collection if it does not exist yet
+                const std::string default_collection = pImpl->config_.qdrant.collectionName.empty() ? "documents" : pImpl->config_.qdrant.collectionName;
+                try {
+                    auto exists = pImpl->vector_db_->collectionExists(default_collection).get();
+                    if (!exists.success) {
+                        ServerLogger::logInfo("FAISS default collection '%s' not found. Creating with dimension %d", 
+                                              default_collection.c_str(), pImpl->config_.faiss.dimensions);
+                        auto created = pImpl->vector_db_->createCollection(default_collection, pImpl->config_.faiss.dimensions, 
+                            pImpl->config_.faiss.metricType == "IP" ? "IP" : "L2").get();
+                        if (!created.success) {
+                            ServerLogger::logError("Failed to create FAISS collection '%s': %s", default_collection.c_str(), created.error_message.c_str());
+                            return false;
+                        }
+                    }
+                } catch (const std::exception& ex) {
+                    ServerLogger::logError("Error ensuring FAISS default collection: %s", ex.what());
+                    return false;
+                }
+            }
+            else
+            {
+                ServerLogger::logInfo("DocumentService: Successfully connected to Qdrant at %s:%d",
+                                      pImpl->config_.qdrant.host.c_str(), pImpl->config_.qdrant.port);
+            }
             
             pImpl->initialized_ = true;
             return true;
@@ -381,9 +507,9 @@ std::future<AddDocumentsResponse> DocumentService::addDocuments(const AddDocumen
                 throw std::runtime_error("DocumentService not initialized");
             }
             
-            if (!pImpl->config_.qdrant.enabled)
+            if (!pImpl->vector_db_)
             {
-                throw std::runtime_error("Qdrant is disabled in configuration");
+                throw std::runtime_error("Vector database not initialized");
             }
             
             std::string collection_name = "documents"; // Always use "documents" collection
@@ -394,7 +520,8 @@ std::future<AddDocumentsResponse> DocumentService::addDocuments(const AddDocumen
                                   request.documents.size(), collection_name.c_str());
             
             // Use batching to generate embeddings
-            const int batch_size = pImpl->config_.qdrant.embeddingBatchSize;
+            const int batch_size = (pImpl->config_.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS ? 
+                                     5 : pImpl->config_.qdrant.embeddingBatchSize);
             ServerLogger::logInfo("Using embedding batch size: %d", batch_size);
             
             std::vector<std::string> document_ids;
@@ -501,13 +628,26 @@ std::future<AddDocumentsResponse> DocumentService::addDocuments(const AddDocumen
                 throw std::runtime_error("Failed to create or access collection '" + collection_name + "'");
             }
             
-            // Upsert points to Qdrant
+            // Upsert points to vector database
             ServerLogger::logInfo("Upserting %zu points to collection '%s'", points.size(), collection_name.c_str());
-            auto upsert_result = pImpl->qdrant_client_->upsertPoints(collection_name, points).get();
+            
+            // Convert QdrantPoint to VectorPoint
+            std::vector<VectorPoint> vector_points;
+            for (const auto& qpoint : points)
+            {
+                VectorPoint vpoint;
+                vpoint.id = qpoint.id;
+                vpoint.vector = qpoint.vector;
+                vpoint.payload = qpoint.payload;
+                vector_points.push_back(vpoint);
+            }
+            
+            auto upsert_result = pImpl->vector_db_->upsertPoints(collection_name, vector_points).get();
             
             if (!upsert_result.success)
             {
-                throw std::runtime_error("Failed to upsert points to Qdrant: " + upsert_result.error_message);
+                std::string db_type = (pImpl->config_.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS) ? "FAISS" : "Qdrant";
+                throw std::runtime_error("Failed to upsert points to " + db_type + ": " + upsert_result.error_message);
             }
             
             ServerLogger::logInfo("Successfully indexed %d documents to collection '%s'", 
@@ -533,14 +673,14 @@ std::future<AddDocumentsResponse> DocumentService::addDocuments(const AddDocumen
 std::future<bool> DocumentService::testConnection()
 {
     return std::async(std::launch::async, [this]() -> bool {
-        if (!pImpl->config_.qdrant.enabled || !pImpl->qdrant_client_)
+        if (!pImpl->vector_db_)
         {
             return false;
         }
         
         try
         {
-            auto result = pImpl->qdrant_client_->testConnection().get();
+            auto result = pImpl->vector_db_->testConnection().get();
             return result.success;
         }
         catch (const std::exception& ex)
@@ -568,11 +708,6 @@ std::future<RetrieveResponse> DocumentService::retrieveDocuments(const RetrieveR
                 throw std::runtime_error("DocumentService not initialized");
             }
             
-            if (!pImpl->config_.qdrant.enabled)
-            {
-                throw std::runtime_error("Qdrant is disabled in configuration");
-            }
-            
             std::string collection_name = "documents"; // Always use "documents" collection
             
             response.query = request.query;
@@ -595,7 +730,7 @@ std::future<RetrieveResponse> DocumentService::retrieveDocuments(const RetrieveR
             ServerLogger::logDebug("Generated query embedding with %zu dimensions", query_embedding.size());
             
             // Perform vector search
-            auto search_result = pImpl->qdrant_client_->search(
+            auto search_result = pImpl->vector_db_->search(
                 collection_name, 
                 query_embedding, 
                 request.k, 
@@ -604,10 +739,13 @@ std::future<RetrieveResponse> DocumentService::retrieveDocuments(const RetrieveR
             
             if (!search_result.success)
             {
-                throw std::runtime_error("Vector search failed: " + search_result.error_message);
+                std::string db_type = (pImpl->config_.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS) ? "FAISS" : "Qdrant";
+                throw std::runtime_error("Vector search failed in " + db_type + ": " + search_result.error_message);
             }
             
-            // Parse search results
+            ServerLogger::logInfo("Found search results in vector database");
+            
+            // Process search results from response_data (works for both FAISS and Qdrant)
             if (search_result.response_data.contains("result") && search_result.response_data["result"].is_array())
             {
                 auto results = search_result.response_data["result"];
@@ -617,9 +755,15 @@ std::future<RetrieveResponse> DocumentService::retrieveDocuments(const RetrieveR
                     if (result_item.contains("id") && result_item.contains("score") && 
                         result_item.contains("payload"))
                     {
+                        float score = result_item["score"].get<float>();
+                        if (score < request.score_threshold)
+                        {
+                            continue; // Skip results below threshold
+                        }
+                        
                         RetrievedDocument doc;
                         doc.id = result_item["id"].get<std::string>();
-                        doc.score = result_item["score"].get<float>();
+                        doc.score = score;
                         
                         // Extract text from payload
                         auto payload = result_item["payload"];
@@ -666,9 +810,9 @@ std::future<RemoveDocumentsResponse> DocumentService::removeDocuments(const Remo
                 throw std::runtime_error("DocumentService not initialized");
             }
             
-            if (!pImpl->config_.qdrant.enabled)
+            if (!pImpl->vector_db_)
             {
-                throw std::runtime_error("Qdrant is disabled in configuration");
+                throw std::runtime_error("Vector database not initialized");
             }
             
             std::string collection_name = "documents"; // Always use "documents" collection
@@ -679,7 +823,7 @@ std::future<RemoveDocumentsResponse> DocumentService::removeDocuments(const Remo
                                   request.ids.size(), collection_name.c_str());
             
             // Check if collection exists
-            auto exists_result = pImpl->qdrant_client_->collectionExists(collection_name).get();
+            auto exists_result = pImpl->vector_db_->collectionExists(collection_name).get();
             if (!exists_result.success)
             {
                 // Collection doesn't exist, all IDs are "not found"
@@ -694,35 +838,37 @@ std::future<RemoveDocumentsResponse> DocumentService::removeDocuments(const Remo
             
             // First, check which documents exist by retrieving them
             ServerLogger::logDebug("Checking existence of %zu documents before deletion", request.ids.size());
-            auto get_result = pImpl->qdrant_client_->getPoints(collection_name, request.ids).get();
+            auto get_result = pImpl->vector_db_->getPoints(collection_name, request.ids).get();
             
             std::vector<std::string> existing_ids;
             std::vector<std::string> not_found_ids;
             
-            if (get_result.success && get_result.response_data.contains("result"))
+            if (get_result.success)
             {
-                auto results = get_result.response_data["result"];
-                if (results.is_array())
+                // Track which IDs were found using response_data (works for both FAISS and Qdrant)
+                std::set<std::string> found_ids;
+                if (get_result.response_data.contains("result") && get_result.response_data["result"].is_array())
                 {
-                    // Track which IDs were found
-                    std::set<std::string> found_ids;
-                    for (const auto& result_item : results)
+                    auto points = get_result.response_data["result"];
+                    for (const auto& result_point : points)
                     {
-                        if (result_item.contains("id") && !result_item["id"].is_null())
+                        if (result_point.contains("id"))
                         {
-                            std::string found_id = result_item["id"].get<std::string>();
-                            found_ids.insert(found_id);
-                            existing_ids.push_back(found_id);
+                            std::string id = result_point["id"].is_string() ? 
+                                result_point["id"].get<std::string>() : 
+                                std::to_string(result_point["id"].get<int64_t>());
+                            found_ids.insert(id);
+                            existing_ids.push_back(id);
                         }
                     }
-                    
-                    // Identify which IDs were not found
-                    for (const auto& requested_id : request.ids)
+                }
+                
+                // Identify which IDs were not found
+                for (const auto& requested_id : request.ids)
+                {
+                    if (found_ids.find(requested_id) == found_ids.end())
                     {
-                        if (found_ids.find(requested_id) == found_ids.end())
-                        {
-                            not_found_ids.push_back(requested_id);
-                        }
+                        not_found_ids.push_back(requested_id);
                     }
                 }
             }
@@ -745,7 +891,7 @@ std::future<RemoveDocumentsResponse> DocumentService::removeDocuments(const Remo
             // Only attempt to delete existing documents
             if (!existing_ids.empty())
             {
-                auto delete_result = pImpl->qdrant_client_->deletePoints(collection_name, existing_ids).get();
+                auto delete_result = pImpl->vector_db_->deletePoints(collection_name, existing_ids).get();
                 
                 if (delete_result.success)
                 {
@@ -761,8 +907,9 @@ std::future<RemoveDocumentsResponse> DocumentService::removeDocuments(const Remo
                 else
                 {
                     // Delete operation failed, mark all existing documents as failed
-                    ServerLogger::logError("Failed to delete points from Qdrant: %s", 
-                                           delete_result.error_message.c_str());
+                    std::string db_type = (pImpl->config_.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS) ? "FAISS" : "Qdrant";
+                    ServerLogger::logError("Failed to delete points from %s: %s", 
+                                           db_type.c_str(), delete_result.error_message.c_str());
                     
                     for (const auto& id : existing_ids)
                     {
@@ -798,7 +945,7 @@ std::future<std::vector<std::string>> DocumentService::listDocuments(const std::
         try
         {
             std::string effective_collection_name = collection_name.empty() ? 
-                pImpl->config_.qdrant.collectionName : collection_name;
+                "documents" : collection_name;
             
             std::vector<std::string> all_ids;
             std::string offset = "";
@@ -809,51 +956,69 @@ std::future<std::vector<std::string>> DocumentService::listDocuments(const std::
             
             // Use scroll API to get all points
             do {
-                auto result_future = pImpl->qdrant_client_->scrollPoints(effective_collection_name, batch_size, offset);
-                QdrantResult result = result_future.get();
+                auto result_future = pImpl->vector_db_->scrollPoints(effective_collection_name, batch_size, offset);
+                VectorResult result = result_future.get();
                 
                 if (!result.success)
                 {
-                    throw std::runtime_error("Failed to scroll points: " + result.error_message);
+                    std::string db_type = (pImpl->config_.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS) ? "FAISS" : "Qdrant";
+                    throw std::runtime_error("Failed to scroll points in " + db_type + ": " + result.error_message);
                 }
                 
-                // Parse response to extract point IDs
-                if (!result.response_data.contains("result") || 
-                    !result.response_data["result"].contains("points") ||
-                    !result.response_data["result"]["points"].is_array())
+                // Process results from response_data (works for both FAISS and Qdrant)  
+                bool hasPoints = false;
+                if (result.response_data.contains("result"))
+                {
+                    nlohmann::json resultData = result.response_data["result"];
+                    
+                    // Handle different response formats
+                    nlohmann::json points;
+                    if (resultData.contains("points") && resultData["points"].is_array())
+                    {
+                        // Qdrant format
+                        points = resultData["points"];
+                    }
+                    else if (resultData.is_array())
+                    {
+                        // FAISS format (direct array)
+                        points = resultData;
+                    }
+                    
+                    if (!points.empty())
+                    {
+                        hasPoints = true;
+                        
+                        // Extract IDs from points
+                        for (const auto& point : points)
+                        {
+                            if (point.contains("id"))
+                            {
+                                std::string id = point["id"].is_string() ? 
+                                    point["id"].get<std::string>() : 
+                                    std::to_string(point["id"].get<int64_t>());
+                                all_ids.push_back(id);
+                            }
+                        }
+                    }
+                }
+                
+                if (!hasPoints)
                 {
                     break; // No more points
                 }
                 
-                auto points = result.response_data["result"]["points"];
-                if (points.empty())
-                {
-                    break;
-                }
-                
-                // Extract IDs from points
-                for (const auto& point : points)
-                {
-                    if (point.contains("id"))
-                    {
-                        std::string id = point["id"].is_string() ? 
-                            point["id"].get<std::string>() : 
-                            std::to_string(point["id"].get<int64_t>());
-                        all_ids.push_back(id);
-                    }
-                }
-                
                 // Update offset for next batch
-                if (result.response_data["result"].contains("next_page_offset") &&
-                    !result.response_data["result"]["next_page_offset"].is_null())
+                // For FAISS, this may be handled differently than Qdrant
+                if (result.response_data.contains("next_page_offset") &&
+                    !result.response_data["next_page_offset"].is_null())
                 {
-                    if (result.response_data["result"]["next_page_offset"].is_string())
+                    if (result.response_data["next_page_offset"].is_string())
                     {
-                        offset = result.response_data["result"]["next_page_offset"].get<std::string>();
+                        offset = result.response_data["next_page_offset"].get<std::string>();
                     }
-                    else if (result.response_data["result"]["next_page_offset"].is_number())
+                    else if (result.response_data["next_page_offset"].is_number())
                     {
-                        offset = std::to_string(result.response_data["result"]["next_page_offset"].get<int64_t>());
+                        offset = std::to_string(result.response_data["next_page_offset"].get<int64_t>());
                     }
                     else
                     {
@@ -887,7 +1052,7 @@ DocumentService::getDocumentsInfo(const std::vector<std::string>& ids, const std
         try
         {
             std::string effective_collection_name = collection_name.empty() ? 
-                pImpl->config_.qdrant.collectionName : collection_name;
+                "documents" : collection_name;
             
             ServerLogger::logDebug("Getting info for %zu documents from collection '%s'", 
                                    ids.size(), effective_collection_name.c_str());
@@ -904,8 +1069,8 @@ DocumentService::getDocumentsInfo(const std::vector<std::string>& ids, const std
                     batch_ids.push_back(ids[j]);
                 }
                 
-                auto result_future = pImpl->qdrant_client_->getPoints(effective_collection_name, batch_ids);
-                QdrantResult result = result_future.get();
+                auto result_future = pImpl->vector_db_->getPoints(effective_collection_name, batch_ids);
+                VectorResult result = result_future.get();
                 
                 if (!result.success)
                 {
@@ -919,13 +1084,14 @@ DocumentService::getDocumentsInfo(const std::vector<std::string>& ids, const std
                     continue;
                 }
                 
-                // Parse response to extract point data
+                // Process results from response_data (works for both FAISS and Qdrant)
                 std::set<std::string> found_ids;
                 
-                if (result.response_data.contains("result") &&
-                    result.response_data["result"].is_array())
+                if (result.response_data.contains("result") && result.response_data["result"].is_array())
                 {
-                    for (const auto& point : result.response_data["result"])
+                    auto points = result.response_data["result"];
+                    
+                    for (const auto& point : points)
                     {
                         if (point.contains("id") && point.contains("payload"))
                         {

@@ -825,6 +825,26 @@ namespace kolosal
             if (config["database"])
             {
                 auto databaseConfig = config["database"];
+                // Retrieval embedding model ID (applies to both backends)
+                if (databaseConfig["retrieval_embedding_model"]) {
+                    database.retrievalEmbeddingModelId = databaseConfig["retrieval_embedding_model"].as<std::string>();
+                }
+                
+                // Vector database selection
+                if (databaseConfig["vector_database"])
+                {
+                    std::string vectorDb = databaseConfig["vector_database"].as<std::string>();
+                    if (vectorDb == "faiss" || vectorDb == "FAISS")
+                    {
+                        database.vectorDatabase = DatabaseConfig::VectorDatabase::FAISS;
+                    }
+                    else if (vectorDb == "qdrant" || vectorDb == "QDRANT")
+                    {
+                        database.vectorDatabase = DatabaseConfig::VectorDatabase::QDRANT;
+                    }
+                }
+                
+                // Qdrant configuration
                 if (databaseConfig["qdrant"])
                 {
                     auto qdrantConfig = databaseConfig["qdrant"];
@@ -848,6 +868,30 @@ namespace kolosal
                         database.qdrant.connectionTimeout = qdrantConfig["connection_timeout"].as<int>();
                     if (qdrantConfig["embedding_batch_size"])
                         database.qdrant.embeddingBatchSize = qdrantConfig["embedding_batch_size"].as<int>();
+                }
+                
+                // FAISS configuration
+                if (databaseConfig["faiss"])
+                {
+                    auto faissConfig = databaseConfig["faiss"];
+                    if (faissConfig["index_type"])
+                        database.faiss.indexType = faissConfig["index_type"].as<std::string>();
+                    if (faissConfig["index_path"])
+                        database.faiss.indexPath = ServerConfig::makeAbsolutePath(faissConfig["index_path"].as<std::string>());
+                    if (faissConfig["dimensions"])
+                        database.faiss.dimensions = faissConfig["dimensions"].as<int>();
+                    if (faissConfig["normalize_vectors"])
+                        database.faiss.normalizeVectors = faissConfig["normalize_vectors"].as<bool>();
+                    if (faissConfig["nlist"])
+                        database.faiss.nlist = faissConfig["nlist"].as<int>();
+                    if (faissConfig["nprobe"])
+                        database.faiss.nprobe = faissConfig["nprobe"].as<int>();
+                    if (faissConfig["use_gpu"])
+                        database.faiss.useGPU = faissConfig["use_gpu"].as<bool>();
+                    if (faissConfig["gpu_device"])
+                        database.faiss.gpuDevice = faissConfig["gpu_device"].as<int>();
+                    if (faissConfig["metric_type"])
+                        database.faiss.metricType = faissConfig["metric_type"].as<std::string>();
                 }
             }
 
@@ -1091,6 +1135,10 @@ namespace kolosal
             config["search"]["default_category"] = search.default_category;
 
             // Database configuration
+            config["database"]["vector_database"] = (database.vectorDatabase == DatabaseConfig::VectorDatabase::FAISS) ? "faiss" : "qdrant";
+            // Persist the retrieval embedding model ID for both backends
+            config["database"]["retrieval_embedding_model"] = database.retrievalEmbeddingModelId;
+            
             config["database"]["qdrant"]["enabled"] = database.qdrant.enabled;
             config["database"]["qdrant"]["host"] = database.qdrant.host;
             config["database"]["qdrant"]["port"] = database.qdrant.port;
@@ -1101,6 +1149,16 @@ namespace kolosal
             config["database"]["qdrant"]["max_connections"] = database.qdrant.maxConnections;
             config["database"]["qdrant"]["connection_timeout"] = database.qdrant.connectionTimeout;
             config["database"]["qdrant"]["embedding_batch_size"] = database.qdrant.embeddingBatchSize;
+            
+            config["database"]["faiss"]["index_type"] = database.faiss.indexType;
+            config["database"]["faiss"]["index_path"] = database.faiss.indexPath;
+            config["database"]["faiss"]["dimensions"] = database.faiss.dimensions;
+            config["database"]["faiss"]["normalize_vectors"] = database.faiss.normalizeVectors;
+            config["database"]["faiss"]["nlist"] = database.faiss.nlist;
+            config["database"]["faiss"]["nprobe"] = database.faiss.nprobe;
+            config["database"]["faiss"]["use_gpu"] = database.faiss.useGPU;
+            config["database"]["faiss"]["gpu_device"] = database.faiss.gpuDevice;
+            config["database"]["faiss"]["metric_type"] = database.faiss.metricType;
 
             // Models
             for (const auto &model : models)
