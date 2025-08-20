@@ -13,6 +13,48 @@ endif()
 
 project(KolosalServer VERSION 1.0.0 LANGUAGES C CXX)
 
+# Prepend override modules (e.g., custom FindOpenSSL) so downstream add_subdirectory() picks them first
+list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/overrides")
+message(STATUS "CMAKE_MODULE_PATH (prepended overrides): ${CMAKE_MODULE_PATH}")
+
+# On Windows, make vcpkg's applocal step optional and ensure it can use Windows PowerShell
+if(WIN32)
+    # Disable vcpkg's automatic applocal dependency copying to avoid requiring pwsh.exe.
+    # Our CMake already copies the needed runtime (e.g., libcurl.dll) explicitly.
+    set(VCPKG_APPLOCAL_DEPS OFF CACHE BOOL "Disable vcpkg applocal dependency copying" FORCE)
+    # If applocal is enabled elsewhere, ensure it uses Windows PowerShell instead of pwsh.
+    set(VCPKG_PWSH_PATH "powershell.exe" CACHE STRING "Path to PowerShell for vcpkg applocal step" FORCE)
+endif()
+
+# -----------------------------------------------------------------------------
+# Output directory layout
+# Goal (per user request): place all build products for a given configuration
+# inside a subfolder named after the configuration (e.g. build/Release) while
+# avoiding a duplicated segment like build/Release/Release.
+#
+# Multi-config generators (Visual Studio, Xcode, etc.): explicitly set the
+# per-config variables to CMAKE_BINARY_DIR/<Config>.
+# Single-config generators (Ninja/Makefiles): if CMAKE_BUILD_TYPE is set, emit
+# to CMAKE_BINARY_DIR/<CMAKE_BUILD_TYPE>; otherwise leave defaults.
+# -----------------------------------------------------------------------------
+if (CMAKE_CONFIGURATION_TYPES OR CMAKE_GENERATOR MATCHES "Visual Studio")
+    foreach(_cfg Debug Release RelWithDebInfo MinSizeRel)
+        string(TOUPPER ${_cfg} _CFG_UP)
+        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${_CFG_UP} "${CMAKE_BINARY_DIR}/${_cfg}")
+        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${_CFG_UP} "${CMAKE_BINARY_DIR}/${_cfg}")
+        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${_CFG_UP} "${CMAKE_BINARY_DIR}/${_cfg}")
+    endforeach()
+else()
+    # Single-config: honor CMAKE_BUILD_TYPE if provided
+    if(CMAKE_BUILD_TYPE)
+        set(_single_dir "${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE}")
+        file(MAKE_DIRECTORY "${_single_dir}")
+        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${_single_dir}")
+        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${_single_dir}")
+        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${_single_dir}")
+    endif()
+endif()
+
 # Include UCM for runtime library management
 include(${CMAKE_SOURCE_DIR}/cmake/ucm.cmake)
 
@@ -79,6 +121,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/pugixml/src)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/zlib/contrib/minizip)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/maddy/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/zlib)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/faiss)
 # Only include PoDoFo headers when PDF support is enabled
 if(USE_PODOFO)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/src)
@@ -131,6 +174,7 @@ set(SOURCES
     src/logger.cpp
     src/download_utils.cpp
     src/download_manager.cpp
+    src/faiss_client.cpp
     src/qdrant_client.cpp
     src/node_manager.cpp
     src/inference_loader.cpp
@@ -305,6 +349,7 @@ target_compile_definitions(kolosal_server PUBLIC
   $<$<BOOL:${DEBUG}>:DEBUG>
   $<$<BOOL:${USE_CPPUPROFILE_GPU}>:USE_CPPUPROFILE_GPU>
   $<$<BOOL:${USE_PODOFO}>:USE_PODOFO>
+  $<$<BOOL:${USE_FAISS}>:USE_FAISS>
 )
 
 # Add subdirectories for external libraries
@@ -425,6 +470,41 @@ endif()
 
 # Add PoDoFo
 if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
+    # Provide OpenSSL imported targets early if not already defined (helps PoDoFo's find_package on Windows)
+    if(WIN32 AND NOT TARGET OpenSSL::SSL)
+        set(_PODOFO_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/extern/deps/3rdparty")
+        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+            set(_PODOFO_LIB_SUBDIR "Win64")
+        else()
+            set(_PODOFO_LIB_SUBDIR "Win32")
+        endif()
+        set(_SSL_LIB "${_PODOFO_DEPS_DIR}/openssl/lib/${_PODOFO_LIB_SUBDIR}/ssl.lib")
+        set(_CRYPTO_LIB "${_PODOFO_DEPS_DIR}/openssl/lib/${_PODOFO_LIB_SUBDIR}/crypto.lib")
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            if(EXISTS "${_PODOFO_DEPS_DIR}/openssl/lib/${_PODOFO_LIB_SUBDIR}/ssld.lib")
+                set(_SSL_LIB "${_PODOFO_DEPS_DIR}/openssl/lib/${_PODOFO_LIB_SUBDIR}/ssld.lib")
+            endif()
+            if(EXISTS "${_PODOFO_DEPS_DIR}/openssl/lib/${_PODOFO_LIB_SUBDIR}/cryptod.lib")
+                set(_CRYPTO_LIB "${_PODOFO_DEPS_DIR}/openssl/lib/${_PODOFO_LIB_SUBDIR}/cryptod.lib")
+            endif()
+        endif()
+        add_library(OpenSSL::SSL UNKNOWN IMPORTED)
+        set_target_properties(OpenSSL::SSL PROPERTIES IMPORTED_LOCATION "${_SSL_LIB}")
+        add_library(OpenSSL::Crypto UNKNOWN IMPORTED)
+        set_target_properties(OpenSSL::Crypto PROPERTIES IMPORTED_LOCATION "${_CRYPTO_LIB}")
+        set(OPENSSL_SSL_LIBRARY "${_SSL_LIB}" CACHE FILEPATH "OpenSSL SSL library" FORCE)
+        set(OPENSSL_CRYPTO_LIBRARY "${_CRYPTO_LIB}" CACHE FILEPATH "OpenSSL crypto library" FORCE)
+        set(OPENSSL_LIBRARIES "${_SSL_LIB};${_CRYPTO_LIB}" CACHE STRING "OpenSSL libraries" FORCE)
+    # Additional legacy variable names some FindOpenSSL variants inspect
+    set(OPENSSL_CRYPTO_LIBRARIES "${_CRYPTO_LIB}" CACHE STRING "OpenSSL crypto libraries" FORCE)
+    set(OPENSSL_SSL_LIBRARIES "${_SSL_LIB}" CACHE STRING "OpenSSL ssl libraries" FORCE)
+    set(OPENSSL_INCLUDE_DIR "${_PODOFO_DEPS_DIR}/openssl/include" CACHE PATH "OpenSSL include dir" FORCE)
+    set(OPENSSL_INCLUDE_DIRS "${OPENSSL_INCLUDE_DIR}" CACHE PATH "OpenSSL include dirs" FORCE)
+    set(OPENSSL_VERSION "1.1.1s" CACHE STRING "OpenSSL version" FORCE)
+    set(OPENSSL_FOUND TRUE CACHE BOOL "OpenSSL found" FORCE)
+    set(OpenSSL_FOUND TRUE CACHE BOOL "OpenSSL found (alt var)" FORCE)
+        message(STATUS "Injected OpenSSL imported targets for PoDoFo: ${OPENSSL_LIBRARIES}")
+    endif()
     message(STATUS "Configuring PoDoFo PDF support...")
     
     # Pre-configure OpenSSL variables for PoDoFo BEFORE any dependency checks
@@ -1268,6 +1348,20 @@ if(USE_PODOFO AND NOT TARGET podofo_shared AND NOT TARGET podofo_static)
         endif()
         
         add_subdirectory(external/podofo EXCLUDE_FROM_ALL)
+
+                # Inject OpenSSL include directory explicitly for PoDoFo private sources if target exists
+                if(TARGET podofo_private)
+                    target_include_directories(podofo_private PRIVATE
+                        "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/extern/deps/3rdparty/openssl/include"
+                    )
+                    message(STATUS "Injected OpenSSL include dir into podofo_private target")
+                endif()
+                if(TARGET podofo_static)
+                    target_include_directories(podofo_static PRIVATE
+                        "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/extern/deps/3rdparty/openssl/include"
+                    )
+                    message(STATUS "Injected OpenSSL include dir into podofo_static target")
+                endif()
         
         # Restore the original CMAKE_SKIP_INSTALL_RULES state
         set(CMAKE_SKIP_INSTALL_RULES ${SAVED_SKIP_INSTALL})
@@ -1354,6 +1448,153 @@ if(NOT TARGET pugixml)
     endif()
 endif()
 
+# Add FAISS
+option(USE_FAISS "Compile with FAISS support" ON)
+if(USE_FAISS AND NOT TARGET faiss)
+    message(STATUS "Configuring FAISS vector database support...")
+
+    # Try to use system FAISS first
+    find_package(faiss QUIET)
+    if(faiss_FOUND)
+        message(STATUS "Found system FAISS: ${faiss_DIR}")
+        # Use system FAISS
+        set(FAISS_LIBRARIES faiss)
+    else()
+        # Check if we have FAISS source code
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/faiss/CMakeLists.txt")
+            message(STATUS "Building FAISS from source...")
+
+            # Configure FAISS build options
+            set(FAISS_ENABLE_GPU OFF CACHE BOOL "Disable FAISS GPU support by default")
+            set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "Disable FAISS Python bindings")
+            set(BUILD_TESTING OFF CACHE BOOL "Disable FAISS tests" FORCE)
+            set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build FAISS as static library" FORCE)
+            # FAISS can operate with just BLAS; on MSVC we avoid LAPACK by disabling it in OpenBLAS.
+            # In newer FAISS, this is controlled via FAISS_REQUIRE_LAPACK.
+            set(FAISS_REQUIRE_LAPACK OFF CACHE BOOL "Do not require LAPACK when building FAISS" FORCE)
+
+            # Ensure BLAS/LAPACK are available for FAISS; if not, fetch OpenBLAS (pure CMake)
+            set(KOLOSAL_FETCH_OPENBLAS ON CACHE BOOL "Automatically fetch/build OpenBLAS if BLAS/LAPACK are missing" FORCE)
+            if(KOLOSAL_FETCH_OPENBLAS)
+                # First try to detect BLAS/LAPACK quickly
+                set(BLA_VENDOR "OpenBLAS" CACHE STRING "BLAS vendor preference")
+                find_package(BLAS QUIET)
+                find_package(LAPACK QUIET)
+                # Determine if our BLAS/LAPACK discovery is actually usable
+                set(_blas_usable FALSE)
+                if(BLAS_FOUND AND LAPACK_FOUND)
+                    if(TARGET OpenBLAS::OpenBLAS OR TARGET openblas)
+                        set(_blas_usable TRUE)
+                    elseif(DEFINED BLAS_LIBRARIES)
+                        # BLAS_LIBRARIES may be a bare name like 'openblas' on Windows; ensure it's a path or target
+                        if(NOT BLAS_LIBRARIES STREQUAL "openblas" AND NOT BLAS_LIBRARIES STREQUAL "")
+                            set(_blas_usable TRUE)
+                        endif()
+                    endif()
+                endif()
+                if(NOT _blas_usable)
+                    message(STATUS "BLAS/LAPACK usable libraries not found; fetching OpenBLAS via CMake FetchContent...")
+                    # Some third-party projects (like OpenBLAS) may declare very old CMake minimums.
+                    # Newer CMake requires setting a policy minimum to allow configuring such projects.
+                    # Apply the recommendation globally so subprojects can configure cleanly.
+                    set(CMAKE_POLICY_VERSION_MINIMUM "3.5" CACHE STRING "Minimum CMake policy version for third-party subprojects" FORCE)
+                    # IMPORTANT: Our top-level include_directories() adds many paths (e.g. inference/common)
+                    # that can shadow OpenBLAS headers such as "common.h" when compiling C sources.
+                    # MSVC then tries to consume a C++ header in C mode, causing STL1003 from yvals_core.h.
+                    # To prevent this, temporarily clear inherited include dirs while configuring OpenBLAS,
+                    # then restore them afterwards.
+                    get_property(_kolosal_saved_inc_dirs DIRECTORY PROPERTY INCLUDE_DIRECTORIES)
+                    set_property(DIRECTORY PROPERTY INCLUDE_DIRECTORIES "")
+                    include(FetchContent)
+                    FetchContent_Declare(
+                        openblas_ext
+                        GIT_REPOSITORY https://github.com/xianyi/OpenBLAS.git
+                        GIT_TAG v0.3.26
+                        GIT_SHALLOW TRUE
+                    )
+                    # OpenBLAS CMake supports BUILD_SHARED_LIBS; prefer static to simplify linking
+                    set(OPENBLAS_BUILD_SHARED_LIBS OFF CACHE BOOL "Build OpenBLAS static" FORCE)
+                    # On MSVC there is no C99 <complex.h>, which LAPACK's C sources rely on.
+                    # Building OpenBLAS with LAPACK under MSVC can fail with
+                    #   yvals_core.h: STL1003: Unexpected compiler, expected C++ compiler
+                    # due to accidental inclusion of C++-only headers in C mode when LAPACK pulls complex.h.
+                    # Avoid this by disabling LAPACK when using MSVC. FAISS and ggml only require BLAS.
+                    if(MSVC)
+                        set(BUILD_WITHOUT_LAPACK ON CACHE BOOL "Build OpenBLAS without LAPACK on MSVC to avoid C99 complex issues" FORCE)
+                    else()
+                        set(BUILD_WITHOUT_LAPACK OFF CACHE BOOL "Build OpenBLAS with LAPACK if available" FORCE)
+                    endif()
+                    FetchContent_MakeAvailable(openblas_ext)
+                    # Restore the original include directories for the rest of the project
+                    set_property(DIRECTORY PROPERTY INCLUDE_DIRECTORIES "${_kolosal_saved_inc_dirs}")
+
+                    # OpenBLAS exports target OpenBLAS::OpenBLAS in newer CMake builds
+                    if(TARGET OpenBLAS::OpenBLAS)
+                        set(BLAS_LIBRARIES OpenBLAS::OpenBLAS CACHE STRING "BLAS libraries" FORCE)
+                        # LAPACK may not be built on MSVC; expose only BLAS when LAPACK is absent.
+                        if(NOT BUILD_WITHOUT_LAPACK)
+                            set(LAPACK_LIBRARIES OpenBLAS::OpenBLAS CACHE STRING "LAPACK libraries (provided by OpenBLAS)" FORCE)
+                            set(LAPACK_FOUND TRUE CACHE BOOL "LAPACK found via OpenBLAS" FORCE)
+                        else()
+                            unset(LAPACK_LIBRARIES CACHE)
+                            set(LAPACK_FOUND FALSE CACHE BOOL "LAPACK not provided on MSVC build" FORCE)
+                        endif()
+                        set(BLAS_FOUND TRUE CACHE BOOL "BLAS found via OpenBLAS" FORCE)
+                        message(STATUS "Configured BLAS/LAPACK via OpenBLAS target: OpenBLAS::OpenBLAS")
+                    else()
+                        # Fallback: try to locate produced library variable
+                        if(DEFINED OPENBLAS_LIBRARIES)
+                            set(BLAS_LIBRARIES ${OPENBLAS_LIBRARIES} CACHE STRING "BLAS libraries" FORCE)
+                            if(NOT BUILD_WITHOUT_LAPACK)
+                                set(LAPACK_LIBRARIES ${OPENBLAS_LIBRARIES} CACHE STRING "LAPACK libraries (OpenBLAS)" FORCE)
+                                set(LAPACK_FOUND TRUE CACHE BOOL "LAPACK found via OpenBLAS libs" FORCE)
+                            else()
+                                unset(LAPACK_LIBRARIES CACHE)
+                                set(LAPACK_FOUND FALSE CACHE BOOL "LAPACK not provided on MSVC build" FORCE)
+                            endif()
+                            set(BLAS_FOUND TRUE CACHE BOOL "BLAS found via OpenBLAS libs" FORCE)
+                            message(STATUS "Configured BLAS/LAPACK via OpenBLAS libraries: ${OPENBLAS_LIBRARIES}")
+                        endif()
+                    endif()
+                else()
+                    message(STATUS "Found usable system BLAS/LAPACK; no need to fetch OpenBLAS")
+                endif()
+            endif()
+
+            # Enable GPU support if CUDA is available and requested
+            if(USE_CUDA)
+                find_package(CUDA QUIET)
+                if(CUDA_FOUND)
+                    set(FAISS_ENABLE_GPU ON CACHE BOOL "Enable FAISS GPU support with CUDA")
+                    message(STATUS "FAISS GPU support enabled with CUDA")
+                endif()
+            endif()
+
+            # Add FAISS after BLAS/LAPACK are prepared
+            # On MSVC, FAISS requires LAPACK (via MKL or a LAPACK-enabled BLAS). If not available, disable FAISS.
+            # Try to detect MKL using FAISS' own FindMKL if available.
+            list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/faiss/cmake")
+            find_package(MKL QUIET)
+            if(MSVC AND NOT MKL_FOUND AND NOT LAPACK_FOUND)
+                message(WARNING "LAPACK/MKL not available on MSVC; disabling FAISS to complete the build. Install Intel oneMKL or provide LAPACK to enable FAISS.")
+                # Create a stub target to prevent build errors
+                add_library(faiss INTERFACE)
+                set(FAISS_LIBRARIES faiss)
+                set(USE_FAISS OFF)
+            else()
+                add_subdirectory(external/faiss EXCLUDE_FROM_ALL)
+                set(FAISS_LIBRARIES faiss)
+            endif()
+        else()
+            message(WARNING "FAISS source not found. Creating stub target.")
+            # Create a stub target to prevent build errors
+            add_library(faiss INTERFACE)
+            set(FAISS_LIBRARIES faiss)
+            set(USE_FAISS OFF)
+        endif()
+    endif()
+endif()
+
 # Add cppuprofile if GPU monitoring is enabled
 if(USE_CPPUPROFILE_GPU)
     # Configure cppuprofile with NVIDIA support
@@ -1364,6 +1605,24 @@ endif()
 
 # Link libraries - use the determined inference target
 set(KOLOSAL_LINK_LIBRARIES yaml-cpp ${INFERENCE_TARGET} minizip_static pugixml)
+
+# If FAISS ended up disabled, ensure the macro is undefined for this target (the earlier
+# generator expression may have defined it before we toggled the option off).
+if(NOT USE_FAISS)
+    if(TARGET kolosal_server)
+        target_compile_options(kolosal_server PRIVATE
+            $<$<CXX_COMPILER_ID:MSVC>:/UUSE_FAISS>
+            $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-UUSE_FAISS>
+        )
+        message(STATUS "FAISS support disabled; forcing USE_FAISS to be undefined for kolosal_server")
+    endif()
+endif()
+
+# Add FAISS if enabled
+if(USE_FAISS AND FAISS_LIBRARIES)
+    list(APPEND KOLOSAL_LINK_LIBRARIES ${FAISS_LIBRARIES})
+    message(STATUS "FAISS library will be linked")
+endif()
 
 # Note: zlibstatic is already linked through minizip_static, so no need to link it directly
 
@@ -1417,6 +1676,22 @@ if(USE_PODOFO AND NOT TARGET freetype)
 endif()
 
 target_link_libraries(kolosal_server PRIVATE ${KOLOSAL_LINK_LIBRARIES})
+# Ensure consumers (e.g., kolosal_server_exe) see the inference engine's public headers
+# because some public headers (e.g., inference.h) include llama.cpp headers.
+if(TARGET ${INFERENCE_TARGET})
+    target_link_libraries(kolosal_server PUBLIC ${INFERENCE_TARGET})
+endif()
+
+# Also link directly against the core llama static library to satisfy direct
+# references from server code (e.g., llama_max_devices used in models_route.cpp)
+if(TARGET llama)
+    if(MSVC)
+        # Ensure the MSVC linker pulls in all needed symbols from llama.lib
+        target_link_options(kolosal_server PRIVATE 
+            $<$<STREQUAL:$<TARGET_PROPERTY:llama,TYPE>,STATIC_LIBRARY>:/WHOLEARCHIVE:$<TARGET_FILE:llama>>)
+    endif()
+    target_link_libraries(kolosal_server PRIVATE llama)
+endif()
 
 # Link CURL libraries and include directories
 if(CURL_LIBRARY)

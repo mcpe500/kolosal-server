@@ -10,6 +10,9 @@
 [submodule "external/podofo"]
 	path = external/podofo
 	url = https://github.com/podofo/podofo
+[submodule "external/faiss"]
+	path = external/faiss
+	url = https://github.com/facebookresearch/faiss.git
 [submodule "external/llama.cpp"]
 	path = inference/external/llama.cpp
 	url = https://github.com/ggerganov/llama.cpp.git

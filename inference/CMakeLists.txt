@@ -291,6 +291,16 @@ endif()
 set(LLAMA_LINK_LIBRARIES llama common ggml)
 target_link_libraries(${TARGET_NAME} PRIVATE ${LLAMA_LINK_LIBRARIES})
 
+# On MSVC, ensure symbols from static libs are included into this shared lib
+if(MSVC)
+    foreach(lib ${LLAMA_LINK_LIBRARIES})
+        # Force the linker to include all public symbols from the static library
+        # This prevents missing imports like 'llama_max_devices' when nothing references them directly
+        target_link_options(${TARGET_NAME} PRIVATE 
+            $<$<STREQUAL:$<TARGET_PROPERTY:${lib},TYPE>,STATIC_LIBRARY>:/WHOLEARCHIVE:$<TARGET_FILE:${lib}>>)
+    endforeach()
+endif()
+
 # Link CURL libraries and include directories
 if(WIN32)
     target_include_directories(${TARGET_NAME} PRIVATE ${CURL_INCLUDE_DIR})
