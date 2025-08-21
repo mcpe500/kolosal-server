@@ -7,11 +7,45 @@
 #include <thread>
 #include <chrono>
 #include <cmath>
+#include <algorithm>
 
 using json = nlohmann::json;
 
 namespace kolosal
 {
+
+    // Helper to infer model type when engine params aren't present
+    static std::string infer_model_type(const std::shared_ptr<DownloadProgress> &progress)
+    {
+        if (progress && progress->engine_params)
+        {
+            return progress->engine_params->model_type;
+        }
+
+        auto looks_embedding = [](const std::string &s) -> bool {
+            if (s.empty()) return false;
+            std::string l = s;
+            std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+            return l.find("embedding") != std::string::npos ||
+                   l.find("embed") != std::string::npos ||
+                   l.find("text-embedding") != std::string::npos ||
+                   l.find("retrieval") != std::string::npos ||
+                   l.find("nomic-embed") != std::string::npos ||
+                   l.find("e5") != std::string::npos ||
+                   l.find("gte-") != std::string::npos;
+        };
+
+        if (progress)
+        {
+            if (looks_embedding(progress->model_id) ||
+                looks_embedding(progress->url) ||
+                looks_embedding(progress->local_path))
+            {
+                return "embedding";
+            }
+        }
+        return "llm"; // default
+    }
 
     bool DownloadsRoute::match(const std::string &method, const std::string &path)
     {
@@ -282,6 +316,7 @@ namespace kolosal
         // Build response JSON
         json response = {
             {"model_id", progress->model_id},
+            {"type", progress->engine_params ? progress->engine_params->model_type : infer_model_type(progress)},
             {"status", progress->status},
             {"url", progress->url},
             {"local_path", progress->local_path},
@@ -397,6 +432,7 @@ namespace kolosal
 
             json download_info = {
                 {"model_id", progress->model_id},
+                {"type", progress->engine_params ? progress->engine_params->model_type : infer_model_type(progress)},
                 {"status", progress->status},
                 {"download_type", progress->engine_params ? "startup" : "regular"},
                 {"url", progress->url},
@@ -449,22 +485,18 @@ namespace kolosal
         
         for (const auto &pair : active_downloads)
         {
-            if (pair.second->engine_params)
+            const auto &p = pair.second;
+            if (p->engine_params)
             {
                 startup_count++;
-                if (pair.second->engine_params->model_type == "embedding")
-                {
-                    embedding_downloads++;
-                }
-                else
-                {
-                    llm_downloads++;
-                }
             }
             else
             {
                 regular_count++;
             }
+
+            const std::string type = p->engine_params ? p->engine_params->model_type : infer_model_type(p);
+            if (type == "embedding") embedding_downloads++; else llm_downloads++;
         }
 
         json response = {

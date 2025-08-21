@@ -178,6 +178,7 @@ struct Job {
     std::vector<int32_t>    generatedTokens;
     std::string             generatedText;
     std::vector<float>      embedding;        // For embedding jobs
+    int                     embedding_token_count = 0; // Number of tokens processed for embedding
     
     // Job state
     bool                    isFinished      = false;
