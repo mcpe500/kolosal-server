@@ -363,7 +363,7 @@ if(USE_FAISS)
         endif()
         
         if(NOT BLAS_FOUND)
-            message(FATAL_ERROR "BLAS is required for FAISS. On macOS: comes with Accelerate. On Linux: apt install libblas-dev")
+            message(FATAL_ERROR "BLAS is required for FAISS. On macOS: comes with Accelerate. On Linux: sudo apt-get install libblas-dev liblapack-dev")
         endif()
         
         add_subdirectory(external/faiss EXCLUDE_FROM_ALL)
