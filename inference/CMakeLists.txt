@@ -16,8 +16,24 @@ project(InferenceEngine VERSION 1.0.0 LANGUAGES CXX)
 # cmake -DUSE_METAL=ON ..    # Enable Metal acceleration (macOS only)
 # cmake -DUSE_MPI=ON ..      # Enable MPI support
 
-# Include UCM for runtime library management
-include(${CMAKE_SOURCE_DIR}/cmake/ucm.cmake)
+# Include UCM for runtime library management (support both root and standalone inference builds)
+set(_UCM_CANDIDATE_PATHS
+    "${CMAKE_CURRENT_LIST_DIR}/cmake/ucm.cmake"           # if copied locally
+    "${CMAKE_CURRENT_LIST_DIR}/../cmake/ucm.cmake"        # typical repo root when configuring from inference/
+    "${CMAKE_SOURCE_DIR}/cmake/ucm.cmake"                 # when root is the overall project
+)
+set(_UCM_FOUND FALSE)
+foreach(_ucm_path IN LISTS _UCM_CANDIDATE_PATHS)
+    if(EXISTS "${_ucm_path}")
+        include(${_ucm_path})
+        set(_UCM_FOUND TRUE)
+        message(STATUS "Included UCM from: ${_ucm_path}")
+        break()
+    endif()
+endforeach()
+if(NOT _UCM_FOUND)
+    message(FATAL_ERROR "ucm.cmake not found. Looked in: ${_UCM_CANDIDATE_PATHS}")
+endif()
 
 # Static link the runtime libraries
 ucm_set_runtime(DYNAMIC)
