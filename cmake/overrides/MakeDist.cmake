@@ -75,6 +75,12 @@ else()
   if(NOT LDD_EXEC)
     message(WARNING "ldd not found; dependency copy will be skipped")
   endif()
+
+  # Whitelist of non-glibc system libs we still want to vendor if they reside in /usr/lib* paths.
+  # Rationale: These are typically not guaranteed to be present (or at matching versions) on target hosts,
+  # and are safe to redistribute compared to glibc core libs which must remain system-provided.
+  set(_DIST_ALLOWED_SYSTEM_LIB_REGEX "(libssl\\.so|libcrypto\\.so|libzstd\\.so|libpng16\\.so|libjpeg\\.so|libtiff\\.so|libfreetype\\.so|libfontconfig\\.so|liblzma\\.so|libomp\\.so)")
+
   function(get_deps input out_var)
     if(NOT EXISTS "${input}" OR NOT LDD_EXEC)
       set(${out_var} "" PARENT_SCOPE)
@@ -95,10 +101,18 @@ else()
           string(REGEX REPLACE "=>[ ]+" "" _path "${_m}")
           if(EXISTS "${_path}")
             # Skip system libs in /lib or /usr/lib (keep /usr/local, /home/linuxbrew, /opt etc.)
-            if(NOT _path MATCHES "^/lib(/|$)" AND
-               NOT _path MATCHES "^/usr/lib(/|$)" AND
-               NOT _path MATCHES "^/lib64(/|$)" AND
-               NOT _path MATCHES "^/usr/lib64(/|$)")
+            set(_add TRUE)
+            if(_path MATCHES "^/lib(/|$)" OR
+               _path MATCHES "^/usr/lib(/|$)" OR
+               _path MATCHES "^/lib64(/|$)" OR
+               _path MATCHES "^/usr/lib64(/|$)")
+              # Allowlist certain non-glibc dynamic libs; otherwise skip core system/glibc libs
+              get_filename_component(_fname "${_path}" NAME)
+              if(NOT _fname MATCHES "${_DIST_ALLOWED_SYSTEM_LIB_REGEX}")
+                set(_add FALSE)
+              endif()
+            endif()
+            if(_add)
               list(APPEND _deps "${_path}")
             endif()
           endif()
@@ -107,10 +121,17 @@ else()
         # Some ldd variants output direct path at start
         string(REGEX MATCH "^/[^ ]+" _path "${line}")
         if(_path AND EXISTS "${_path}")
-          if(NOT _path MATCHES "^/lib(/|$)" AND
-             NOT _path MATCHES "^/usr/lib(/|$)" AND
-             NOT _path MATCHES "^/lib64(/|$)" AND
-             NOT _path MATCHES "^/usr/lib64(/|$)")
+          set(_add TRUE)
+          if(_path MATCHES "^/lib(/|$)" OR
+             _path MATCHES "^/usr/lib(/|$)" OR
+             _path MATCHES "^/lib64(/|$)" OR
+             _path MATCHES "^/usr/lib64(/|$)")
+            get_filename_component(_fname "${_path}" NAME)
+            if(NOT _fname MATCHES "${_DIST_ALLOWED_SYSTEM_LIB_REGEX}")
+              set(_add FALSE)
+            endif()
+          endif()
+          if(_add)
             list(APPEND _deps "${_path}")
           endif()
         endif()
@@ -128,11 +149,23 @@ foreach(_artifact IN ITEMS EXECUTABLE_PATH LIB_SERVER_PATH LIB_INFERENCE_PATH)
   endif()
 endforeach()
 
+# Track primary artifact absolute paths so we don't duplicate them under lib/ on Linux
+set(_PRIMARY_ARTIFACTS)
+foreach(_artifact IN ITEMS EXECUTABLE_PATH LIB_SERVER_PATH LIB_INFERENCE_PATH)
+  if(DEFINED ${_artifact} AND EXISTS "${${_artifact}}")
+    list(APPEND _PRIMARY_ARTIFACTS "${${_artifact}}")
+  endif()
+endforeach()
+
 set(_COPIED)
 while(_QUEUE)
   list(POP_FRONT _QUEUE current)
   get_deps("${current}" deps)
   foreach(d IN LISTS deps)
+    # Skip copying primary artifacts themselves into lib (we only want them at root)
+    if(d IN_LIST _PRIMARY_ARTIFACTS)
+      continue()
+    endif()
     if(NOT d IN_LIST _COPIED)
       # Copy into lib subdir
       get_filename_component(_name "${d}" NAME)
