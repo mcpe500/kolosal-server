@@ -415,6 +415,12 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(kolosal_server PRIVATE Threads::Threads)
 
+# Link OpenMP for targets (FAISS / headers may include <omp.h>)
+find_package(OpenMP QUIET)
+if(OpenMP_FOUND AND TARGET OpenMP::OpenMP_CXX)
+    target_link_libraries(kolosal_server PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
 if(WIN32)
     target_link_libraries(kolosal_server PRIVATE ws2_32 wbemuuid)
 elseif(APPLE)
@@ -480,6 +486,21 @@ add_custom_command(TARGET kolosal_server_exe POST_BUILD
     "$<TARGET_FILE:${INFERENCE_TARGET}>"
     "$<TARGET_FILE_DIR:kolosal_server_exe>/"
     COMMENT "Copying ${INFERENCE_TARGET} to executable directory"
+)
+
+# === SELF-CONTAINED DIST PACKAGE ===
+# Create a fully self-contained "dist" directory with executable, libs, shaders, configs and dependent dylibs.
+set(KOLOSAL_FULL_DIST_DIR "${CMAKE_BINARY_DIR}/dist")
+add_custom_target(dist
+    DEPENDS kolosal_server_exe
+    COMMAND ${CMAKE_COMMAND}
+        -DEXECUTABLE_PATH="$<TARGET_FILE:kolosal_server_exe>"
+        -DLIB_SERVER_PATH="$<TARGET_FILE:kolosal_server>"
+        -DLIB_INFERENCE_PATH="$<TARGET_FILE:${INFERENCE_TARGET}>"
+        -DDIST_DIR="${KOLOSAL_FULL_DIST_DIR}"
+        -DMETAL_BACKEND=$<BOOL:${USE_METAL}>
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/overrides/MakeDist.cmake"
+    COMMENT "Assembling self-contained distribution in dist/"
 )
 
 # === INSTALLATION ===

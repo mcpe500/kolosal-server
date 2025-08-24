@@ -475,12 +475,6 @@ install(TARGETS ${TARGET_NAME}
     ARCHIVE DESTINATION lib
 )
 
-# ---------------------------------------------------------------------------
-# Optional simple smoke test executable for the inference engine
-# Allows running a basic completion without starting the full server.
-# Usage after build:
-#   ./bin/inference_smoketest /path/to/model.gguf "Your prompt here"
-# ---------------------------------------------------------------------------
 option(BUILD_INFERENCE_TESTS "Build simple inference smoke test" ON)
 if(BUILD_INFERENCE_TESTS)
     add_executable(inference_smoketest tests/test_inference.cpp)
