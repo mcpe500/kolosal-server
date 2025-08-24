@@ -15,4 +15,4 @@ out/
 build/
 models/**
 downloads/**
-build/**
+build*/**
