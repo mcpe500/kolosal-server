@@ -22,11 +22,9 @@ A high-performance inference server for large language models with OpenAI-compat
 - 🌐 **Cross-Platform**: Windows and Linux native builds
 - 📚 **RAG Retrieval**: Native FAISS vector store (default) with optional Qdrant backend
 
-## Quick Start
+## Installation (Linux, Recommended)
 
-### Linux (Recommended)
-
-#### Prerequisites
+### Prerequisites
 
 **System Requirements:**
 - Ubuntu 20.04+ or equivalent Linux distribution (CentOS 8+, Fedora 32+, Arch Linux)
@@ -37,7 +35,7 @@ A high-performance inference server for large language models with OpenAI-compat
 - CUDA Toolkit 11.0+ (optional, for NVIDIA GPU acceleration)
 - Vulkan SDK (optional, for alternative GPU acceleration)
 
-**Install Dependencies:**
+### Install Dependencies:
 
 **Ubuntu/Debian:**
 ```bash
@@ -53,6 +51,9 @@ sudo apt install -y libcurl4-openssl-dev libyaml-cpp-dev
 # Optional: Install PoDoFo dependencies for PDF support
 sudo apt install -y libfreetype6-dev libjpeg-dev libpng-dev libtiff-dev libxml2-dev libfontconfig1-dev
 
+# Optional: Install FAISS dependencies
+sudo apt install libopenblas-dev liblapack-dev
+
 # Optional: Install CUDA for GPU support
 # Follow NVIDIA's official installation guide for your distribution
 ```
@@ -63,14 +64,14 @@ sudo apt install -y libfreetype6-dev libjpeg-dev libpng-dev libtiff-dev libxml2-
 sudo dnf groupinstall "Development Tools"
 sudo dnf install cmake git curl-devel yaml-cpp-devel
 
-# Optional: Install PoDoFo dependencies for PDF support
-sudo dnf install freetype-devel libjpeg-devel libpng-devel libtiff-devel libxml2-devel fontconfig-devel
-
 # For Fedora
 sudo dnf install gcc-c++ cmake git libcurl-devel yaml-cpp-devel
 
 # Optional: Install PoDoFo dependencies for PDF support (Fedora)
 sudo dnf install freetype-devel libjpeg-devel libpng-devel libtiff-devel libxml2-devel fontconfig-devel
+
+# Optional: Install FAISS dependencies
+sudo dnf install openblas-devel lapack-devel
 ```
 
 **Arch Linux:**
@@ -79,28 +80,32 @@ sudo pacman -S base-devel cmake git curl yaml-cpp
 
 # Optional: Install PoDoFo dependencies for PDF support
 sudo pacman -S freetype2 libjpeg-turbo libpng libtiff libxml2 fontconfig
+
+# Optional: Install FAISS dependencies
+sudo pacman -S openblas lapack
+```
+
+#### Install with Package Manager (Future)
+```bash
+# Note: Package manager installation will be available in future releases
+# For now, use the build from source method below
 ```
 
 #### Building from Source
 
-**1. Clone the Repository:**
+**1. Clone the Repository with the Submodules:**
+FAISS is bundled as a submodule in `external/faiss`. If you don't add `--recursive`, FAISS be disabled (the build creates a stub). Re-run the submodule command then reconfigure.
 ```bash
-git clone https://github.com/kolosalai/kolosal-server.git
+git clone https://github.com/kolosalai/kolosal-server.git --recurisve
 cd kolosal-server
 ```
 
-**2. Initialize Submodules:**
-```bash
-git submodule update --init --recursive
-```
-FAISS is bundled as a submodule in `external/faiss`. If you forget this step FAISS will be disabled (the build creates a stub). Re-run the submodule command then reconfigure.
-
-**3. Create Build Directory:**
+**2. Create Build Directory:**
 ```bash
 mkdir build && cd build
 ```
 
-**4. Configure Build:**
+**3. Configure Build:**
 
 **Standard Build (CPU-only):**
 ```bash
@@ -122,6 +127,11 @@ cmake -DCMAKE_BUILD_TYPE=Release -DLLAMA_VULKAN=ON ..
 cmake -DCMAKE_BUILD_TYPE=Release -DUSE_PODOFO=ON ..
 ```
 
+**With FAISS Support (requires dependencies installed):**
+```bash
+cmake -DCMAKE_BUILD_TYPE=Release -DUSE_FAISS=ON ..
+```
+
 **Combined Options:**
 ```bash
 # CUDA + PoDoFo
@@ -136,30 +146,45 @@ cmake -DCMAKE_BUILD_TYPE=Release -DLLAMA_VULKAN=ON -DUSE_PODOFO=ON ..
 cmake -DCMAKE_BUILD_TYPE=Debug ..
 ```
 
-**5. Build the Project:**
+**4. Build the Project:**
 ```bash
 # Use all available CPU cores
-make -j$(nproc)
+make -j
 
 # Or specify number of cores manually
 make -j4
 ```
 
-**6. Verify Build:**
+**5. Verify Build:**
 ```bash
 # Check if the executable was created
-ls -la kolosal-server
+cd Release && ls -la kolosal-server
 
 # Test basic functionality
 ./kolosal-server --help
+```
+
+**6. Install to System Path (Optional):**
+```bash
+# Install binary to /usr/local/bin
+sudo cp build/Release/kolosal-server /usr/local/bin/
+
+# Make it executable
+sudo chmod +x /usr/local/bin/kolosal-server
+
+# Now you can run from anywhere
+kolosal-server --help
 ```
 
 #### Running the Server
 
 **Start the Server:**
 ```bash
-# From build directory
+# From build/Release directory
 ./kolosal-server
+
+# Check where the config file is
+./kolosal-server --config 
 
 # Or specify a config file
 ./kolosal-server --config ../config.yaml
@@ -180,25 +205,6 @@ ps aux | grep kolosal-server
 curl http://localhost:8080/v1/health
 ```
 
-#### Alternative Installation Methods
-
-**Install to System Path:**
-```bash
-# Install binary to /usr/local/bin
-sudo cp build/kolosal-server /usr/local/bin/
-
-# Make it executable
-sudo chmod +x /usr/local/bin/kolosal-server
-
-# Now you can run from anywhere
-kolosal-server --help
-```
-
-**Install with Package Manager (Future):**
-```bash
-# Note: Package manager installation will be available in future releases
-# For now, use the build from source method above
-```
 
 #### Installation as System Service
 
@@ -313,15 +319,15 @@ sudo systemctl status kolosal-server
    # Reduce n_gpu_layers if running out of VRAM
    ```
 
-### macOS
+## Installation (MacOS)
 
-**Prerequisites:**
+### Prerequisites:
 - macOS 10.15 (Catalina) or later
 - Xcode Command Line Tools or Xcode
 - CMake 3.14+
 - Homebrew (recommended for dependency management)
 
-**Install Dependencies:**
+### Install Dependencies:
 ```bash
 # Install Homebrew if not already installed
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -357,27 +363,52 @@ make -j$(sysctl -n hw.ncpu)
 ./kolosal-server
 ```
 
-### Windows
+## Installation (Windows)
 
-**Prerequisites:**
+### Prerequisites:
 - Windows 10/11
 - Visual Studio 2019 or later
 - CMake 3.20+
+- VCPKG
 - CUDA Toolkit (optional, for GPU acceleration)
 
-**Building:**
-```bash
-git clone https://github.com/kolosalai/kolosal-server.git
-cd kolosal-server
-mkdir build && cd build
-cmake ..
-cmake --build . --config Debug
-```
+### Install Dependencies
+- Run `git clone https://github.com/kolosalai/kolosal-server.git --recurisve`
+- Run `cd kolosal-server`
+- Make a `vcpkg.json` file at the root of the project
+  ```json
+  {
+    "name": "kolosal-server",
+    "version-string": "1.0.0",
+    "dependencies": [
+      "curl",
+      "fontconfig",
+      "freetype",
+      "libjpeg-turbo",
+      "libpng",
+      "openssl",
+      "libxml2",
+      "tiff",
+      "zlib",
+      "openblas",
+      "lapack-reference"
+    ]
+  }```
+- Run `mkdir build && cd build`
+- Run  
+  ```
+  cmake -S . -B build -G "Visual Studio 17 2022" -A x64 ^
+  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" ^
+  -DVCPKG_TARGET_TRIPLET=x64-windows ^
+  -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL ^
+  -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
+  ```
+- Run `cd .. && cmake --build build --config Release --target kolosal_server_exe`
 
 ### Running the Server
 
 ```bash
-./Debug/kolosal-server.exe
+./Release/kolosal-server.exe
 ```
 
 The server will start on `http://localhost:8080` by default.
@@ -465,7 +496,7 @@ features:
 
 For complete configuration documentation including all parameters, authentication setup, CORS configuration, and more examples, see the **[Configuration Guide](docs/CONFIGURATION.md)**.
 
-## API Usage
+## API Usage (Unix)
 
 ### 1. Add a Model Engine
 
@@ -844,6 +875,54 @@ Write-Output "Average TPS: $($metrics.completion_metrics.summary.avg_tps)"
 curl -X GET http://localhost:8080/v1/health
 ```
 
+## API Usage (Powershell)
+
+For Windows users, here are PowerShell equivalents:
+
+### Add Engine
+```powershell
+$body = @{
+    engine_id = "my-model"
+    model_path = "C:\path\to\model.gguf"
+    load_immediately = $true
+    n_ctx = 2048
+    n_gpu_layers = 0
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8080/engines" -Method POST -Body $body -ContentType "application/json"
+```
+
+### Chat Completion
+```powershell
+$body = @{
+    model = "my-model"
+    messages = @(
+        @{
+            role = "user"
+            content = "Hello, how are you?"
+        }
+    )
+    stream = $false
+    temperature = 0.7
+    max_tokens = 100
+} | ConvertTo-Json -Depth 3
+
+Invoke-RestMethod -Uri "http://localhost:8080/v1/chat/completions" -Method POST -Body $body -ContentType "application/json"
+```
+
+### Completion
+```powershell
+$body = @{
+    model = "my-model"
+    prompt = "The future of AI is"
+    stream = $false
+    temperature = 0.7
+    max_tokens = 50
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8080/v1/completions" -Method POST -Body $body -ContentType "application/json"
+```
+
 ## Parameters Reference
 
 ### Chat Completion Parameters
@@ -892,7 +971,7 @@ curl -X GET http://localhost:8080/v1/health
 | `n_gpu_layers` | integer | 100 | Number of layers to offload to GPU |
 | `main_gpu_id` | integer | 0 | Primary GPU device ID |
 
-## Error Handling
+### Error Handling
 
 The server returns standard HTTP status codes and JSON error responses:
 
@@ -911,54 +990,6 @@ Common error codes:
 - `400` - Bad Request (invalid JSON, missing parameters)
 - `404` - Not Found (model/engine not found)
 - `500` - Internal Server Error (inference failures)
-
-## Examples with PowerShell
-
-For Windows users, here are PowerShell equivalents:
-
-### Add Engine
-```powershell
-$body = @{
-    engine_id = "my-model"
-    model_path = "C:\path\to\model.gguf"
-    load_immediately = $true
-    n_ctx = 2048
-    n_gpu_layers = 0
-} | ConvertTo-Json
-
-Invoke-RestMethod -Uri "http://localhost:8080/engines" -Method POST -Body $body -ContentType "application/json"
-```
-
-### Chat Completion
-```powershell
-$body = @{
-    model = "my-model"
-    messages = @(
-        @{
-            role = "user"
-            content = "Hello, how are you?"
-        }
-    )
-    stream = $false
-    temperature = 0.7
-    max_tokens = 100
-} | ConvertTo-Json -Depth 3
-
-Invoke-RestMethod -Uri "http://localhost:8080/v1/chat/completions" -Method POST -Body $body -ContentType "application/json"
-```
-
-### Completion
-```powershell
-$body = @{
-    model = "my-model"
-    prompt = "The future of AI is"
-    stream = $false
-    temperature = 0.7
-    max_tokens = 50
-} | ConvertTo-Json
-
-Invoke-RestMethod -Uri "http://localhost:8080/v1/completions" -Method POST -Body $body -ContentType "application/json"
-```
 
 ## 📚 Developer Documentation
 
