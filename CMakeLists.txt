@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
 
-# Set policies for compatibility
 if(POLICY CMP0074)
     cmake_policy(SET CMP0074 NEW)
 endif()
@@ -13,16 +12,13 @@ endif()
 
 project(KolosalServer VERSION 1.0.0 LANGUAGES C CXX)
 
-# Module paths
 list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/overrides")
 
-# Windows-specific vcpkg configuration
 if(WIN32)
     set(VCPKG_APPLOCAL_DEPS OFF CACHE BOOL "Disable vcpkg applocal dependency copying" FORCE)
     set(VCPKG_PWSH_PATH "powershell.exe" CACHE STRING "Path to PowerShell for vcpkg applocal step" FORCE)
 endif()
 
-# Output directory configuration
 if(CMAKE_CONFIGURATION_TYPES)
     foreach(_cfg Debug Release RelWithDebInfo MinSizeRel)
         string(TOUPPER ${_cfg} _CFG_UP)
@@ -38,18 +34,14 @@ elseif(CMAKE_BUILD_TYPE)
     set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${_single_dir}")
 endif()
 
-# Runtime library management
 include(${CMAKE_SOURCE_DIR}/cmake/ucm.cmake)
-ucm_set_runtime(STATIC)  # Fixed: comment said static but was set to DYNAMIC
+ucm_set_runtime(STATIC)
 
-# C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Enable PIC unconditionally (was checking ARM vs x86 but enabling for both)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Platform definitions
 if(MINGW)
     add_compile_definitions(_WIN32_WINNT=0x602)
 endif()
@@ -57,7 +49,6 @@ if(WIN32)
     add_compile_definitions(WIN32_LEAN_AND_MEAN NOMINMAX)
 endif()
 
-# Options
 option(USE_CUDA   "Compile with CUDA support" OFF)
 option(USE_VULKAN "Compile with VULKAN support" OFF)
 option(USE_METAL  "Compile with Metal support (macOS only)" OFF)
@@ -66,12 +57,10 @@ option(DEBUG      "Compile with debugging information" OFF)
 option(USE_PODOFO "Compile with PoDoFo PDF support" ON)
 option(USE_FAISS  "Compile with FAISS support" ON)
 
-# Auto-enable Metal on Apple
 if(APPLE AND NOT DEFINED USE_METAL)
     set(USE_METAL ON CACHE BOOL "Enable Metal acceleration on Apple systems" FORCE)
 endif()
 
-# Core include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/common
@@ -84,7 +73,6 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/external/zlib/contrib/minizip
 )
 
-# Conditional includes
 if(USE_PODOFO)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/src)
 endif()
@@ -92,7 +80,6 @@ if(USE_FAISS)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external/faiss)
 endif()
 
-# llama.cpp includes (simplified path detection)
 set(LLAMA_PATH "${CMAKE_CURRENT_SOURCE_DIR}/inference/external/llama.cpp")
 if(NOT EXISTS "${LLAMA_PATH}/include" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp/include")
     set(LLAMA_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/llama.cpp")
@@ -105,7 +92,6 @@ if(EXISTS "${LLAMA_PATH}/include")
     )
 endif()
 
-# Source files
 set(SOURCES
     src/server.cpp
     src/server_api.cpp    
@@ -149,18 +135,15 @@ set(SOURCES
     src/auth/auth_middleware.cpp
 )
 
-# Add PDF parser
 if(USE_PODOFO)
     list(APPEND SOURCES src/retrieval/parse_pdf.cpp)
 else()
     list(APPEND SOURCES src/retrieval/parse_pdf_stub.cpp)
 endif()
 
-# Create shared library
 add_library(kolosal_server SHARED ${SOURCES})
 target_compile_definitions(kolosal_server PRIVATE KOLOSAL_SERVER_BUILD INFERENCE_EXPORTS)
 
-# macOS library properties
 if(APPLE)
     set_target_properties(kolosal_server PROPERTIES
         MACOSX_RPATH TRUE
@@ -168,21 +151,18 @@ if(APPLE)
     )
 endif()
 
-# Create executable
 add_executable(kolosal_server_exe src/main.cpp)
 target_link_libraries(kolosal_server_exe PRIVATE kolosal_server)
 set_target_properties(kolosal_server_exe PROPERTIES OUTPUT_NAME "kolosal-server")
 
 # === DEPENDENCIES ===
 
-# yaml-cpp
 set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
 set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 add_subdirectory(external/yaml-cpp)
 
-# Determine inference target
 if(USE_CUDA)
     set(INFERENCE_TARGET "llama-cuda")
 elseif(USE_VULKAN)
@@ -194,10 +174,8 @@ else()
 endif()
 message(STATUS "Building inference engine: ${INFERENCE_TARGET}")
 
-# Build inference engine
 add_subdirectory(inference)
 
-# CURL configuration
 find_package(CURL QUIET)
 if(NOT CURL_FOUND)
     set(CURL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/curl")
@@ -211,7 +189,6 @@ if(NOT CURL_FOUND)
     endif()
 endif()
 
-# ZLIB
 find_package(ZLIB QUIET)
 if(NOT ZLIB_FOUND)
     set(ZLIB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
@@ -226,7 +203,6 @@ if(NOT ZLIB_FOUND)
     endif()
 endif()
 
-# Minizip
 if(NOT TARGET minizip_static)
     set(MINIZIP_SOURCES
         external/zlib/contrib/minizip/ioapi.c
@@ -252,7 +228,6 @@ if(NOT TARGET minizip_static)
     )
 endif()
 
-# PugiXML
 if(NOT TARGET pugixml)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/pugixml/CMakeLists.txt")
         set(PUGIXML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -265,17 +240,14 @@ if(NOT TARGET pugixml)
     endif()
 endif()
 
-# PoDoFo (simplified)
 if(USE_PODOFO AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/CMakeLists.txt")
-    # Find dependencies
     find_package(Freetype QUIET)
     find_package(JPEG QUIET)
     find_package(PNG QUIET)
     find_package(TIFF QUIET)
     find_package(LibXml2 QUIET)
     find_package(OpenSSL QUIET)
-    
-    # Configure PoDoFo
+
     set(PODOFO_BUILD_STATIC ON CACHE BOOL "" FORCE)
     set(PODOFO_BUILD_TEST OFF CACHE BOOL "" FORCE)
     set(PODOFO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -294,15 +266,12 @@ if(USE_PODOFO AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/CMakeLists
     endif()
 endif()
 
-# FAISS (simplified)
 if(USE_FAISS)
     find_package(faiss QUIET)
     if(NOT faiss_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/faiss/CMakeLists.txt")
-        # Handle OpenMP requirement (especially on macOS where it's not included by default)
         find_package(OpenMP QUIET)
         if(NOT OpenMP_FOUND)
             if(APPLE)
-                # Check common homebrew locations for libomp
                 find_path(OpenMP_INCLUDE_DIR
                     NAMES omp.h
                     PATHS /opt/homebrew/opt/libomp/include /usr/local/opt/libomp/include
@@ -314,7 +283,6 @@ if(USE_FAISS)
                     NO_DEFAULT_PATH
                 )
                 if(OpenMP_libomp_LIBRARY AND OpenMP_INCLUDE_DIR)
-                    # Set OpenMP variables for CMake FindOpenMP
                     set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp -I${OpenMP_INCLUDE_DIR}" CACHE STRING "" FORCE)
                     set(OpenMP_C_LIB_NAMES "omp" CACHE STRING "" FORCE)
                     set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp -I${OpenMP_INCLUDE_DIR}" CACHE STRING "" FORCE)
@@ -323,11 +291,9 @@ if(USE_FAISS)
                     set(OpenMP_C_LIBRARIES ${OpenMP_libomp_LIBRARY} CACHE STRING "" FORCE)
                     set(OpenMP_CXX_LIBRARIES ${OpenMP_libomp_LIBRARY} CACHE STRING "" FORCE)
                     set(OpenMP_FOUND TRUE CACHE BOOL "" FORCE)
-                    
-                    # Also set global compile flags to ensure all FAISS files get the include path
+
                     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -I${OpenMP_INCLUDE_DIR}")
                     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${OpenMP_INCLUDE_DIR}")
-                    
                     message(STATUS "Found libomp: ${OpenMP_libomp_LIBRARY}")
                     message(STATUS "Found omp.h: ${OpenMP_INCLUDE_DIR}")
                 else()
@@ -342,18 +308,15 @@ if(USE_FAISS)
                     "Or disable FAISS with: -DUSE_FAISS=OFF")
             endif()
         endif()
-        
-        # FAISS build options
+
         set(FAISS_ENABLE_GPU OFF CACHE BOOL "" FORCE)
         set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
         set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
         set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
         set(FAISS_OPT_LEVEL generic CACHE STRING "Use generic optimization" FORCE)
-        
-        # Ensure BLAS is available (required for FAISS)
+
         find_package(BLAS QUIET)
         if(NOT BLAS_FOUND AND APPLE)
-            # Use Accelerate framework on macOS
             find_library(ACCELERATE_FRAMEWORK Accelerate)
             if(ACCELERATE_FRAMEWORK)
                 set(BLAS_LIBRARIES ${ACCELERATE_FRAMEWORK})
@@ -361,11 +324,9 @@ if(USE_FAISS)
                 message(STATUS "Using Accelerate framework for BLAS")
             endif()
         endif()
-        
         if(NOT BLAS_FOUND)
             message(FATAL_ERROR "BLAS is required for FAISS. On macOS: comes with Accelerate. On Linux: sudo apt-get install libblas-dev liblapack-dev")
         endif()
-        
         add_subdirectory(external/faiss EXCLUDE_FROM_ALL)
     endif()
 endif()
@@ -404,18 +365,15 @@ if(CURL_LIBRARY)
     list(APPEND KOLOSAL_LINK_LIBRARIES ${CURL_LIBRARY})
 endif()
 
-# Link core libraries
 target_link_libraries(kolosal_server PRIVATE ${KOLOSAL_LINK_LIBRARIES})
 target_link_libraries(kolosal_server PUBLIC ${INFERENCE_TARGET})
 if(TARGET llama)
     target_link_libraries(kolosal_server PRIVATE llama)
 endif()
 
-# System libraries
 find_package(Threads REQUIRED)
 target_link_libraries(kolosal_server PRIVATE Threads::Threads)
 
-# Link OpenMP for targets (FAISS / headers may include <omp.h>)
 find_package(OpenMP QUIET)
 if(OpenMP_FOUND AND TARGET OpenMP::OpenMP_CXX)
     target_link_libraries(kolosal_server PRIVATE OpenMP::OpenMP_CXX)
@@ -473,7 +431,6 @@ elseif(APPLE)
 endif()
 
 # === POST-BUILD COPY ===
-# Copy shared libraries to executable directory
 add_custom_command(TARGET kolosal_server_exe POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "$<TARGET_FILE:kolosal_server>"
@@ -489,7 +446,6 @@ add_custom_command(TARGET kolosal_server_exe POST_BUILD
 )
 
 # === SELF-CONTAINED DIST PACKAGE ===
-# Create a fully self-contained "dist" directory with executable, libs, shaders, configs and dependent dylibs.
 set(KOLOSAL_FULL_DIST_DIR "${CMAKE_BINARY_DIR}/dist")
 add_custom_target(dist
     DEPENDS kolosal_server_exe
