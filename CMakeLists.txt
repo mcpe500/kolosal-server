@@ -261,9 +261,7 @@ if(USE_PODOFO AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/CMakeLists
         set_target_properties(podofo_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
     endif()
 
-    if(EXISTS "${CMAKE_BINARY_DIR}/external/podofo/src/podofo/podofo/auxiliary/podofo_config.h")
-        target_include_directories(kolosal_server PRIVATE "${CMAKE_BINARY_DIR}/external/podofo/src/podofo/podofo/auxiliary")
-    endif()
+    target_include_directories(kolosal_server PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/external/podofo/src/podofo/podofo/auxiliary")
 endif()
 
 if(USE_FAISS)
