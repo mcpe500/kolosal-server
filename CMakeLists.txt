@@ -112,6 +112,7 @@ set(SOURCES
     src/routes/health_status_route.cpp    
     src/routes/config/auth_config_route.cpp    
     src/routes/server_logs_route.cpp    
+    src/routes/ui_routes.cpp    
     src/routes/retrieval/embedding_route.cpp
     src/routes/retrieval/internet_search_route.cpp
     src/routes/retrieval/parse_document_route.cpp
@@ -174,6 +175,24 @@ else()
 endif()
 message(STATUS "Building inference engine: ${INFERENCE_TARGET}")
 
+# === ZLIB DEPENDENCY (needed by PoDoFo) ===
+find_package(ZLIB QUIET)
+if(NOT ZLIB_FOUND)
+    set(ZLIB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(ZLIB_BUILD_MINIZIP OFF CACHE BOOL "" FORCE)
+    set(ZLIB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(ZLIB_INSTALL OFF CACHE BOOL "" FORCE)
+    add_subdirectory(external/zlib EXCLUDE_FROM_ALL)
+    set(ZLIB_FOUND TRUE)
+    set(ZLIB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/zlib;${CMAKE_CURRENT_BINARY_DIR}/external/zlib")
+    set(ZLIB_INCLUDE_DIRS "${ZLIB_INCLUDE_DIR}")
+    if(TARGET zlibstatic)
+        add_library(ZLIB::ZLIB ALIAS zlibstatic)
+        set(ZLIB_LIBRARIES ZLIB::ZLIB)
+        set(ZLIB_LIBRARY zlibstatic)  # Set the raw target name that find_package expects
+    endif()
+endif()
+
 add_subdirectory(inference)
 
 find_package(CURL QUIET)
@@ -186,20 +205,6 @@ if(NOT CURL_FOUND)
             PATH_SUFFIXES Release Debug
             NO_DEFAULT_PATH
         )
-    endif()
-endif()
-
-find_package(ZLIB QUIET)
-if(NOT ZLIB_FOUND)
-    set(ZLIB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-    set(ZLIB_BUILD_MINIZIP OFF CACHE BOOL "" FORCE)
-    set(ZLIB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-    set(ZLIB_INSTALL OFF CACHE BOOL "" FORCE)
-    add_subdirectory(external/zlib EXCLUDE_FROM_ALL)
-    set(ZLIB_FOUND TRUE)
-    set(ZLIB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/zlib;${CMAKE_CURRENT_BINARY_DIR}/external/zlib")
-    if(TARGET zlibstatic)
-        add_library(ZLIB::ZLIB ALIAS zlibstatic)
     endif()
 endif()
 
@@ -248,20 +253,26 @@ if(USE_PODOFO AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/podofo/CMakeLists
     find_package(LibXml2 QUIET)
     find_package(OpenSSL QUIET)
 
-    set(PODOFO_BUILD_STATIC ON CACHE BOOL "" FORCE)
-    set(PODOFO_BUILD_TEST OFF CACHE BOOL "" FORCE)
-    set(PODOFO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    set(PODOFO_BUILD_UNSUPPORTED_TOOLS OFF CACHE BOOL "" FORCE)
-    set(PODOFO_BUILD_LIB_ONLY ON CACHE BOOL "" FORCE)
-    set(CMAKE_SKIP_INSTALL_RULES TRUE)
-    add_subdirectory(external/podofo EXCLUDE_FROM_ALL)
-    set(CMAKE_SKIP_INSTALL_RULES FALSE)
-    
-    if(TARGET podofo_static)
-        set_target_properties(podofo_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    endif()
+    if(OPENSSL_FOUND)
+        set(PODOFO_BUILD_STATIC ON CACHE BOOL "" FORCE)
+        set(PODOFO_BUILD_TEST OFF CACHE BOOL "" FORCE)
+        set(PODOFO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(PODOFO_BUILD_UNSUPPORTED_TOOLS OFF CACHE BOOL "" FORCE)
+        set(PODOFO_BUILD_LIB_ONLY ON CACHE BOOL "" FORCE)
+        set(CMAKE_SKIP_INSTALL_RULES TRUE)
+        add_subdirectory(external/podofo EXCLUDE_FROM_ALL)
+        set(CMAKE_SKIP_INSTALL_RULES FALSE)
+        
+        if(TARGET podofo_static)
+            set_target_properties(podofo_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        endif()
 
-    target_include_directories(kolosal_server PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/external/podofo/src/podofo/podofo/auxiliary")
+        target_include_directories(kolosal_server PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/external/podofo/src/podofo/podofo/auxiliary")
+        message(STATUS "PoDoFo PDF support enabled with OpenSSL")
+    else()
+        message(WARNING "OpenSSL not found - PoDoFo PDF support will be disabled")
+        set(USE_PODOFO OFF CACHE BOOL "Disabled due to missing OpenSSL" FORCE)
+    endif()
 endif()
 
 if(USE_FAISS)

@@ -17,6 +17,7 @@
 #include "kolosal/routes/health_status_route.hpp"
 #include "kolosal/routes/server_logs_route.hpp"
 #include "kolosal/routes/downloads_route.hpp"
+#include "kolosal/routes/ui_routes.hpp"
 
 // LLM routes
 
@@ -94,6 +95,9 @@ namespace kolosal
             pImpl->server->addRoute(std::make_unique<HealthStatusRoute>());
             pImpl->server->addRoute(std::make_unique<ServerLogsRoute>());
             pImpl->server->addRoute(std::make_unique<DownloadsRoute>());
+            
+            // UI routes
+            pImpl->server->addRoute(std::make_unique<UIRoute>());
             
             // LLM routes
 
