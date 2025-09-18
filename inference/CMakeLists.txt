@@ -36,7 +36,7 @@ if(NOT _UCM_FOUND)
 endif()
 
 # Static link the runtime libraries
-ucm_set_runtime(DYNAMIC)
+ucm_set_runtime(STATIC)
 
 # Use C++17 for this project (required for std::filesystem)
 set(CMAKE_CXX_STANDARD 17)

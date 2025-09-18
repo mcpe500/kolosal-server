@@ -18,58 +18,67 @@ namespace kolosal {
                 return true;
             }
             
-            // Match specific dashboard pages
-            if (path == "/dashboard/index" || path == "/dashboard/index.html") {
+            // Match specific dashboard pages (both with and without /dashboard prefix)
+            if (path == "/dashboard/index" || path == "/dashboard/index.html" || 
+                path == "/index" || path == "/index.html") {
                 current_method_ = method;
                 current_path_ = "/index.html";
                 return true;
             }
             
-            if (path == "/dashboard/engine" || path == "/dashboard/engine.html") {
+            if (path == "/dashboard/engine" || path == "/dashboard/engine.html" ||
+                path == "/engine" || path == "/engine.html") {
                 current_method_ = method;
                 current_path_ = "/engine.html";
                 return true;
             }
             
-            if (path == "/dashboard/collection" || path == "/dashboard/collection.html") {
+            if (path == "/dashboard/collection" || path == "/dashboard/collection.html" ||
+                path == "/collection" || path == "/collection.html") {
                 current_method_ = method;
                 current_path_ = "/collection.html";
                 return true;
             }
             
-            if (path == "/dashboard/retrieve" || path == "/dashboard/retrieve.html") {
+            if (path == "/dashboard/retrieve" || path == "/dashboard/retrieve.html" ||
+                path == "/retrieve" || path == "/retrieve.html") {
                 current_method_ = method;
                 current_path_ = "/retrieve.html";
                 return true;
             }
             
-            if (path == "/dashboard/upload" || path == "/dashboard/upload.html") {
+            if (path == "/dashboard/upload" || path == "/dashboard/upload.html" ||
+                path == "/upload" || path == "/upload.html") {
                 current_method_ = method;
                 current_path_ = "/upload.html";
                 return true;
             }
             
             // Match static assets (CSS, JS) - with /dashboard prefix
-            if (path.starts_with("/dashboard/styles/") && path.ends_with(".css")) {
+            if (path.length() >= 18 && path.substr(0, 18) == "/dashboard/styles/" && 
+                path.length() >= 4 && path.substr(path.length() - 4) == ".css") {
                 current_method_ = method;
                 current_path_ = path.substr(10); // Remove "/dashboard" prefix
                 return true;
             }
             
-            if (path.starts_with("/dashboard/script/") && path.ends_with(".js")) {
+            if (path.length() >= 18 && path.substr(0, 18) == "/dashboard/script/" && 
+                path.length() >= 3 && path.substr(path.length() - 3) == ".js") {
                 current_method_ = method;
                 current_path_ = path.substr(10); // Remove "/dashboard" prefix
                 return true;
             }
             
             // Match static assets (CSS, JS) - without /dashboard prefix
-            if (path.starts_with("/styles/") && path.ends_with(".css")) {
+            if (path.length() >= 8 && path.substr(0, 8) == "/styles/" && 
+                path.length() >= 4 && path.substr(path.length() - 4) == ".css") {
                 current_method_ = method;
                 current_path_ = path; // Use path as is
                 return true;
             }
             
-            if (path.starts_with("/script/") && path.ends_with(".js")) {
+            if (path.length() >= 8 && path.substr(0, 8) == "/script/" && 
+                path.length() >= 3 && path.substr(path.length() - 3) == ".js") {
                 current_method_ = method;
                 current_path_ = path; // Use path as is
                 return true;
@@ -115,23 +124,24 @@ namespace kolosal {
     }
 
     std::string UIRoute::getContentType(const std::string& filePath) {
-        if (filePath.ends_with(".html")) {
+        if (filePath.length() >= 5 && filePath.substr(filePath.length() - 5) == ".html") {
             return "text/html; charset=utf-8";
-        } else if (filePath.ends_with(".css")) {
+        } else if (filePath.length() >= 4 && filePath.substr(filePath.length() - 4) == ".css") {
             return "text/css; charset=utf-8";
-        } else if (filePath.ends_with(".js")) {
+        } else if (filePath.length() >= 3 && filePath.substr(filePath.length() - 3) == ".js") {
             return "application/javascript; charset=utf-8";
-        } else if (filePath.ends_with(".json")) {
+        } else if (filePath.length() >= 5 && filePath.substr(filePath.length() - 5) == ".json") {
             return "application/json; charset=utf-8";
-        } else if (filePath.ends_with(".png")) {
+        } else if (filePath.length() >= 4 && filePath.substr(filePath.length() - 4) == ".png") {
             return "image/png";
-        } else if (filePath.ends_with(".jpg") || filePath.ends_with(".jpeg")) {
+        } else if ((filePath.length() >= 4 && filePath.substr(filePath.length() - 4) == ".jpg") || 
+                   (filePath.length() >= 5 && filePath.substr(filePath.length() - 5) == ".jpeg")) {
             return "image/jpeg";
-        } else if (filePath.ends_with(".gif")) {
+        } else if (filePath.length() >= 4 && filePath.substr(filePath.length() - 4) == ".gif") {
             return "image/gif";
-        } else if (filePath.ends_with(".svg")) {
+        } else if (filePath.length() >= 4 && filePath.substr(filePath.length() - 4) == ".svg") {
             return "image/svg+xml";
-        } else if (filePath.ends_with(".ico")) {
+        } else if (filePath.length() >= 4 && filePath.substr(filePath.length() - 4) == ".ico") {
             return "image/x-icon";
         }
         return "text/plain; charset=utf-8";

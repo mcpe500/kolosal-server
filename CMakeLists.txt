@@ -71,6 +71,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/external/maddy/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/zlib
     ${CMAKE_CURRENT_SOURCE_DIR}/external/zlib/contrib/minizip
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/curl/include
 )
 
 if(USE_PODOFO)
@@ -199,12 +200,17 @@ find_package(CURL QUIET)
 if(NOT CURL_FOUND)
     set(CURL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/curl")
     if(EXISTS "${CURL_PATH}/include/curl/curl.h")
+        set(CURL_INCLUDE_DIR "${CURL_PATH}/include")
         find_library(CURL_LIBRARY 
             NAMES curl libcurl
             PATHS "${CURL_PATH}/lib"
             PATH_SUFFIXES Release Debug
             NO_DEFAULT_PATH
         )
+        if(CURL_LIBRARY)
+            set(CURL_FOUND TRUE)
+            message(STATUS "Found curl library: ${CURL_LIBRARY}")
+        endif()
     endif()
 endif()
 
@@ -370,8 +376,9 @@ if(USE_FAISS AND TARGET faiss)
     list(APPEND KOLOSAL_LINK_LIBRARIES faiss)
 endif()
 
-if(CURL_LIBRARY)
+if(CURL_FOUND OR CURL_LIBRARY)
     list(APPEND KOLOSAL_LINK_LIBRARIES ${CURL_LIBRARY})
+    message(STATUS "Linking curl library: ${CURL_LIBRARY}")
 endif()
 
 target_link_libraries(kolosal_server PRIVATE ${KOLOSAL_LINK_LIBRARIES})
