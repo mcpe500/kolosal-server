@@ -11,6 +11,13 @@ namespace kolosal {
 
     bool UIRoute::match(const std::string &method, const std::string &path) {
         if (method == "GET" || method == "OPTIONS") {
+            // Match playground routes
+            if (path == "/playground" || path == "/playground/") {
+                current_method_ = method;
+                current_path_ = "/playground/index.html";
+                return true;
+            }
+            
             // Match dashboard routes
             if (path == "/" || path == "/dashboard" || path == "/dashboard/") {
                 current_method_ = method;
@@ -51,6 +58,21 @@ namespace kolosal {
                 path == "/upload" || path == "/upload.html") {
                 current_method_ = method;
                 current_path_ = "/upload.html";
+                return true;
+            }
+            
+            // Match static assets (CSS, JS) - with /playground prefix
+            if (path.length() >= 19 && path.substr(0, 19) == "/playground/styles/" && 
+                path.length() >= 4 && path.substr(path.length() - 4) == ".css") {
+                current_method_ = method;
+                current_path_ = path.substr(11); // Remove "/playground" prefix
+                return true;
+            }
+            
+            if (path.length() >= 19 && path.substr(0, 19) == "/playground/script/" && 
+                path.length() >= 3 && path.substr(path.length() - 3) == ".js") {
+                current_method_ = method;
+                current_path_ = path.substr(11); // Remove "/playground" prefix
                 return true;
             }
             
@@ -148,9 +170,21 @@ namespace kolosal {
     }
 
     std::string UIRoute::readStaticFile(const std::string& relativePath) {
-        // Construct the full path to the static file
-        std::filesystem::path staticDir = std::filesystem::current_path() / "static" / "kolosal-dashboard";
-        std::filesystem::path fullPath = staticDir / relativePath.substr(1); // Remove leading slash
+        // Determine which static directory to use based on the path
+        std::filesystem::path staticDir;
+        std::filesystem::path filePath;
+        
+        if (relativePath.find("/playground/") == 0) {
+            // This is a playground file
+            staticDir = std::filesystem::current_path() / "static" / "kolosal-playground";
+            filePath = relativePath.substr(12); // Remove "/playground/" prefix
+        } else {
+            // This is a dashboard file
+            staticDir = std::filesystem::current_path() / "static" / "kolosal-dashboard";
+            filePath = relativePath.substr(1); // Remove leading slash
+        }
+        
+        std::filesystem::path fullPath = staticDir / filePath;
         
         // Security check: ensure the path is within the static directory
         std::filesystem::path canonicalPath = std::filesystem::canonical(fullPath.parent_path()) / fullPath.filename();
@@ -207,14 +241,14 @@ namespace kolosal {
         body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
         .error { color: #e74c3c; }
         .message { color: #7f8c8d; margin-top: 20px; }
-        a { color: #3498db; text-decoration: none; }
+        a { color: #3498db; text-decoration: none; margin: 0 10px; }
         a:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
     <h1 class="error">404 - Page Not Found</h1>
     <p class="message">The requested page could not be found.</p>
-    <p><a href="/dashboard">Go to Dashboard</a></p>
+    <p><a href="/dashboard">Go to Dashboard</a> | <a href="/playground">Go to Playground</a></p>
 </body>
 </html>)";
 
