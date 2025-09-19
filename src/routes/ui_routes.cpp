@@ -11,105 +11,112 @@ namespace kolosal {
 
     bool UIRoute::match(const std::string &method, const std::string &path) {
         if (method == "GET" || method == "OPTIONS") {
+            // Extract the path without query parameters
+            std::string cleanPath = path;
+            size_t queryPos = path.find('?');
+            if (queryPos != std::string::npos) {
+                cleanPath = path.substr(0, queryPos);
+            }
+            
             // Match playground routes
-            if (path == "/playground" || path == "/playground/") {
+            if (cleanPath == "/playground" || cleanPath == "/playground/") {
                 current_method_ = method;
                 current_path_ = "/playground/playground.html";
                 return true;
             }
             
             // Match direct playground.html access
-            if (path == "/playground/playground.html") {
+            if (cleanPath == "/playground/playground.html") {
                 current_method_ = method;
                 current_path_ = "/playground/playground.html";
                 return true;
             }
             
             // Match dashboard routes
-            if (path == "/" || path == "/dashboard" || path == "/dashboard/") {
+            if (cleanPath == "/" || cleanPath == "/dashboard" || cleanPath == "/dashboard/") {
                 current_method_ = method;
                 current_path_ = "/index.html";
                 return true;
             }
             
             // Match specific dashboard pages (both with and without /dashboard prefix)
-            if (path == "/dashboard/index" || path == "/dashboard/index.html" || 
-                path == "/index" || path == "/index.html") {
+            if (cleanPath == "/dashboard/index" || cleanPath == "/dashboard/index.html" || 
+                cleanPath == "/index" || cleanPath == "/index.html") {
                 current_method_ = method;
                 current_path_ = "/index.html";
                 return true;
             }
             
-            if (path == "/dashboard/engine" || path == "/dashboard/engine.html" ||
-                path == "/engine" || path == "/engine.html") {
+            if (cleanPath == "/dashboard/engine" || cleanPath == "/dashboard/engine.html" ||
+                cleanPath == "/engine" || cleanPath == "/engine.html") {
                 current_method_ = method;
                 current_path_ = "/engine.html";
                 return true;
             }
             
-            if (path == "/dashboard/collection" || path == "/dashboard/collection.html" ||
-                path == "/collection" || path == "/collection.html") {
+            if (cleanPath == "/dashboard/collection" || cleanPath == "/dashboard/collection.html" ||
+                cleanPath == "/collection" || cleanPath == "/collection.html") {
                 current_method_ = method;
                 current_path_ = "/collection.html";
                 return true;
             }
             
-            if (path == "/dashboard/retrieve" || path == "/dashboard/retrieve.html" ||
-                path == "/retrieve" || path == "/retrieve.html") {
+            if (cleanPath == "/dashboard/retrieve" || cleanPath == "/dashboard/retrieve.html" ||
+                cleanPath == "/retrieve" || cleanPath == "/retrieve.html") {
                 current_method_ = method;
                 current_path_ = "/retrieve.html";
                 return true;
             }
             
-            if (path == "/dashboard/upload" || path == "/dashboard/upload.html" ||
-                path == "/upload" || path == "/upload.html") {
+            if (cleanPath == "/dashboard/upload" || cleanPath == "/dashboard/upload.html" ||
+                cleanPath == "/upload" || cleanPath == "/upload.html") {
                 current_method_ = method;
                 current_path_ = "/upload.html";
                 return true;
             }
             
             // Match static assets (CSS, JS) - with /playground prefix
-            if (path.length() >= 19 && path.substr(0, 19) == "/playground/styles/" && 
-                path.length() >= 4 && path.substr(path.length() - 4) == ".css") {
+            if (cleanPath.length() >= 19 && cleanPath.substr(0, 19) == "/playground/styles/" && 
+                cleanPath.length() >= 4 && cleanPath.substr(cleanPath.length() - 4) == ".css") {
                 current_method_ = method;
-                current_path_ = path; // Keep the full path for playground assets
+                current_path_ = cleanPath; // Keep the full path for playground assets
                 return true;
             }
             
-            if (path.length() >= 19 && path.substr(0, 19) == "/playground/script/" && 
-                path.length() >= 3 && path.substr(path.length() - 3) == ".js") {
+            if (cleanPath.length() >= 19 && cleanPath.substr(0, 19) == "/playground/script/" && 
+                cleanPath.length() >= 3 && cleanPath.substr(cleanPath.length() - 3) == ".js") {
                 current_method_ = method;
-                current_path_ = path; // Keep the full path for playground assets
+                current_path_ = cleanPath; // Keep the full path for playground assets
                 return true;
             }
             
             // Match static assets (CSS, JS) - with /dashboard prefix
-            if (path.length() >= 18 && path.substr(0, 18) == "/dashboard/styles/" && 
-                path.length() >= 4 && path.substr(path.length() - 4) == ".css") {
+            if (cleanPath.length() >= 18 && cleanPath.substr(0, 18) == "/dashboard/styles/" && 
+                cleanPath.length() >= 4 && cleanPath.substr(cleanPath.length() - 4) == ".css") {
                 current_method_ = method;
-                current_path_ = path.substr(10); // Remove "/dashboard" prefix
+                current_path_ = cleanPath.substr(10); // Remove "/dashboard" prefix
                 return true;
             }
             
-            if (path.length() >= 18 && path.substr(0, 18) == "/dashboard/script/" && 
-                path.length() >= 3 && path.substr(path.length() - 3) == ".js") {
+            if (cleanPath.length() >= 18 && cleanPath.substr(0, 18) == "/dashboard/script/" && 
+                cleanPath.length() >= 3 && cleanPath.substr(cleanPath.length() - 3) == ".js") {
                 current_method_ = method;
-                current_path_ = path.substr(10); // Remove "/dashboard" prefix
+                current_path_ = cleanPath.substr(10); // Remove "/dashboard" prefix
                 return true;
             }
             
             // Match static assets (CSS, JS) - without /dashboard prefix
-            if (path.length() >= 8 && path.substr(0, 8) == "/styles/" && 
-                path.length() >= 4 && path.substr(path.length() - 4) == ".css") {
+            if (cleanPath.length() >= 8 && cleanPath.substr(0, 8) == "/styles/" && 
+                cleanPath.length() >= 4 && cleanPath.substr(cleanPath.length() - 4) == ".css") {
                 current_method_ = method;
-                current_path_ = path; // Use path as is
+                current_path_ = cleanPath; // Use path as is
                 return true;
             }
             
-            if (path.length() >= 8 && path.substr(0, 8) == "/script/" && 
-                path.length() >= 3 && path.substr(path.length() - 3) == ".js") {
+            if (cleanPath.length() >= 8 && cleanPath.substr(0, 8) == "/script/" && 
+                cleanPath.length() >= 3 && cleanPath.substr(cleanPath.length() - 3) == ".js") {
                 current_method_ = method;
-                current_path_ = path; // Use path as is
+                current_path_ = cleanPath; // Use path as is
                 return true;
             }
         }
