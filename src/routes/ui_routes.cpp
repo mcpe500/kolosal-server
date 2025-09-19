@@ -14,7 +14,14 @@ namespace kolosal {
             // Match playground routes
             if (path == "/playground" || path == "/playground/") {
                 current_method_ = method;
-                current_path_ = "/playground/index.html";
+                current_path_ = "/playground/playground.html";
+                return true;
+            }
+            
+            // Match direct playground.html access
+            if (path == "/playground/playground.html") {
+                current_method_ = method;
+                current_path_ = "/playground/playground.html";
                 return true;
             }
             
@@ -65,14 +72,14 @@ namespace kolosal {
             if (path.length() >= 19 && path.substr(0, 19) == "/playground/styles/" && 
                 path.length() >= 4 && path.substr(path.length() - 4) == ".css") {
                 current_method_ = method;
-                current_path_ = path.substr(11); // Remove "/playground" prefix
+                current_path_ = path; // Keep the full path for playground assets
                 return true;
             }
             
             if (path.length() >= 19 && path.substr(0, 19) == "/playground/script/" && 
                 path.length() >= 3 && path.substr(path.length() - 3) == ".js") {
                 current_method_ = method;
-                current_path_ = path.substr(11); // Remove "/playground" prefix
+                current_path_ = path; // Keep the full path for playground assets
                 return true;
             }
             
@@ -174,13 +181,16 @@ namespace kolosal {
         std::filesystem::path staticDir;
         std::filesystem::path filePath;
         
+        // Get the absolute path to the executable's directory
+        std::filesystem::path executablePath = std::filesystem::current_path();
+        
         if (relativePath.find("/playground/") == 0) {
             // This is a playground file
-            staticDir = std::filesystem::current_path() / "static" / "kolosal-playground";
+            staticDir = executablePath / "static" / "kolosal-playground";
             filePath = relativePath.substr(12); // Remove "/playground/" prefix
         } else {
             // This is a dashboard file
-            staticDir = std::filesystem::current_path() / "static" / "kolosal-dashboard";
+            staticDir = executablePath / "static" / "kolosal-dashboard";
             filePath = relativePath.substr(1); // Remove leading slash
         }
         
