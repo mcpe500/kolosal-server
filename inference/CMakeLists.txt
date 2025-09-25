@@ -36,7 +36,7 @@ if(NOT _UCM_FOUND)
 endif()
 
 # Static link the runtime libraries
-ucm_set_runtime(DYNAMIC)
+ucm_set_runtime(STATIC)
 
 # Use C++17 for this project (required for std::filesystem)
 set(CMAKE_CXX_STANDARD 17)
@@ -535,6 +535,10 @@ if(BUILD_INFERENCE_TESTS)
         get_filename_component(test_name ${test_src} NAME_WE)
         add_executable(${test_name} ${test_src} tests/test_common.h)
         target_link_libraries(${test_name} PRIVATE ${TARGET_NAME})
+        # Special handling for test_multi_gpu which needs direct access to llama functions
+        if(test_name STREQUAL "test_multi_gpu")
+            target_link_libraries(${test_name} PRIVATE ${LLAMA_LINK_LIBRARIES})
+        endif()
         target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
         set_target_properties(${test_name} PROPERTIES
             CXX_STANDARD 17
