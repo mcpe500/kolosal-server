@@ -105,6 +105,10 @@ struct CompletionParameters {
     // Behavior settings
     bool        streaming       = false;
     
+    // Context shifting parameters
+    int         n_discard       = 0;  // Number of tokens to discard during context shift (0 = default to n_left/2)
+    bool        allow_context_shift = false;  // Allow automatic context shifting when prompt exceeds context window
+    
     // Cache and session management
     std::string kvCacheFilePath = "";
     int         seqId           = -1;
@@ -150,6 +154,10 @@ struct ChatCompletionParameters {
     
     // Behavior settings
     bool        streaming       = false;
+    
+    // Context shifting parameters
+    int         n_discard       = 0;  // Number of tokens to discard during context shift (0 = default to n_left/2)
+    bool        allow_context_shift = false;  // Allow automatic context shifting when prompt exceeds context window
     
     // Cache and session management
     std::string kvCacheFilePath = "";

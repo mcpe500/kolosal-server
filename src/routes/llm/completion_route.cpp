@@ -3,6 +3,7 @@
 #include "kolosal/server_api.hpp"
 #include "kolosal/logger.hpp"
 #include "kolosal/node_manager.h"
+#include "kolosal/models/chat_message_model.hpp"
 
 #include "inference_interface.h"
 #include <json.hpp>
@@ -46,15 +47,17 @@ namespace kolosal
             // Required field: messages
             if (j.contains("messages") && j["messages"].is_array()) {
                 for (const auto& msgJson : j["messages"]) {
-                    if (msgJson.contains("role") && msgJson.contains("content") &&
-                        msgJson["role"].is_string() && msgJson["content"].is_string()) {
-                        
-                        Message msg(msgJson["role"].get<std::string>(), 
-                                   msgJson["content"].get<std::string>());
-                        params.messages.push_back(msg);
-                    } else {
+                    if (!msgJson.contains("role") || !msgJson["role"].is_string()) {
                         throw std::invalid_argument("Invalid message format in messages array");
                     }
+
+                    std::string role = msgJson["role"].get<std::string>();
+                    std::string content = "";
+                    if (msgJson.contains("content") && !msgJson["content"].is_null()) {
+                        content = ChatMessage::extractContent(msgJson["content"]);
+                    }
+
+                    params.messages.emplace_back(std::move(role), std::move(content));
                 }
             } else {
                 throw std::invalid_argument("Missing or invalid 'messages' field");
@@ -141,6 +144,14 @@ namespace kolosal
                 }
             }
             
+            // Context shifting support
+            if (j.contains("allow_context_shift") && j["allow_context_shift"].is_boolean()) {
+                params.allow_context_shift = j["allow_context_shift"].get<bool>();
+            }
+            if (j.contains("n_discard") && j["n_discard"].is_number_integer()) {
+                params.n_discard = j["n_discard"].get<int>();
+            }
+
             finalizeStructuredOutput(params, "chat");
             return params;
         }
@@ -226,6 +237,14 @@ namespace kolosal
                 }
             }
             
+            // Context shifting support
+            if (j.contains("allow_context_shift") && j["allow_context_shift"].is_boolean()) {
+                params.allow_context_shift = j["allow_context_shift"].get<bool>();
+            }
+            if (j.contains("n_discard") && j["n_discard"].is_number_integer()) {
+                params.n_discard = j["n_discard"].get<int>();
+            }
+
             finalizeStructuredOutput(params, "completion");
             return params;
         }

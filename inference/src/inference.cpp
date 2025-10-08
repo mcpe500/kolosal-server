@@ -1,5 +1,3 @@
-#define INFERENCE_EXPORTS
-
 #include <filesystem>
 #include <stdexcept>
 #include <iostream>
@@ -319,11 +317,26 @@ bool EmbeddingParameters::isValid() const
 		return false;
 	}
 
-	// Input should not be too long (reasonable limit)
-	if (input.length() > 100000) // 100KB limit
+	// IMPROVED: More intelligent input length validation
+	// The 100KB limit is kept as a sanity check, but with better messaging
+	// Note: Actual token count validation happens in the embedding service
+	const size_t MAX_CHAR_LIMIT = 100000; // 100KB
+	if (input.length() > MAX_CHAR_LIMIT)
 	{
-		std::cerr << "[INFERENCE] [ERROR] input is too long: " << input.length() << " characters" << std::endl;
+		std::cerr << "[INFERENCE] [ERROR] Input text too long: " << input.length() 
+				  << " characters (limit: " << MAX_CHAR_LIMIT << " characters). "
+				  << "Note: This is a character limit; actual token count may vary. "
+				  << "Please reduce input size." << std::endl;
 		return false;
+	}
+
+	// Warn for large inputs that might cause issues
+	const size_t WARN_CHAR_LIMIT = 50000; // 50KB
+	if (input.length() > WARN_CHAR_LIMIT)
+	{
+		std::cerr << "[INFERENCE] [WARNING] Large input detected: " << input.length() 
+				  << " characters. This may result in high token count. "
+				  << "Consider chunking for better performance." << std::endl;
 	}
 
 	return true;
@@ -784,13 +797,16 @@ namespace
 			std::cout << "[INFERENCE] Submitting job with prompt: \n" << params.prompt << std::endl;
 #endif
 
-			if (!validateParameters(params, job)) {
+			// Make a mutable copy for potential context shifting
+			CompletionParameters mutable_params = params;
+			
+			if (!validateParameters(mutable_params, job)) {
 				return;
 			}
 
-			job->params = params;
+			job->params = mutable_params;
 
-			job->smpl = initializeSampler(params, job);
+			job->smpl = initializeSampler(mutable_params, job);
 			if (!job->smpl) {
 				return;
 			}
@@ -881,10 +897,11 @@ namespace
 				/*grammar*/ "",
 				/*jsonSchema*/ "",
 				params.streaming,
+				params.n_discard,
+				params.allow_context_shift,
 				params.kvCacheFilePath,
 				params.seqId
 			};
-
 			// Carry over grammar or jsonSchema
 			completionParams.grammar = params.grammar;
 			completionParams.jsonSchema = params.jsonSchema;
@@ -970,7 +987,87 @@ namespace
 		}
 #endif
 
-		bool validateParameters(const CompletionParameters& params, std::shared_ptr<Job> job) {
+		// Helper function to save long context to a file
+		std::string saveLongContextToFile(const std::string& prompt, int prompt_token_count, int job_id) {
+			try {
+				// Create directory if it doesn't exist
+				std::filesystem::path overflow_dir = "overflow_contexts";
+				if (!std::filesystem::exists(overflow_dir)) {
+					std::filesystem::create_directories(overflow_dir);
+				}
+				
+				// Generate filename with timestamp and job ID
+				auto now = std::chrono::system_clock::now();
+				auto timestamp = std::chrono::system_clock::to_time_t(now);
+				std::stringstream filename;
+				filename << "overflow_contexts/context_job" << job_id 
+						 << "_" << timestamp << "_" << prompt_token_count << "tokens.txt";
+				
+				// Write prompt to file
+				std::ofstream outfile(filename.str());
+				if (!outfile.is_open()) {
+					return "";
+				}
+				
+				outfile << "=== Long Context Overflow ===" << std::endl;
+				outfile << "Job ID: " << job_id << std::endl;
+				outfile << "Timestamp: " << std::ctime(&timestamp);
+				outfile << "Token Count: " << prompt_token_count << std::endl;
+				outfile << "Context Window: " << n_ctx << std::endl;
+				outfile << "================================" << std::endl << std::endl;
+				outfile << prompt;
+				outfile.close();
+				
+				// Return filename (caller will log if needed)
+				return filename.str();
+			} catch (const std::exception& e) {
+				std::cerr << "[INFERENCE] [ERROR] Failed to save long context: " << e.what() << std::endl;
+				return "";
+			}
+		}
+
+		// Helper function to truncate tokens using StreamingLLM pattern
+		// Keeps n_keep initial tokens + recent tokens, discards middle
+		std::string truncateContextTokens(const std::vector<llama_token>& tokens, int target_size, int job_id) {
+			if (static_cast<int>(tokens.size()) <= target_size) {
+				// No truncation needed
+				return tokenizer->detokenize(tokens);
+			}
+			
+			// Calculate how many recent tokens to keep
+			// Reserve space for n_keep initial tokens and generation
+			int keep_initial = n_keep;
+			int keep_recent = target_size - keep_initial;
+			
+			if (keep_recent <= 0) {
+				// Fallback: just keep the first target_size tokens
+				std::vector<llama_token> truncated(tokens.begin(), tokens.begin() + target_size);
+				std::cerr << "[INFERENCE] [INFO] Context truncated from " << tokens.size() 
+						  << " to " << target_size << " tokens (first tokens only)" << std::endl;
+				return tokenizer->detokenize(truncated);
+			}
+			
+			// StreamingLLM pattern: keep initial + recent
+			std::vector<llama_token> truncated;
+			truncated.reserve(keep_initial + keep_recent);
+			
+			// Add initial tokens (attention sinks)
+			truncated.insert(truncated.end(), tokens.begin(), tokens.begin() + keep_initial);
+			
+			// Add recent tokens
+			int recent_start = tokens.size() - keep_recent;
+			truncated.insert(truncated.end(), tokens.begin() + recent_start, tokens.end());
+			
+			int discarded = tokens.size() - truncated.size();
+			std::cerr << "[INFERENCE] [INFO] Context automatically shifted: kept " << keep_initial 
+					  << " initial + " << keep_recent << " recent tokens, discarded " 
+					  << discarded << " middle tokens (total: " << tokens.size() 
+					  << " -> " << truncated.size() << ")" << std::endl;
+			
+			return tokenizer->detokenize(truncated);
+		}
+
+		bool validateParameters(CompletionParameters& params, std::shared_ptr<Job> job) {
 			if (!params.isValid()) {
 				std::lock_guard<std::mutex> jobLock(job->mtx);
 				job->hasError = true;
@@ -978,6 +1075,107 @@ namespace
 				job->cv.notify_all();
 				return false;
 			}
+			
+			// Tokenize the prompt to check size before processing
+			if (!params.prompt.empty()) {
+				std::vector<llama_token> temp_tokens = tokenizer->tokenize(params.prompt, tokenizer->shouldAddBos());
+				int prompt_token_count = static_cast<int>(temp_tokens.size());
+				int generation_tokens = params.maxNewTokens > 0 ? params.maxNewTokens : 512; // Default estimate
+				int total_required = prompt_token_count + generation_tokens;
+				
+#ifdef DEBUG
+				// Save every prompt to file for logging/debugging (DEBUG builds only)
+				std::string saved_file = saveLongContextToFile(params.prompt, prompt_token_count, job->jobId);
+				if (!saved_file.empty()) {
+					std::cerr << "[INFERENCE] [INFO] Prompt saved (" << prompt_token_count 
+							  << " tokens) to: " << saved_file << std::endl;
+				}
+#endif
+				
+				// Check if prompt alone exceeds context
+				if (prompt_token_count >= n_ctx) {
+					// If context shifting is allowed, truncate the prompt
+					if (params.allow_context_shift) {
+						// Calculate target size conservatively
+						// Account for potential KV cache state from slot reuse in test environments
+						// Use ~40% of context for prompt to leave room for generation + cached state
+						int target_prompt_tokens = (n_ctx * 2) / 5;  // 40% of context
+						
+						if (target_prompt_tokens < 256) {
+							// Context window too small for shifting
+							std::lock_guard<std::mutex> jobLock(job->mtx);
+							job->hasError = true;
+							job->errorMessage = "Context window too small for automatic shifting";
+							job->isFinished = true;
+							job->cv.notify_all();
+							return false;
+						}
+						
+						// Truncate using StreamingLLM pattern
+						params.prompt = truncateContextTokens(temp_tokens, target_prompt_tokens, job->jobId);
+						
+						std::cerr << "[INFERENCE] [INFO] Context shift enabled. Original prompt: " 
+								  << prompt_token_count << " tokens, truncated to ~" << target_prompt_tokens 
+								  << " to fit " << n_ctx << " context window" << std::endl;
+						
+						// Re-tokenize to verify
+						temp_tokens = tokenizer->tokenize(params.prompt, tokenizer->shouldAddBos());
+						prompt_token_count = static_cast<int>(temp_tokens.size());
+						total_required = prompt_token_count + generation_tokens;
+					} else {
+						// Context shifting not enabled
+						std::lock_guard<std::mutex> jobLock(job->mtx);
+						job->hasError = true;
+						job->errorMessage = "Prompt too long for context window. Prompt tokens: " + 
+										   std::to_string(prompt_token_count) + 
+										   ", Context size: " + std::to_string(n_ctx) + 
+										   ". Please reduce prompt length or enable allow_context_shift.";
+						job->isFinished = true;
+						job->cv.notify_all();
+						std::cerr << "[INFERENCE] [ERROR] " << job->errorMessage << std::endl;
+						return false;
+					}
+				}
+				
+				// Check if prompt + generation would exceed context (accounting for n_keep)
+				if (total_required > n_ctx - n_keep) {
+					if (params.allow_context_shift && prompt_token_count < n_ctx) {
+						// Reduce generation tokens to fit
+						int available_for_generation = n_ctx - prompt_token_count - n_keep;
+						if (available_for_generation > 0) {
+							std::cerr << "[INFERENCE] [INFO] Adjusting maxNewTokens from " 
+									  << params.maxNewTokens << " to " << available_for_generation 
+									  << " to fit context window" << std::endl;
+							params.maxNewTokens = available_for_generation;
+						} else {
+							// Need to truncate prompt further
+							int target_prompt_tokens = n_ctx - params.maxNewTokens - n_keep;
+							params.prompt = truncateContextTokens(temp_tokens, target_prompt_tokens, job->jobId);
+						}
+					} else {
+						// Prompt + generation exceeds context
+						std::lock_guard<std::mutex> jobLock(job->mtx);
+						job->hasError = true;
+						job->errorMessage = "Prompt + generation tokens (" + std::to_string(total_required) + 
+										   ") exceed context window (" + std::to_string(n_ctx) + 
+										   "). Prompt: " + std::to_string(prompt_token_count) + 
+										   " tokens, Requested generation: " + std::to_string(generation_tokens) + 
+										   " tokens. Please reduce prompt or maxNewTokens, or enable allow_context_shift.";
+						job->isFinished = true;
+						job->cv.notify_all();
+						std::cerr << "[INFERENCE] [ERROR] " << job->errorMessage << std::endl;
+						return false;
+					}
+				}
+				
+				// Warn if getting close to limit (>80% usage)
+				if (total_required > (n_ctx * 0.8)) {
+					std::cerr << "[INFERENCE] [WARNING] High context usage: " << total_required 
+							  << " / " << n_ctx << " tokens (" 
+							  << (total_required * 100 / n_ctx) << "%). Generation may be limited." << std::endl;
+				}
+			}
+			
 			return true;
 		}
 
@@ -1022,7 +1220,56 @@ namespace
 				// Use the logical session id from params for file-backed sessions
 				const int session_seq = job->params.seqId;
 				if (!load_kv_cache(job->path_session, job->session_tokens, session_seq)) {
+					std::cerr << "[INFERENCE] [ERROR] Failed to load KV cache from: " 
+							  << job->path_session << std::endl;
 					return false;
+				}
+				
+				// CRITICAL FIX: After loading session, validate against new prompt size
+				if (!job->params.prompt.empty()) {
+					// Estimate new prompt token count
+					std::vector<llama_token> temp_prompt_tokens = tokenizer->tokenize(
+						job->params.prompt, tokenizer->shouldAddBos());
+					int session_token_count = static_cast<int>(job->session_tokens.size());
+					int new_prompt_tokens = static_cast<int>(temp_prompt_tokens.size());
+					int total_tokens = session_token_count + new_prompt_tokens;
+					
+					if (total_tokens >= n_ctx) {
+						// Save the combined context to a file
+						std::stringstream combined_context;
+						combined_context << "=== Session Context ===" << std::endl;
+						combined_context << tokenizer->detokenize(job->session_tokens) << std::endl;
+						combined_context << std::endl << "=== New Prompt ===" << std::endl;
+						combined_context << job->params.prompt << std::endl;
+						
+						std::string saved_file = saveLongContextToFile(
+							combined_context.str(), 
+							total_tokens, 
+							job->jobId
+						);
+						
+						if (!saved_file.empty()) {
+							std::cerr << "[INFERENCE] [ERROR] Session tokens (" << session_token_count 
+									  << ") + new prompt tokens (" << new_prompt_tokens 
+									  << ") exceed context (" << n_ctx << "). "
+									  << "Combined context saved to: " << saved_file << ". "
+									  << "Please reduce prompt or start new session." << std::endl;
+						} else {
+							std::cerr << "[INFERENCE] [ERROR] Session tokens (" << session_token_count 
+									  << ") + new prompt tokens (" << new_prompt_tokens 
+									  << ") exceed context (" << n_ctx << "). "
+									  << "Please reduce prompt or start new session." << std::endl;
+						}
+						return false;
+					}
+					
+					// Warn if combined usage is high
+					if (total_tokens > (n_ctx * 0.75)) {
+						std::cerr << "[INFERENCE] [WARNING] High context usage after session load: " 
+								  << total_tokens << "/" << n_ctx << " tokens ("
+								  << (total_tokens * 100 / n_ctx) << "%). "
+								  << "Limited room for generation." << std::endl;
+					}
 				}
 			}
 			return true;
@@ -1035,6 +1282,30 @@ namespace
 			else {
 				job->embd_inp = job->session_tokens;
 			}
+			
+			// CRITICAL FIX: Validate token count before processing
+			// Calculate available context considering session tokens and generation needs
+			int session_token_count = static_cast<int>(job->session_tokens.size());
+			int available_ctx = n_ctx - session_token_count;
+			int required_tokens = static_cast<int>(job->embd_inp.size());
+			int generation_tokens = job->params.maxNewTokens > 0 ? job->params.maxNewTokens : 512; // Default estimate
+			
+			if (required_tokens > available_ctx) {
+				std::cerr << "[INFERENCE] [ERROR] Input token count (" << required_tokens 
+						  << ") exceeds available context (" << available_ctx 
+						  << "). Session tokens: " << session_token_count
+						  << ", Total context: " << n_ctx << std::endl;
+				return false;
+			}
+			
+			// Warn if there's insufficient room for generation
+			if (required_tokens + generation_tokens > n_ctx - n_keep) {
+				std::cerr << "[INFERENCE] [WARNING] Input tokens (" << required_tokens 
+						  << ") + requested generation (" << generation_tokens 
+						  << ") may exceed context window (" << n_ctx 
+						  << "). Generation may be truncated." << std::endl;
+			}
+			
 			return true;
 		}
 
@@ -1056,10 +1327,25 @@ namespace
 
 		bool ensureContextCapacity(std::shared_ptr<Job> job) {
 			if (job->n_past + 1 > n_ctx) {
-				kv_cache_seq_ltrim(context, n_keep, job->session_tokens, job->n_past, job->seqId);
+#ifdef DEBUG
+				std::cout << "[INFERENCE] Context capacity check: n_past=" << job->n_past 
+						  << ", n_ctx=" << n_ctx << ", attempting trim..." << std::endl;
+#endif
+				// Pass n_discard from job params (0 means use default n_left/2)
+				kv_cache_seq_ltrim(context, n_keep, job->session_tokens, job->n_past, job->seqId, job->params.n_discard);
+				
+				// IMPROVED: Better error reporting after trim attempt
 				if (job->n_past + 1 > n_ctx) {
+					std::cerr << "[INFERENCE] [ERROR] Context overflow: Cannot fit tokens even after trimming. "
+							  << "n_past=" << job->n_past << ", n_ctx=" << n_ctx 
+							  << ", n_keep=" << n_keep << ". "
+							  << "Context budget exhausted. Consider reducing prompt or maxNewTokens." 
+							  << std::endl;
 					return false;
 				}
+#ifdef DEBUG
+				std::cout << "[INFERENCE] Trim successful. New n_past=" << job->n_past << std::endl;
+#endif
 			}
 			return true;
 		}
@@ -1173,6 +1459,27 @@ namespace
 					printf("[INFERENCE] [KV] loaded session with prompt size: %d tokens\n", (int)session_tokens.size());
 					printf("[INFERENCE] [KV] tokens decoded: %s\n", tokenizer->detokenize(session_tokens).c_str());
 #endif
+
+					// CRITICAL FIX: Validate that loaded session doesn't consume entire context
+					int loaded_token_count = static_cast<int>(session_tokens.size());
+					int remaining_ctx = n_ctx - loaded_token_count;
+					
+					if (loaded_token_count >= n_ctx) {
+						std::cerr << "[INFERENCE] [ERROR] Loaded session tokens (" << loaded_token_count 
+								  << ") exceed or equal context size (" << n_ctx 
+								  << "). No room for new input. Please start a new session." << std::endl;
+						session_tokens.clear();
+						return false;
+					}
+					
+					// Warn if session uses significant portion of context (>60%)
+					if (loaded_token_count > (n_ctx * 0.6)) {
+						std::cerr << "[INFERENCE] [WARNING] Session uses " << loaded_token_count 
+								  << " tokens (" << (loaded_token_count * 100 / n_ctx) 
+								  << "% of context). Limited space for new input (" 
+								  << remaining_ctx << " tokens available)." << std::endl;
+					}
+					
 					return true;
 				}
 			}
@@ -1286,13 +1593,26 @@ namespace
 			return n_matching_session_tokens;
 		}
 
-		void kv_cache_seq_ltrim(llama_context* context, int n_keep, std::vector<llama_token>& session_tokens, int& n_past, const int id) {
+		void kv_cache_seq_ltrim(llama_context* context, int n_keep, std::vector<llama_token>& session_tokens, int& n_past, const int id, int n_discard_param = 0) {
 			if (n_past <= n_keep) {
 				return;
 			}
 
+			// TODO: When multimodal support is added (mctx/mtmd), add check here:
+			// if (mctx != nullptr) {
+			//     std::cerr << "[INFERENCE] [WARNING] Context shifting is not supported with multimodal models" << std::endl;
+			//     return;
+			// }
+
 			int n_left = n_past - n_keep;
-			int n_discard = n_left / 2;
+			// Use provided n_discard if > 0, otherwise default to n_left / 2
+			int n_discard = (n_discard_param > 0) ? n_discard_param : (n_left / 2);
+			
+			// Ensure n_discard doesn't exceed available tokens
+			if (n_discard > n_left) {
+				n_discard = n_left;
+			}
+			
 			if (n_discard <= 0) {
 				return;
 			}
@@ -1301,7 +1621,8 @@ namespace
 			std::cout << "\n\nContext full, shifting: n_past = " << n_past
 				<< ", n_left = " << n_left
 				<< ", n_keep = " << n_keep
-				<< ", n_discard = " << n_discard << std::endl << std::endl;
+				<< ", n_discard = " << n_discard 
+				<< " (param=" << n_discard_param << ")" << std::endl << std::endl;
 #endif
 
 			auto * mem = llama_get_memory(context);
@@ -1310,9 +1631,22 @@ namespace
 
 			n_past -= n_discard;
 
+			// Improved token management using vector operations
 			if (!session_tokens.empty() && session_tokens.size() >= (size_t)(n_keep + n_discard)) {
-				session_tokens.erase(session_tokens.begin() + n_keep,
-					session_tokens.begin() + n_keep + n_discard);
+				std::vector<llama_token> new_tokens;
+				new_tokens.reserve(session_tokens.size() - n_discard);
+				
+				// Copy tokens before n_keep
+				new_tokens.insert(new_tokens.end(), 
+					session_tokens.begin(), 
+					session_tokens.begin() + n_keep);
+				
+				// Copy tokens after the discarded range
+				new_tokens.insert(new_tokens.end(), 
+					session_tokens.begin() + n_keep + n_discard, 
+					session_tokens.end());
+				
+				session_tokens = std::move(new_tokens);
 			}
 		}
 	};

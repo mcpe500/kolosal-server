@@ -64,7 +64,14 @@ ucm_print_flags()
 # Options for inference engine
 option(USE_CUDA   "Compile with CUDA support" OFF)
 option(USE_VULKAN "Compile with VULKAN support" OFF)
-option(USE_METAL  "Compile with Metal support (macOS only)" OFF)
+
+set(_KOLOSAL_INFERENCE_DEFAULT_USE_METAL OFF)
+if(APPLE)
+    set(_KOLOSAL_INFERENCE_DEFAULT_USE_METAL ON)
+endif()
+option(USE_METAL  "Compile with Metal support (macOS only)" ${_KOLOSAL_INFERENCE_DEFAULT_USE_METAL})
+unset(_KOLOSAL_INFERENCE_DEFAULT_USE_METAL)
+
 option(USE_MPI    "Compile with MPI support" OFF)
 option(DEBUG      "Compile with debugging information" OFF)
 
@@ -529,6 +536,9 @@ if(BUILD_INFERENCE_TESTS)
         tests/test_json_schema.cpp
         tests/test_multi_gpu.cpp
         tests/test_auto_seq.cpp
+        tests/test_long_context.cpp
+        tests/test_ttft_performance.cpp
+        tests/test_overflow_save.cpp
     )
 
     foreach(test_src ${INFERENCE_TEST_SOURCES})
@@ -566,6 +576,8 @@ if(BUILD_INFERENCE_TESTS)
             test_embedding
             test_invalid_and_cancel
             test_multi_gpu
+            test_long_context
+            test_ttft_performance
     )
 endif()
 

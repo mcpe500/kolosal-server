@@ -20,6 +20,7 @@
 #include <mutex>
 #include <memory>
 #include <variant>
+#include <functional>
 
 using json = nlohmann::json;
 
@@ -38,6 +39,37 @@ namespace kolosal
             } else if (!params.jsonSchema.empty()) {
                 ServerLogger::logInfo("[oai-%s] Using provided JSON schema (chars=%zu)", context, params.jsonSchema.size());
             }
+        }
+
+        size_t threadIdForLog()
+        {
+            return std::hash<std::thread::id>{}(std::this_thread::get_id());
+        }
+
+        std::string formatPayloadForLog(const json &payload)
+        {
+            static constexpr size_t kMaxLoggedPayloadBytes = 8192;
+            std::string pretty = payload.dump(2);
+
+            if (pretty.size() <= kMaxLoggedPayloadBytes)
+            {
+                return pretty;
+            }
+
+            std::ostringstream oss;
+            oss << pretty.substr(0, kMaxLoggedPayloadBytes)
+                << "\n... [truncated " << (pretty.size() - kMaxLoggedPayloadBytes) << " bytes]";
+            return oss.str();
+        }
+
+        void logDetailedRequest(const char *context, const json &payload, size_t rawSize)
+        {
+            const std::string formatted = formatPayloadForLog(payload);
+            ServerLogger::logInfo("[oai-%s][Thread %zu] Incoming request (%zu bytes):\n%s",
+                                  context,
+                                  threadIdForLog(),
+                                  rawSize,
+                                  formatted.c_str());
         }
         /**
          * @brief Builds ChatCompletionParameters from a ChatCompletionRequest
@@ -215,6 +247,7 @@ namespace kolosal
         {
             auto j = json::parse(body);
             ServerLogger::logInfo("[Thread %u] Received chat completion request", std::this_thread::get_id());
+            logDetailedRequest("chat", j, body.size());
 
             // Parse the request
             ChatCompletionRequest request;
@@ -273,6 +306,14 @@ namespace kolosal
                 } else if (j["jsonSchema"].is_object()) {
                     inferenceParams.jsonSchema = j["jsonSchema"].dump();
                 }
+            }
+
+            // Context shifting support (extension)
+            if (j.contains("allow_context_shift") && j["allow_context_shift"].is_boolean()) {
+                inferenceParams.allow_context_shift = j["allow_context_shift"].get<bool>();
+            }
+            if (j.contains("n_discard") && j["n_discard"].is_number_integer()) {
+                inferenceParams.n_discard = j["n_discard"].get<int>();
             }
 
             finalizeStructuredOutput(inferenceParams, "chat");
@@ -436,6 +477,7 @@ namespace kolosal
         {
             auto j = json::parse(body);
             ServerLogger::logInfo("[Thread %u] Received completion request", std::this_thread::get_id());
+            logDetailedRequest("completion", j, body.size());
 
             // Parse the request
             CompletionRequest request;
@@ -490,6 +532,14 @@ namespace kolosal
                 } else if (j["jsonSchema"].is_object()) {
                     inferenceParams.jsonSchema = j["jsonSchema"].dump();
                 }
+            }
+
+            // Context shifting support (extension)
+            if (j.contains("allow_context_shift") && j["allow_context_shift"].is_boolean()) {
+                inferenceParams.allow_context_shift = j["allow_context_shift"].get<bool>();
+            }
+            if (j.contains("n_discard") && j["n_discard"].is_number_integer()) {
+                inferenceParams.n_discard = j["n_discard"].get<int>();
             }
 
             finalizeStructuredOutput(inferenceParams, "completion");
