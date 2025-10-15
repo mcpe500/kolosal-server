@@ -1,7 +1,7 @@
 server:
   port: 8087
-  host: 127.0.0.1
-  idle_timeout: 60
+  host: 0.0.0.0
+  idle_timeout: 300
   allow_public_access: false
   allow_internet_access: false
 logging:
@@ -14,7 +14,8 @@ auth:
   enabled: false
   require_api_key: false
   api_key_header: X-API-Key
-  api_keys: []
+  api_keys:
+    []
   rate_limit:
     enabled: true
     max_requests: 100
@@ -39,14 +40,14 @@ auth:
       - X-Requested-With
       - Accept
       - Origin
-models: []
+models:
 inference_engines:
-  - name: llama-metal
-    library_path: ../lib/libllama-metal.dylib
+  - name: llama-cpu
+    library_path: ../lib/libllama-cpu.so
     version: 1.0.0
-    description: Apple Metal GPU inference engine
+    description: CPU-based inference engine for LLaMA models
     load_on_startup: true
-default_inference_engine: llama-metal
+default_inference_engine: llama-cpu
 features:
   health_check: true
   metrics: true
