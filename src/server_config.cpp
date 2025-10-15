@@ -513,6 +513,10 @@ namespace kolosal
             {
                 idleTimeout = std::chrono::seconds(std::stoi(argv[++i]));
             }
+            else if ((arg == "--default-inference-engine") && i + 1 < argc)
+            {
+                defaultInferenceEngine = argv[++i];
+            }
             // Feature flags
             else if (arg == "--enable-metrics")
             {
@@ -1419,7 +1423,8 @@ namespace kolosal
         std::cout << "    -m, --model ID PATH       Load model at startup (ID and file path)\n";
         std::cout << "    --model-lazy ID PATH      Register model but don't load until first use\n";
         std::cout << "    --model-gpu ID            Set GPU ID for the last added model\n";
-        std::cout << "    --model-ctx-size SIZE     Set context size for the last added model\n\n";
+        std::cout << "    --model-ctx-size SIZE     Set context size for the last added model\n";
+        std::cout << "    --default-inference-engine ENGINE  Set default inference engine (llama-cpu, llama-vulkan)\n\n";
         std::cout << "  Features:\n";
         std::cout << "    --enable-metrics          Enable metrics collection\n";
         std::cout << "    --disable-health-check    Disable health check endpoint\n";

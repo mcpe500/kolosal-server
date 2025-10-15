@@ -47,6 +47,11 @@ inference_engines:
     version: 1.0.0
     description: CPU-based inference engine for LLaMA models
     load_on_startup: true
+  - name: llama-vulkan
+    library_path: ../lib/libllama-vulkan.so
+    version: 1.0.0
+    description: VULKAN-based inference engine for LLaMA models
+    load_on_startup: true
 default_inference_engine: llama-cpu
 features:
   health_check: true
