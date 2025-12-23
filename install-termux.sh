@@ -133,6 +133,9 @@ init_submodules() {
     # Try submodule update, but don't fail if some submodules have issues
     git submodule update --init --recursive 2>&1 || true
     
+    # Check llama.cpp submodule
+    local llama_path="inference/external/llama.cpp"
+    
     # Check if llama.cpp exists
     if [ ! -f "$llama_path/CMakeLists.txt" ]; then
         print_warning "llama.cpp not found, cloning latest version..."
