@@ -93,16 +93,7 @@ install_dependencies() {
     
     # Core build tools and libraries
     # Note: yaml-cpp is bundled in external/ and built from source
-    local packages=(
-        "cmake"
-        "git"
-        "clang"
-        "make"
-        "libcurl"
-        "pkg-config"
-    )
-    
-    for package in "${packages[@]}"; do
+    for package in cmake git clang make libcurl pkg-config; do
         if pkg list-installed 2>/dev/null | grep -q "^$package/"; then
             print_success "$package is already installed"
         else
