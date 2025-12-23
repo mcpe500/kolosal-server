@@ -142,10 +142,11 @@ init_submodules() {
     if [ ! -f "$llama_path/CMakeLists.txt" ]; then
         needs_reclone=true
     else
-        # Check if we have a compatible version by looking for flash_attn in common.h
-        if [ -f "$llama_path/common/common.h" ]; then
-            if ! grep -q "flash_attn" "$llama_path/common/common.h" 2>/dev/null; then
-                print_warning "Existing llama.cpp version is incompatible (missing flash_attn)"
+        # Check if we have a compatible version by looking for llama_kv_cache_seq_rm in llama.h
+        # (older stable API that we patched the inference code to use)
+        if [ -f "$llama_path/include/llama.h" ]; then
+            if ! grep -q "llama_kv_cache_seq_rm" "$llama_path/include/llama.h" 2>/dev/null; then
+                print_warning "Existing llama.cpp version is incompatible (using newer memory API)"
                 needs_reclone=true
             fi
         fi
@@ -157,25 +158,8 @@ init_submodules() {
         # Remove existing directory
         rm -rf "$llama_path" 2>/dev/null || true
         mkdir -p "$(dirname "$llama_path")"
-        
-        # Clone llama.cpp at a compatible version
-        # The kolosal-server inference code uses an older API (with flash_attn, common_init_result as value)
-        # We need version before ~May 2024 API changes
-        # Try b3000 -> b2500 -> b2000 (progressively older)
-        LLAMA_CPP_VERSION="b3000"
-        print_info "Cloning llama.cpp at version $LLAMA_CPP_VERSION..."
-        
-        if git clone --depth 1 --branch "$LLAMA_CPP_VERSION" https://github.com/ggerganov/llama.cpp.git "$llama_path" 2>/dev/null; then
-            print_success "llama.cpp cloned at $LLAMA_CPP_VERSION"
-        elif git clone --depth 1 --branch "b2500" https://github.com/ggerganov/llama.cpp.git "$llama_path" 2>/dev/null; then
-            print_success "llama.cpp cloned at b2500 (fallback)"
-        elif git clone --depth 1 --branch "b2000" https://github.com/ggerganov/llama.cpp.git "$llama_path" 2>/dev/null; then
-            print_success "llama.cpp cloned at b2000 (fallback)"
-        else
-            print_error "Failed to clone compatible llama.cpp version!"
-            print_info "Please manually clone: git clone --branch b3000 https://github.com/ggerganov/llama.cpp.git $llama_path"
-            exit 1
-        fi
+
+        git clone --depth 1 https://github.com/ggerganov/llama.cpp.git "$llama_path" 2>/dev/null
     else
         print_success "llama.cpp submodule found (compatible version)"
     fi
