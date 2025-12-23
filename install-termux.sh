@@ -92,13 +92,13 @@ install_dependencies() {
     print_info "Installing required packages..."
     
     # Core build tools and libraries
+    # Note: yaml-cpp is bundled in external/ and built from source
     local packages=(
         "cmake"
         "git"
         "clang"
         "make"
         "libcurl"
-        "yaml-cpp"
         "pkg-config"
     )
     
@@ -139,18 +139,67 @@ init_submodules() {
     
     print_info "Updating git submodules (this may take a while)..."
     
-    if git submodule update --init --recursive; then
-        print_success "Submodules initialized"
+    # Try submodule update, but don't fail if some submodules have issues
+    git submodule update --init --recursive 2>&1 || true
+    
+    # Check each critical submodule manually
+    local llama_path="inference/external/llama.cpp"
+    
+    # Check if llama.cpp cloned properly
+    if [ ! -f "$llama_path/CMakeLists.txt" ]; then
+        print_warning "llama.cpp not properly cloned, trying manual clone..."
+        
+        # Remove empty directory if exists
+        rm -rf "$llama_path" 2>/dev/null || true
+        mkdir -p "$(dirname "$llama_path")"
+        
+        # Clone llama.cpp manually
+        if git clone --depth 1 https://github.com/ggerganov/llama.cpp.git "$llama_path"; then
+            print_success "llama.cpp cloned successfully"
+        else
+            print_error "Failed to clone llama.cpp!"
+            print_info "Please manually clone: git clone https://github.com/ggerganov/llama.cpp.git $llama_path"
+            exit 1
+        fi
     else
-        print_warning "Some submodules may have failed. Build might still work."
+        print_success "llama.cpp submodule found"
     fi
     
-    # Verify llama.cpp exists
-    if [ -d "inference/external/llama.cpp" ] || [ -d "external/llama.cpp" ]; then
-        print_success "llama.cpp submodule found"
-    else
-        print_warning "llama.cpp not found. The build may fail."
+    # Check yaml-cpp (bundled in external/)
+    if [ ! -f "external/yaml-cpp/CMakeLists.txt" ]; then
+        print_warning "yaml-cpp not found, trying to initialize..."
+        git submodule update --init external/yaml-cpp 2>&1 || true
+        
+        if [ ! -f "external/yaml-cpp/CMakeLists.txt" ]; then
+            print_warning "yaml-cpp submodule missing, trying manual clone..."
+            rm -rf "external/yaml-cpp" 2>/dev/null || true
+            git clone --depth 1 https://github.com/jbeder/yaml-cpp.git external/yaml-cpp || true
+        fi
     fi
+    
+    # Check zlib
+    if [ ! -f "external/zlib/CMakeLists.txt" ]; then
+        print_warning "zlib not found, trying to initialize..."
+        git submodule update --init external/zlib 2>&1 || true
+        
+        if [ ! -f "external/zlib/CMakeLists.txt" ]; then
+            rm -rf "external/zlib" 2>/dev/null || true
+            git clone --depth 1 https://github.com/madler/zlib.git external/zlib || true
+        fi
+    fi
+    
+    # Check pugixml
+    if [ ! -f "external/pugixml/CMakeLists.txt" ]; then
+        print_warning "pugixml not found, trying to initialize..."
+        git submodule update --init external/pugixml 2>&1 || true
+        
+        if [ ! -f "external/pugixml/CMakeLists.txt" ]; then
+            rm -rf "external/pugixml" 2>/dev/null || true
+            git clone --depth 1 https://github.com/zeux/pugixml.git external/pugixml || true
+        fi
+    fi
+    
+    print_success "Submodules initialized"
 }
 
 # Build the server
