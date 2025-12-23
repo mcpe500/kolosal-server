@@ -144,12 +144,22 @@ init_submodules() {
         rm -rf "$llama_path" 2>/dev/null || true
         mkdir -p "$(dirname "$llama_path")"
         
-        # Clone llama.cpp manually
-        if git clone --depth 1 https://github.com/ggerganov/llama.cpp.git "$llama_path"; then
-            print_success "llama.cpp cloned successfully"
+        # Clone llama.cpp at a compatible version
+        # The kolosal-server inference code uses an older API (with flash_attn, etc.)
+        # We need to use a version before the breaking API changes (around b5270)
+        # If this fails, try b4000 or b3500
+        LLAMA_CPP_VERSION="b5270"
+        print_info "Cloning llama.cpp at version $LLAMA_CPP_VERSION..."
+        
+        if git clone --depth 1 --branch "$LLAMA_CPP_VERSION" https://github.com/ggerganov/llama.cpp.git "$llama_path" 2>/dev/null; then
+            print_success "llama.cpp cloned at $LLAMA_CPP_VERSION"
+        elif git clone --depth 1 --branch "b4000" https://github.com/ggerganov/llama.cpp.git "$llama_path" 2>/dev/null; then
+            print_success "llama.cpp cloned at b4000 (fallback)"
+        elif git clone --depth 1 --branch "b3500" https://github.com/ggerganov/llama.cpp.git "$llama_path" 2>/dev/null; then
+            print_success "llama.cpp cloned at b3500 (fallback)"
         else
             print_error "Failed to clone llama.cpp!"
-            print_info "Please manually clone: git clone https://github.com/ggerganov/llama.cpp.git $llama_path"
+            print_info "Please manually clone: git clone --branch b5270 https://github.com/ggerganov/llama.cpp.git $llama_path"
             exit 1
         fi
     else

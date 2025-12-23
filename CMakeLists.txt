@@ -327,7 +327,10 @@ if(NOT ZLIB_FOUND)
     endif()
 endif()
 
-add_subdirectory(inference)
+# this line causes error:
+# CMake Error at CMakeLists.txt:330 (add_subdirectory):
+#   The binary directory
+# add_subdirectory(inference)
 
 find_package(CURL QUIET)
 if(NOT CURL_FOUND)
