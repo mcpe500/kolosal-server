@@ -133,35 +133,23 @@ init_submodules() {
     # Try submodule update, but don't fail if some submodules have issues
     git submodule update --init --recursive 2>&1 || true
     
-    # Check each critical submodule manually
-    local llama_path="inference/external/llama.cpp"
-    
-    # Check if llama.cpp cloned properly AND is the right version
-    local needs_reclone=false
-    
+    # Check if llama.cpp exists
     if [ ! -f "$llama_path/CMakeLists.txt" ]; then
-        needs_reclone=true
-    else
-        # Check if we have a compatible version by looking for llama_kv_cache_seq_rm in llama.h
-        # (older stable API that we patched the inference code to use)
-        if [ -f "$llama_path/include/llama.h" ]; then
-            if ! grep -q "llama_kv_cache_seq_rm" "$llama_path/include/llama.h" 2>/dev/null; then
-                print_warning "Existing llama.cpp version is incompatible (using newer memory API)"
-                needs_reclone=true
-            fi
-        fi
-    fi
-    
-    if [ "$needs_reclone" = true ]; then
-        print_warning "llama.cpp needs to be cloned at a compatible version..."
+        print_warning "llama.cpp not found, cloning latest version..."
         
-        # Remove existing directory
+        # Remove empty directory if exists
         rm -rf "$llama_path" 2>/dev/null || true
         mkdir -p "$(dirname "$llama_path")"
-
-        git clone --depth 1 https://github.com/ggerganov/llama.cpp.git "$llama_path" 2>/dev/null
+        
+        # Clone latest llama.cpp
+        if git clone --depth 1 https://github.com/ggerganov/llama.cpp.git "$llama_path"; then
+            print_success "llama.cpp cloned successfully"
+        else
+            print_error "Failed to clone llama.cpp!"
+            exit 1
+        fi
     else
-        print_success "llama.cpp submodule found (compatible version)"
+        print_success "llama.cpp submodule found"
     fi
     
     # Check yaml-cpp (bundled in external/)
