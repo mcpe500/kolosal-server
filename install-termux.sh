@@ -278,6 +278,7 @@ install_server() {
     print_info "Installing to $INSTALL_DIR..."
     mkdir -p "$INSTALL_DIR"
     mkdir -p "$INSTALL_DIR/bin"
+    mkdir -p "$INSTALL_DIR/lib"
     mkdir -p "$INSTALL_DIR/configs"
     mkdir -p "$INSTALL_DIR/models"
     mkdir -p "$BIN_DIR"
@@ -287,12 +288,38 @@ install_server() {
     cp "$exe_path" "$INSTALL_DIR/bin/"
     chmod +x "$INSTALL_DIR/bin/kolosal-server"
     
-    # Copy shared libraries from the same directory
+    # Copy shared libraries from multiple locations
+    # 1. From executable directory (same dir as kolosal-server binary)
     local exe_dir=$(dirname "$exe_path")
     if ls "$exe_dir"/*.so 2>/dev/null; then
-        print_info "Copying shared libraries..."
+        print_info "Copying shared libraries from executable directory..."
         cp "$exe_dir"/*.so "$INSTALL_DIR/bin/" 2>/dev/null || true
     fi
+    
+    # 2. From lib/ subdirectory (where CMake outputs inference engine libs)
+    if [ -d "lib" ] && ls lib/*.so 2>/dev/null; then
+        print_info "Copying inference engine libraries from lib/..."
+        cp lib/*.so "$INSTALL_DIR/bin/" 2>/dev/null || true
+        # Also copy to lib/ for standard library path searching
+        cp lib/*.so "$INSTALL_DIR/lib/" 2>/dev/null || true
+    fi
+    
+    # 3. From Release/lib/ if it exists
+    if [ -d "Release/lib" ] && ls Release/lib/*.so 2>/dev/null; then
+        print_info "Copying inference engine libraries from Release/lib/..."
+        cp Release/lib/*.so "$INSTALL_DIR/bin/" 2>/dev/null || true
+        cp Release/lib/*.so "$INSTALL_DIR/lib/" 2>/dev/null || true
+    fi
+    
+    # Verify inference engine library was copied
+    if ls "$INSTALL_DIR/bin"/*llama*.so 2>/dev/null || ls "$INSTALL_DIR/lib"/*llama*.so 2>/dev/null; then
+        print_success "Inference engine library installed"
+    else
+        print_warning "Inference engine library (.so) not found!"
+        print_info "Build may have failed to create libllama-cpu.so"
+        print_info "Check build output in: $REPO_DIR/build/lib/"
+    fi
+
     
     # Copy config files
     if [ -d "$REPO_DIR/configs" ]; then
@@ -324,8 +351,8 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$REAL_PATH")" && pwd)"
 APP_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Add library path
-export LD_LIBRARY_PATH="$SCRIPT_DIR:$LD_LIBRARY_PATH"
+# Add library paths for inference engine discovery
+export LD_LIBRARY_PATH="$SCRIPT_DIR:$APP_DIR/lib:$LD_LIBRARY_PATH"
 
 # Change to app directory (for relative paths in config)
 cd "$APP_DIR"
