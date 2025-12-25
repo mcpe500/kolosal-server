@@ -2237,9 +2237,9 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 	if (!llama_init_ptr) {
 		throw std::runtime_error("[INFERENCE] [ERROR] common_init_from_params returned null");
 	}
-	// In newest llama.cpp, model and context are raw pointers, not unique_ptr
-	llama_model		*model	= llama_init_ptr->model;
-	llama_context	*ctx	= llama_init_ptr->context;
+	// In newest llama.cpp, model and context are getter functions
+	llama_model		*model	= llama_init_ptr->model();
+	llama_context	*ctx	= llama_init_ptr->context();
 
 	// Validate model and context initialization
 	if (!model) {
