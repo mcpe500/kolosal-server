@@ -191,6 +191,8 @@ set(KOLOSAL_ROUTE_SOURCES
     src/routes/config/auth_config_route.cpp    
     src/routes/server_logs_route.cpp    
     src/routes/downloads_route.cpp
+    # UI Routes
+    src/routes/ui_routes.cpp
     # Retrieval Routes
     src/routes/retrieval/embedding_route.cpp
     src/routes/retrieval/internet_search_route.cpp
