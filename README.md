@@ -94,9 +94,9 @@ sudo pacman -S openblas lapack
 #### Building from Source
 
 **1. Clone the Repository with the Submodules:**
-FAISS is bundled as a submodule in `external/faiss`. If you don't add `--recursive`, FAISS be disabled (the build creates a stub). Re-run the submodule command then reconfigure.
+FAISS is bundled as a submodule in `external/faiss`. If you don't add `--recursive`, FAISS will be disabled (the build creates a stub). Re-run the submodule command then reconfigure.
 ```bash
-git clone https://github.com/kolosalai/kolosal-server.git --recurisve
+git clone https://github.com/kolosalai/kolosal-server.git --recursive
 cd kolosal-server
 ```
 
@@ -373,7 +373,7 @@ make -j$(sysctl -n hw.ncpu)
 - CUDA Toolkit (optional, for GPU acceleration)
 
 ### Install Dependencies
-- Run `git clone https://github.com/kolosalai/kolosal-server.git --recurisve`
+- Run `git clone https://github.com/kolosalai/kolosal-server.git --recursive`
 - Run `cd kolosal-server`
 - Make a `vcpkg.json` file at the root of the project
   ```json
