@@ -2232,14 +2232,11 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 	std::cout << "[INFERENCE] Loading model from " << tokenizer_model_path << std::endl;
 #endif
 
-	// common_init_from_params returns common_init_result_ptr (std::unique_ptr<common_init_result>) in newest llama.cpp
-	common_init_result_ptr llama_init = common_init_from_params(params);
-	if (!llama_init) {
-		throw std::runtime_error("[INFERENCE] [ERROR] common_init_from_params returned null");
-	}
-	// Access model and context via getter methods
-	llama_model		*model	= llama_init->model();
-	llama_context	*ctx	= llama_init->context();
+	// common_init_from_params returns common_init_result - use auto for API compatibility
+	auto llama_init = common_init_from_params(params);
+	// Access model and context via getter methods (using dot notation for value type)
+	llama_model		*model	= llama_init.model();
+	llama_context	*ctx	= llama_init.context();
 
 	// Validate model and context initialization
 	if (!model) {
