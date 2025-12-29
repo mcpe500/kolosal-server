@@ -2232,11 +2232,11 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 	std::cout << "[INFERENCE] Loading model from " << tokenizer_model_path << std::endl;
 #endif
 
-	// common_init_from_params returns common_init_result - use auto for API compatibility
+	// common_init_from_params returns common_init_result with model/context as unique_ptr members
 	auto llama_init = common_init_from_params(params);
-	// Access model and context via getter methods (using dot notation for value type)
-	llama_model		*model	= llama_init.model();
-	llama_context	*ctx	= llama_init.context();
+	// Access model and context - they are unique_ptr members, use .get() for raw pointer
+	llama_model		*model	= llama_init.model.get();
+	llama_context	*ctx	= llama_init.context.get();
 
 	// Validate model and context initialization
 	if (!model) {
