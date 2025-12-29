@@ -2234,9 +2234,10 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 
 	// common_init_from_params returns common_init_result with model/context as unique_ptr members
 	auto llama_init = common_init_from_params(params);
-	// Access model and context - they are unique_ptr members, use .get() for raw pointer
-	llama_model		*model	= llama_init.model.get();
-	llama_context	*ctx	= llama_init.context.get();
+	// Release ownership from unique_ptrs - we'll manage the lifetime manually
+	// Using .release() transfers ownership to us and prevents auto-deletion when llama_init goes out of scope
+	llama_model		*model	= llama_init.model.release();
+	llama_context	*ctx	= llama_init.context.release();
 
 	// Validate model and context initialization
 	if (!model) {
