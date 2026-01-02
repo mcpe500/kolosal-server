@@ -124,6 +124,41 @@ namespace kolosal
     }
 #endif
 
+#if !defined(__APPLE__) && !defined(_WIN32)
+    // Helper function to get Linux/Android library search paths
+    static std::vector<std::string> getLibrarySearchPathsLinux(const std::string& execDir, const std::string& libName)
+    {
+        std::vector<std::string> searchPaths;
+        
+        // Check for Termux environment (Android)
+        const char* prefix = std::getenv("PREFIX");
+        if (prefix) {
+            ServerLogger::logInfo("Termux environment detected (PREFIX=%s)", prefix);
+            // Termux-specific paths
+            searchPaths.push_back(std::string(prefix) + "/lib/" + libName + std::string(LIBRARY_EXTENSION));
+            searchPaths.push_back(std::string(prefix) + "/opt/kolosal-server/lib/" + libName + std::string(LIBRARY_EXTENSION));
+            searchPaths.push_back(std::string(prefix) + "/opt/kolosal-server/bin/" + libName + std::string(LIBRARY_EXTENSION));
+        }
+        
+        // Executable-relative paths (most common for installed apps)
+        searchPaths.push_back(execDir + "/" + libName + std::string(LIBRARY_EXTENSION));
+        searchPaths.push_back(execDir + "/../lib/" + libName + std::string(LIBRARY_EXTENSION));
+        searchPaths.push_back(execDir + "/lib/" + libName + std::string(LIBRARY_EXTENSION));
+        
+        // Standard Linux paths
+        searchPaths.push_back("/usr/local/lib/" + libName + std::string(LIBRARY_EXTENSION));
+        searchPaths.push_back("/usr/lib/" + libName + std::string(LIBRARY_EXTENSION));
+        
+        // Current directory fallbacks
+        searchPaths.push_back("./" + libName + std::string(LIBRARY_EXTENSION));
+        searchPaths.push_back("./lib/" + libName + std::string(LIBRARY_EXTENSION));
+        searchPaths.push_back("../lib/" + libName + std::string(LIBRARY_EXTENSION));
+        
+        return searchPaths;
+    }
+#endif
+
+
     // Helper function to get platform-specific default inference engine
     std::string getPlatformDefaultInferenceEngine()
     {
@@ -341,23 +376,50 @@ namespace kolosal
                 }
             }
 #else
-            // On non-Apple systems, use existing GPU detection logic
+            // On non-Apple systems (Linux, Android/Termux), use path search
             ServerLogger::logInfo("Non-Apple system detected. Adding CPU and GPU inference engines...");
             
-            std::filesystem::path buildDir = std::filesystem::current_path();
-            auto cpuPath = buildDir / "lib" / ("libllama-cpu" + std::string(LIBRARY_EXTENSION));
-            auto vulkanPath = buildDir / "lib" / ("libllama-vulkan" + std::string(LIBRARY_EXTENSION));
+            std::string execDir = getExecutableDirectory();
+            ServerLogger::logInfo("Searching for inference engines. Executable directory: %s", execDir.c_str());
             
-            if (std::filesystem::exists(cpuPath))
+            // Use helper function to get search paths
+            std::vector<std::string> cpuPaths = getLibrarySearchPathsLinux(execDir, "libllama-cpu");
+            std::vector<std::string> vulkanPaths = getLibrarySearchPathsLinux(execDir, "libllama-vulkan");
+            
+            // Check for CPU engine
+            for (const auto& path : cpuPaths)
             {
-                defaultEngines.emplace_back("llama-cpu", cpuPath.string(), "CPU inference engine");
-                ServerLogger::logInfo("Added CPU inference engine: %s", cpuPath.string().c_str());
+                ServerLogger::logInfo("Checking for CPU inference engine at: %s", path.c_str());
+                if (std::filesystem::exists(path))
+                {
+                    defaultEngines.emplace_back("llama-cpu", path, "CPU inference engine");
+                    ServerLogger::logInfo("Found CPU inference engine: %s", path.c_str());
+                    break; // Found CPU, stop searching
+                }
             }
             
-            if (std::filesystem::exists(vulkanPath))
+            // Check for Vulkan engine
+            for (const auto& path : vulkanPaths)
             {
-                defaultEngines.emplace_back("llama-vulkan", vulkanPath.string(), "Vulkan GPU acceleration");
-                ServerLogger::logInfo("Added Vulkan inference engine: %s", vulkanPath.string().c_str());
+                ServerLogger::logInfo("Checking for Vulkan inference engine at: %s", path.c_str());
+                if (std::filesystem::exists(path))
+                {
+                    defaultEngines.emplace_back("llama-vulkan", path, "Vulkan GPU acceleration");
+                    ServerLogger::logInfo("Found Vulkan inference engine: %s", path.c_str());
+                    break; // Found Vulkan, stop searching
+                }
+            }
+            
+            // If still no engines found, provide detailed logging
+            if (defaultEngines.empty())
+            {
+                ServerLogger::logError("No inference engine libraries found in any of the searched paths.");
+                ServerLogger::logError("Please ensure inference engine libraries are properly installed.");
+                ServerLogger::logError("Searched paths include:");
+                for (const auto& path : cpuPaths)
+                {
+                    ServerLogger::logError("  - %s", path.c_str());
+                }
             }
 #endif
             

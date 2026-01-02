@@ -191,6 +191,8 @@ set(KOLOSAL_ROUTE_SOURCES
     src/routes/config/auth_config_route.cpp    
     src/routes/server_logs_route.cpp    
     src/routes/downloads_route.cpp
+    # UI Routes
+    src/routes/ui_routes.cpp
     # Retrieval Routes
     src/routes/retrieval/embedding_route.cpp
     src/routes/retrieval/internet_search_route.cpp
@@ -327,7 +329,10 @@ if(NOT ZLIB_FOUND)
     endif()
 endif()
 
-add_subdirectory(inference)
+# this line causes error:
+# CMake Error at CMakeLists.txt:330 (add_subdirectory):
+#   The binary directory
+# add_subdirectory(inference)
 
 find_package(CURL QUIET)
 if(NOT CURL_FOUND)

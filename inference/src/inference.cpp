@@ -2219,9 +2219,7 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 	params.n_gpu_layers = lParams.n_gpu_layers;
 #endif
 
-#ifndef USE_VULKAN
-	params.flash_attn = true;
-#endif
+	// Note: flash_attn removed in newest llama.cpp (now automatic)
 
 #ifdef DEBUG
 	std::cout << "[INFERENCE] Using main GPU ID: " << params.main_gpu << std::endl;
@@ -2234,9 +2232,12 @@ InferenceEngine::Impl::Impl(const char *modelPath, const LoadingParameters lPara
 	std::cout << "[INFERENCE] Loading model from " << tokenizer_model_path << std::endl;
 #endif
 
-	common_init_result	llama_init	= common_init_from_params(params);
-	llama_model			*model		= llama_init.model.release();
-	llama_context		*ctx		= llama_init.context.release();
+	// common_init_from_params returns common_init_result with model/context as unique_ptr members
+	auto llama_init = common_init_from_params(params);
+	// Release ownership from unique_ptrs - we'll manage the lifetime manually
+	// Using .release() transfers ownership to us and prevents auto-deletion when llama_init goes out of scope
+	llama_model		*model	= llama_init.model.release();
+	llama_context	*ctx	= llama_init.context.release();
 
 	// Validate model and context initialization
 	if (!model) {
